@@ -526,7 +526,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   const html = await response.text();
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /apple-touch-icon[^>]*href="\/icons\/apple-touch-icon-v2\.png"/);
-  assert.match(html, /href="\/install\/#android"/);
+  assert.match(html, /href="\/install\/"/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });
@@ -541,7 +541,12 @@ test("renders shareable iPhone and Android home-screen installation guides", asy
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<!-- -->/g, "");
 
-  assert.match(html, /<h1[^>]*>홈 화면에 추가하기<\/h1>/);
+  assert.match(html, /<h1[^>]*><span>홈 화면에<\/span> <span>추가하기<\/span><\/h1>/);
+  assert.match(html, /자동 설치가 아닙니다/);
+  assert.match(html, /href="#iphone"[^>]*><span>iPhone<\/span><small>Safari<\/small><\/a>/);
+  assert.match(html, /href="#android"[^>]*><span>Android<\/span><small>Chrome<\/small><\/a>/);
+  assert.match(html, /Discord·X 같은 앱 안에서 열었나요\?/);
+  assert.match(html, /앱 안 브라우저에서 열었나요\?/);
   assert.match(html, /Safari 아래쪽의 더 보기/);
   assert.match(html, /빠른 메뉴에서 공유/);
   assert.match(html, /‘간략히 보기’라고 표시된다면/);
@@ -552,6 +557,16 @@ test("renders shareable iPhone and Android home-screen installation guides", asy
   assert.match(html, /실시간 시세 확인에는 인터넷 연결이 필요합니다/);
   assert.match(html, /src="\/install\/iphone-guide-v1\.png"/);
   assert.match(html, /src="\/install\/android-guide-v1\.png"/);
+  const iphoneCard = html.match(/<article[^>]*id="iphone"[\s\S]*?<\/article>/)?.[0] ?? "";
+  const androidCard = html.match(/<article[^>]*id="android"[\s\S]*?<\/article>/)?.[0] ?? "";
+  assert.equal((iphoneCard.match(/<li>/g) ?? []).length, 5);
+  assert.equal((androidCard.match(/<li>/g) ?? []).length, 3);
+  assert.match(iphoneCard, /1단계/);
+  assert.match(androidCard, /1단계/);
+  assert.match(html, /iPhone 안내 이미지 저장/);
+  assert.match(html, /Android 안내 이미지 저장/);
+  assert.match(html, /Apple 공식 안내 보기/);
+  assert.match(html, /Chrome 공식 안내 보기/);
   assert.ok(installSource.indexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/iphone-guide-v1.png"'));
   assert.ok(installSource.lastIndexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/android-guide-v1.png"'));
   assert.match(html, /href="\/"[^>]*>← 계산기로 돌아가기<\/a>/);

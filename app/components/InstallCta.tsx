@@ -7,7 +7,7 @@ import {
   isInstallInviteSuppressed,
 } from "../lib/install-invite.mjs";
 
-type InstallMode = "guide" | "ios" | "ready" | "installed";
+type InstallMode = "guide" | "ios" | "android" | "ready" | "installed";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -30,6 +30,12 @@ function isMobileBrowser() {
   return isAppleMobileBrowser()
     || /Android|Mobile/i.test(navigator.userAgent)
     || window.matchMedia("(max-width: 700px)").matches;
+}
+
+function manualInstallMode(): Extract<InstallMode, "guide" | "ios" | "android"> {
+  if (isAppleMobileBrowser()) return "ios";
+  if (/Android/i.test(navigator.userAgent)) return "android";
+  return "guide";
 }
 
 function isInviteDismissed() {
@@ -92,7 +98,7 @@ export function InstallCta() {
         setMode("installed");
         setInviteVisible(false);
       } else {
-        setMode(isAppleMobileBrowser() ? "ios" : "guide");
+        setMode(manualInstallMode());
         setInviteVisible(isMobileBrowser() && !isInviteDismissed());
       }
     }, 0);
@@ -118,11 +124,11 @@ export function InstallCta() {
         setInviteVisible(false);
       } else {
         rememberInviteDismissal();
-        setMode("guide");
+        setMode(manualInstallMode());
         setInviteVisible(false);
       }
     } catch {
-      setMode("guide");
+      setMode(manualInstallMode());
     } finally {
       setInstalling(false);
     }
@@ -135,7 +141,11 @@ export function InstallCta() {
 
   if (mode === "installed") return null;
 
-  const guideHref = mode === "ios" ? "/install/#iphone" : "/install/#android";
+  const guideHref = mode === "ios"
+    ? "/install/#iphone"
+    : mode === "android"
+      ? "/install/#android"
+      : "/install/";
   const inviteTitle = mode === "ready"
     ? "P2P 계산기를 설치할까요?"
     : "P2P 계산기를 홈 화면에 추가할까요?";
@@ -143,7 +153,9 @@ export function InstallCta() {
     ? "다음부터 주소 입력 없이 바로 열 수 있습니다."
     : mode === "ios"
       ? "공유 메뉴에서 홈 화면에 추가할 수 있습니다."
-      : "브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.";
+      : mode === "android"
+        ? "Chrome 메뉴에서 홈 화면에 추가할 수 있습니다."
+        : "설치 안내에서 브라우저별 방법을 확인할 수 있습니다.";
 
   return (
     <>
@@ -159,7 +171,11 @@ export function InstallCta() {
         </button>
       ) : (
         <a className="install-entry" href={guideHref}>
-          {mode === "ios" ? "iPhone 홈 화면에 추가" : "홈 화면에 추가하는 방법"}
+          {mode === "ios"
+            ? "iPhone 홈 화면에 추가"
+            : mode === "android"
+              ? "Android 홈 화면에 추가"
+              : "홈 화면에 추가하는 방법"}
         </a>
       )}
 

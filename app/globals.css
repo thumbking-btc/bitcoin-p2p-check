@@ -205,27 +205,41 @@ a { color: inherit; }
 
 .install-page { width: min(100% - 28px, 1120px); margin-inline: auto; padding: 28px 0 88px; }
 .install-back { display: inline-flex; min-height: 44px; align-items: center; color: var(--orange-dark); font-size: 12px; font-weight: 780; text-underline-offset: 4px; }
-.install-heading { display: grid; gap: 7px; margin: 28px 0 24px; }
-.install-heading h1 { margin: 0; font-size: clamp(38px, 8vw, 68px); line-height: .98; letter-spacing: -.04em; }
-.install-heading > p:last-child { max-width: 620px; margin: 4px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.install-heading { display: grid; gap: 10px; margin: 18px 0 24px; padding: clamp(22px, 5vw, 48px); border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 16px 42px rgba(17, 24, 32, .08); }
+.install-heading .section-label { margin: 0; }
+.install-heading h1 { max-width: 780px; margin: 0; font-size: clamp(38px, 7vw, 64px); line-height: 1.02; letter-spacing: -.035em; text-wrap: balance; }
+.install-heading h1 span { display: inline-block; }
+.install-heading-copy { max-width: 720px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.install-notice { max-width: 720px; margin: 7px 0 0; padding: 11px 14px; border-left: 4px solid var(--orange); border-radius: 8px; background: #fff3e4; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.install-notice strong { color: var(--orange-dark); }
+.install-jump { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: min(100%, 480px); margin-top: 4px; }
+.install-jump a { display: grid; min-height: 52px; place-content: center; gap: 1px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); text-align: center; text-decoration: none; }
+.install-jump a:hover { border-color: var(--orange-dark); background: #fff8ef; }
+.install-jump span { font-size: 14px; font-weight: 850; }
+.install-jump small { color: var(--muted); font-size: 10px; font-weight: 700; }
 .install-guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
-.install-guide-card { min-width: 0; overflow: hidden; border: 1px solid var(--ink); background: var(--surface); box-shadow: 5px 5px 0 rgba(17, 24, 32, .1); }
-.install-guide-card > header { display: grid; gap: 4px; padding: 18px 20px; border-bottom: 1px solid var(--ink); }
+.install-guide-card { min-width: 0; overflow: hidden; scroll-margin-top: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 12px 30px rgba(17, 24, 32, .08); }
+.install-guide-card > header { display: grid; gap: 4px; padding: 20px; border-bottom: 1px solid var(--line); }
 .install-guide-card > header span { color: var(--orange-dark); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .install-guide-card h2 { margin: 0; font-size: clamp(24px, 4vw, 34px); letter-spacing: -.025em; }
-.install-guide-card > img { display: block; width: 100%; height: auto; background: var(--paper); }
-.install-steps { display: grid; gap: 8px; margin: 0; padding: 18px 20px 18px 48px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.55; }
-.install-steps li::marker { color: var(--orange-dark); font-weight: 850; }
-.install-guide-actions { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--ink); }
-.install-guide-actions a { display: grid; min-height: 48px; place-items: center; padding: 8px 10px; color: var(--ink); font-size: 13px; font-weight: 800; text-align: center; text-decoration: none; }
-.install-guide-actions a:first-child { background: var(--orange); }
-.install-guide-actions a + a { border-left: 1px solid var(--ink); }
-.install-guide-actions a:hover { background: #ffb04f; }
-.install-guide-actions a:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: -4px; }
-.install-back:focus-visible, .install-entry:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 3px; }
-.install-caveat { margin-top: 22px; padding: 20px 22px; border-left: 4px solid var(--orange); background: var(--ink); color: #fff; }
-.install-caveat strong { color: #ffc46f; font-size: 13px; }
-.install-caveat p { margin: 8px 0 0; color: #bdc6ce; font-size: 12px; line-height: 1.65; }
+.install-platform-note { margin: 14px 18px 0; padding: 10px 12px; border-left: 4px solid var(--orange); border-radius: 7px; background: #fff3e4; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.install-platform-note strong { display: block; color: var(--ink); }
+.install-guide-card > img { display: block; width: 100%; height: auto; border-top: 1px solid var(--line); background: var(--paper); }
+.install-steps { display: grid; counter-reset: install-step; gap: 9px; margin: 0; padding: 16px 20px 18px; color: var(--muted); font-size: 12px; line-height: 1.55; list-style: decimal; }
+.install-steps li { position: relative; min-height: 30px; padding: 5px 0 0 40px; }
+.install-steps li::marker { color: transparent; font-size: 0; }
+.install-steps li::before { position: absolute; top: 0; left: 0; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--orange); color: var(--ink); content: counter(install-step); counter-increment: install-step; font-size: 12px; font-weight: 900; }
+.install-guide-actions { display: grid; border-top: 1px solid var(--line); }
+.install-guide-actions a { display: grid; min-height: 50px; place-items: center; padding: 8px 12px; background: var(--orange); color: var(--ink); font-size: 13px; font-weight: 850; text-align: center; text-decoration: none; }
+.install-guide-actions a:hover { background: #ffad46; }
+.install-official-link { display: flex; min-height: 44px; align-items: center; justify-content: center; padding: 8px 12px; border-top: 1px solid var(--line); color: var(--orange-dark); font-size: 12px; font-weight: 760; text-underline-offset: 4px; }
+.install-guide-actions a:focus-visible, .install-official-link:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: -4px; }
+.install-jump a:focus-visible, .install-back:focus-visible, .install-entry:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 3px; }
+.install-caveat { margin-top: 22px; padding: 20px 22px; border-left: 4px solid var(--orange); border-radius: 14px; background: var(--ink); color: #fff; }
+.install-caveat > strong { color: #ffc46f; font-size: 14px; }
+.install-caveat p { margin: 8px 0 0; color: #c4ccd2; font-size: 12px; line-height: 1.65; }
+.install-caveat .install-online-note { margin-top: 13px; padding-top: 12px; border-top: 1px solid #3b4650; }
+.install-caveat .install-online-note strong { color: #fff; }
 
 @media (display-mode: standalone), (display-mode: minimal-ui), (display-mode: fullscreen), (display-mode: window-controls-overlay) {
   .install-entry, .install-invite { display: none; }
@@ -261,10 +275,12 @@ a { color: inherit; }
   .support-figure { width: min(280px, 100%); }
   .site-footer { align-items: flex-start; flex-direction: column; }
   .site-footer p { text-align: left; }
-  .install-page { padding-top: 14px; }
-  .install-heading { margin-top: 18px; }
+  .install-page { width: min(100% - 20px, 1120px); padding-top: 12px; }
+  .install-heading { margin-top: 12px; padding: 22px 18px; border-radius: 18px; }
+  .install-heading h1 { font-size: clamp(31px, 8.5vw, 38px); }
+  .install-heading-copy { font-size: 13px; }
   .install-guide-grid { grid-template-columns: 1fr; }
-  .install-guide-card { box-shadow: 4px 4px 0 rgba(17, 24, 32, .1); }
+  .install-guide-card { border-radius: 16px; box-shadow: 0 10px 24px rgba(17, 24, 32, .08); }
 }
 
 @media (max-width: 380px) {
@@ -294,7 +310,8 @@ a { color: inherit; }
   .network-fees dd { gap: 2px; }
   .network-fees dd strong { font-size: 17px; }
   .network-fees-note { gap: 5px; padding-inline: 7px; font-size: 10px; }
-  .install-heading h1 { font-size: clamp(29px, 9.5vw, 34px); letter-spacing: -.04em; white-space: nowrap; }
+  .install-heading h1 { font-size: clamp(30px, 9.5vw, 34px); line-height: 1.06; letter-spacing: -.035em; }
+  .install-jump span { font-size: 13px; }
 }
 
 @media (max-width: 700px) {
