@@ -7,12 +7,15 @@ const LIGHTNING_ADDRESS = "thumbking@oksu.su";
 
 export function SupportPanel() {
   const [copyStatus, setCopyStatus] = useState("");
+  const [copyFailed, setCopyFailed] = useState(false);
 
   async function copyAddress() {
     try {
       await navigator.clipboard.writeText(LIGHTNING_ADDRESS);
+      setCopyFailed(false);
       setCopyStatus("주소를 복사했습니다.");
     } catch {
+      setCopyFailed(true);
       setCopyStatus("복사하지 못했습니다. 주소를 길게 눌러 복사해 주세요.");
     }
   }
@@ -74,8 +77,14 @@ export function SupportPanel() {
             <button type="button" aria-label="라이트닝 주소 복사" onClick={copyAddress}>
               복사
             </button>
+            <p
+              className={`support-status${copyFailed ? " is-error" : ""}`}
+              aria-live="polite"
+              role={copyFailed ? "alert" : undefined}
+            >
+              {copyStatus}
+            </p>
           </figcaption>
-          <p className="support-status" aria-live="polite">{copyStatus}</p>
         </figure>
       </article>
     </section>

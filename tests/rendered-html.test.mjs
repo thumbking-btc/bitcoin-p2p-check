@@ -144,6 +144,8 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /업비트 최근 체결가/);
   assert.match(html, /업비트 프리미엄/);
   assert.match(html, /시장 참고값/);
+  assert.match(html, /시세 조회 중/);
+  assert.match(html, /시세는 합의의 기준일 뿐입니다/);
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
   assert.match(html, /온체인 송금 수수료 별도/);
   assert.doesNotMatch(html, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
@@ -165,6 +167,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(api, /disparityRate/);
   assert.doesNotMatch(api, /Coinbase|coinbaseKrwGap|frankfurter/i);
   assert.match(component, /fetch\("\/api\/market", \{ cache: "no-store" \}\)/);
+  assert.match(component, /시세 새로고침/);
   assert.match(component, /직접 시세를 입력해 계산할 수도 있습니다/);
   assert.match(component, /navigator\.share/);
   assert.match(component, /navigator\.canShare/);
@@ -207,6 +210,11 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.fund-source-field\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(component, /className=\{`result-row transfer-row/);
+  assert.match(css, /\.transfer-row dd\s*\{[^}]*font-size:/s);
+  assert.match(css, /\.creator-profile nav\s*\{[^}]*display:\s*grid/s);
+  assert.match(css, /\.support-address-card button\s*\{[^}]*width:\s*44px/s);
+  assert.match(css, /\.support-status:empty\s*\{[^}]*min-height:\s*0/s);
   assert.doesNotMatch(`${component}\n${imageRenderer}`, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
@@ -306,9 +314,13 @@ test("renders shareable iPhone and Android home-screen installation guides", asy
   const html = (await response.text()).replace(/<!-- -->/g, "");
 
   assert.match(html, /<h1[^>]*>홈 화면에 추가하기<\/h1>/);
-  assert.match(html, /Safari에서 사이트를 엽니다/);
+  assert.match(html, /Safari 아래쪽의 더 보기/);
+  assert.match(html, /빠른 메뉴에서 공유/);
+  assert.match(html, /‘간략히 보기’라고 표시된다면/);
+  assert.match(html, /펼친 목록에서 홈 화면에 추가/);
   assert.match(html, /웹 앱으로 열기/);
   assert.match(html, /설치 및 바로가기 만들기/);
+  assert.match(html, /확인 창에서 설치를 누릅니다/);
   assert.match(html, /실시간 시세 확인에는 인터넷 연결이 필요합니다/);
   assert.match(html, /src="\/install\/iphone-guide-v1\.png"/);
   assert.match(html, /src="\/install\/android-guide-v1\.png"/);

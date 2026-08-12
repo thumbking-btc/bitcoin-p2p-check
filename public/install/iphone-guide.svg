@@ -1,121 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" role="img" aria-labelledby="title desc">
-  <title id="title">iPhone에서 비트코인 P2P 계산기를 홈 화면에 추가하는 방법</title>
-  <desc id="desc">Safari의 더 보기 또는 공유 버튼, 홈 화면에 추가, 웹 앱으로 열기와 추가 버튼을 차례대로 안내합니다.</desc>
-  <style>
-    text { font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; fill: #111820; }
-    .panel { fill: #fffdf8; stroke: #c8c0b3; stroke-width: 3; }
-    .screen { fill: #f4f5f6; stroke: #111820; stroke-width: 4; }
-    .ui { font-size: 30px; font-weight: 700; }
-    .small { font-size: 24px; fill: #65707a; }
-    .label { font-size: 32px; font-weight: 800; }
-    .redbox { fill: none; stroke: #d92d20; stroke-width: 8; }
-    .red { fill: #d92d20; }
-    .white { fill: #fff; }
-    .accent { fill: #a94d00; }
-    .blue { fill: #2166d1; }
-    .gold { fill: #ffc46f; }
-    .light { fill: #d9d1c1; }
-  </style>
-  <rect width="1080" height="1920" fill="#f1eee6"/>
+  <title id="title">iPhone Safari에서 비트코인 P2P 계산기를 홈 화면에 추가하는 방법</title>
+  <desc id="desc">Safari 더 보기, 공유, 메뉴 펼치기, 홈 화면에 추가, 추가 버튼을 순서대로 안내합니다.</desc>
+  <rect width="1080" height="1920" fill="#f4f0e7"/>
 
-  <g transform="translate(66 58)">
-    <rect width="112" height="112" rx="28" fill="#111820"/>
-    <circle cx="56" cy="56" r="40" fill="#f7931a"/>
-    <text class="white" x="56" y="60" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="56" font-weight="700" transform="rotate(13.88 56 56)">₿</text>
+
+    <rect x="54" y="48" width="104" height="104" rx="24" fill="#111820" stroke="none" stroke-width="0"/>
+<circle cx="106" cy="100" r="35" fill="#f7931a"/>
+<text x="106" y="108.32" fill="#fff" font-family="Arial,sans-serif" font-size="50" font-weight="700" text-anchor="middle" transform="rotate(13.88 106 100)">₿</text>
+    <text x="188" y="92" fill="#a84b00" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="31" font-weight="800" text-anchor="start" letter-spacing="-0.5">iPhone · Safari</text>
+    <text x="188" y="155" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="57" font-weight="900" text-anchor="start" letter-spacing="-2">홈 화면에 추가하기</text>
+    <text x="56" y="218" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="25" font-weight="500" text-anchor="start" letter-spacing="-0.5">실제 화면의 핵심 버튼만 남겨 순서와 위치를 쉽게 확인할 수 있습니다.</text>
+
+
+    <rect x="51" y="258" width="978" height="272" rx="26" fill="#fffdf8" stroke="#c9c1b4" stroke-width="3"/>
+    <rect x="73" y="278" width="586" height="232" rx="22" fill="#f1f2f3" stroke="#111820" stroke-width="4"/>
+    <g transform="translate(73 278)">
+    <rect x="18" y="16" width="550" height="200" rx="18" fill="#ffffff" stroke="none" stroke-width="0"/>
+    <rect x="38" y="31" width="46" height="46" rx="11" fill="#111820" stroke="none" stroke-width="0"/>
+<circle cx="61" cy="54" r="16" fill="#f7931a"/>
+<text x="61" y="57.68" fill="#fff" font-family="Arial,sans-serif" font-size="22" font-weight="700" text-anchor="middle" transform="rotate(13.88 61 54)">₿</text>
+    <text x="100" y="66" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="23" font-weight="850" text-anchor="start" letter-spacing="-0.5">비트코인 P2P 계산기</text>
+    <rect x="37" y="82" width="512" height="42" rx="7" fill="#111820" stroke="none" stroke-width="0"/>
+    <rect x="37" y="137" width="218" height="45" rx="7" fill="#e8e2d7" stroke="none" stroke-width="0"/>
+    <rect x="269" y="137" width="280" height="45" rx="7" fill="#e8e2d7" stroke="none" stroke-width="0"/>
+    <rect x="18" y="180" width="550" height="36" rx="18" fill="#e4e7ea" stroke="none" stroke-width="0"/>
+    <text x="284" y="205" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="16" font-weight="600" text-anchor="middle" letter-spacing="-0.5">bitcoin-p2p-check…</text>
+    <rect x="498" y="170" width="62" height="55" rx="16" fill="#fff1dd" stroke="#df3327" stroke-width="7"/>
+    <text x="529" y="207" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="900" text-anchor="middle" letter-spacing="2">•••</text>
   </g>
-  <text class="accent" x="210" y="101" font-size="34" font-weight="750">iPhone · Safari</text>
-  <text x="210" y="163" font-size="62" font-weight="850" letter-spacing="-3">홈 화면에 추가하기</text>
-  <text x="68" y="224" font-size="27" fill="#65707a">빨간 표시를 순서대로 누르면 앱처럼 홈 화면에서 열 수 있습니다.</text>
 
-  <rect class="panel" x="52" y="268" width="976" height="342" rx="30"/>
-  <g transform="translate(78 290)">
-    <rect class="screen" width="566" height="296" rx="30"/>
-    <rect x="22" y="24" width="522" height="205" rx="18" fill="#fff"/>
-    <circle cx="58" cy="61" r="23" fill="#f7931a"/>
-    <text class="white" x="58" y="64" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" transform="rotate(13.88 58 61)">₿</text>
-    <text x="94" y="70" class="ui" font-size="24">비트코인 P2P 계산기</text>
-    <rect x="42" y="96" width="482" height="42" rx="7" fill="#111820"/>
-    <rect x="42" y="151" width="225" height="52" rx="7" fill="#e8e3d8"/>
-    <rect x="280" y="151" width="244" height="52" rx="7" fill="#e8e3d8"/>
-    <rect x="20" y="241" width="526" height="40" rx="20" fill="#e4e7eb"/>
-    <text x="282" y="268" text-anchor="middle" font-size="18" fill="#65707a">bitcoin-p2p-check.thumbking-btc.workers.dev</text>
-    <rect class="redbox" x="458" y="232" width="70" height="58" rx="16"/>
-    <text x="493" y="270" text-anchor="middle" font-size="38" font-weight="900">···</text>
+    <circle cx="737" cy="311" r="28" fill="#f7931a"/>
+    <text x="737" y="321" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="middle" letter-spacing="0">1</text>
+
+    <text x="777" y="321" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="start" letter-spacing="-1">더 보기 열기</text>
+    <text x="710" y="377" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">Safari 아래쪽의</text>
+<text x="710" y="418" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">… 버튼을 누릅니다.</text>
+    <text x="710" y="449" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="19" font-weight="500" text-anchor="start" letter-spacing="-0.5">공유 아이콘이 바로 보이면</text>
+<text x="710" y="480" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="19" font-weight="500" text-anchor="start" letter-spacing="-0.5">그것을 눌러도 됩니다.</text>
+
+
+    <rect x="51" y="544" width="978" height="272" rx="26" fill="#fffdf8" stroke="#c9c1b4" stroke-width="3"/>
+    <rect x="73" y="564" width="586" height="232" rx="22" fill="#f1f2f3" stroke="#111820" stroke-width="4"/>
+    <g transform="translate(73 564)">
+    <rect x="18" y="15" width="550" height="202" rx="22" fill="#ffffff" stroke="none" stroke-width="0"/>
+    <rect x="251" y="26" width="84" height="6" rx="3" fill="#c9c1b4" stroke="none" stroke-width="0"/>
+    <text x="44" y="67" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="23" font-weight="850" text-anchor="start" letter-spacing="-0.5">Safari 메뉴</text>
+    <line x1="38" y1="81" x2="548" y2="81" stroke="#e5dfd5" stroke-width="2"/>
+    <rect x="36" y="90" width="514" height="60" rx="13" fill="#fff1dd" stroke="#df3327" stroke-width="7"/>
+    <path d="M68 131v-33m-12 12 12-12 12 12" fill="none" stroke="#1677d2" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="51" y="107" width="34" height="31" rx="7" fill="none" stroke="#1677d2" stroke-width="4"/>
+    <text x="106" y="130" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="25" font-weight="850" text-anchor="start" letter-spacing="-0.5">공유</text>
+    <text x="54" y="183" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="21" font-weight="550" text-anchor="start" letter-spacing="-0.5">북마크에 추가</text>
   </g>
-  <circle class="red" cx="714" cy="333" r="34"/><text class="white" x="714" y="345" text-anchor="middle" font-size="35" font-weight="900">1</text>
-  <text x="765" y="328" class="label">Safari에서 열기</text>
-  <text x="690" y="389" class="ui">아래쪽 <tspan fill="#d92d20">···</tspan>를 누른 뒤</text>
-  <text x="690" y="437" class="ui"><tspan font-weight="850">공유</tspan>를 누릅니다.</text>
-  <text x="690" y="493" class="small">공유 아이콘이 바로</text>
-  <text x="690" y="529" class="small">보이면 그것을 누르세요.</text>
 
-  <rect class="panel" x="52" y="638" width="976" height="342" rx="30"/>
-  <g transform="translate(78 660)">
-    <rect class="screen" width="566" height="296" rx="30"/>
-    <rect x="24" y="20" width="518" height="256" rx="24" fill="#fff"/>
-    <rect x="236" y="34" width="94" height="7" rx="4" fill="#c8c0b3"/>
-    <text x="48" y="91" class="ui">Safari 메뉴</text>
-    <line x1="44" x2="522" y1="112" y2="112" stroke="#e8e3d8" stroke-width="3"/>
-    <rect x="58" y="139" width="42" height="35" rx="7" fill="none" stroke="#2166d1" stroke-width="4"/>
-    <path d="M79 158v-31M67 139l12-12 12 12" fill="none" stroke="#2166d1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="135" y="166" class="ui">공유</text>
-    <rect class="redbox" x="44" y="122" width="478" height="70" rx="14"/>
-    <text x="68" y="235" class="small">책갈피 추가</text>
+    <circle cx="737" cy="597" r="28" fill="#f7931a"/>
+    <text x="737" y="607" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="middle" letter-spacing="0">2</text>
+
+    <text x="777" y="607" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="start" letter-spacing="-1">공유 선택</text>
+    <text x="710" y="663" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">빠른 메뉴에서</text>
+<text x="710" y="704" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">공유를 누릅니다.</text>
+    <text x="710" y="766" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="19" font-weight="500" text-anchor="start" letter-spacing="-0.5">공유 창이 열립니다.</text>
+
+
+    <rect x="51" y="830" width="978" height="272" rx="26" fill="#fffdf8" stroke="#c9c1b4" stroke-width="3"/>
+    <rect x="73" y="850" width="586" height="232" rx="22" fill="#f1f2f3" stroke="#111820" stroke-width="4"/>
+    <g transform="translate(73 850)">
+    <rect x="18" y="15" width="550" height="202" rx="22" fill="#3f4246" stroke="none" stroke-width="0"/>
+    <rect x="40" y="35" width="48" height="48" rx="11" fill="#111820" stroke="none" stroke-width="0"/>
+<circle cx="64" cy="59" r="16" fill="#f7931a"/>
+<text x="64" y="62.84" fill="#fff" font-family="Arial,sans-serif" font-size="23" font-weight="700" text-anchor="middle" transform="rotate(13.88 64 59)">₿</text>
+    <text x="105" y="61" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="750" text-anchor="start" letter-spacing="-0.5">비트코인 P2P 계산기</text>
+    <text x="105" y="88" fill="#c8cbd0" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="500" text-anchor="start" letter-spacing="-0.5">bitcoin-p2p-check…</text>
+    <rect x="38" y="111" width="510" height="2" rx="0" fill="#585c61" stroke="none" stroke-width="0"/>
+    <rect x="45" y="120" width="80" height="76" rx="20" fill="#68b6ff" stroke="none" stroke-width="0"/>
+    <rect x="145" y="120" width="80" height="76" rx="20" fill="#42c766" stroke="none" stroke-width="0"/>
+    <rect x="245" y="120" width="80" height="76" rx="20" fill="#68b6ff" stroke="none" stroke-width="0"/>
+    <text x="85" y="217" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="500" text-anchor="middle" letter-spacing="-0.5">AirDrop</text>
+    <text x="185" y="217" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="500" text-anchor="middle" letter-spacing="-0.5">메시지</text>
+    <text x="285" y="217" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="500" text-anchor="middle" letter-spacing="-0.5">Mail</text>
+    <rect x="439" y="120" width="102" height="101" rx="19" fill="#fff1dd" stroke="#df3327" stroke-width="7"/>
+    <path d="M467 158l18 18 18-18" fill="none" stroke="#111820" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="490" y="211" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="750" text-anchor="middle" letter-spacing="-0.5">더 보기</text>
   </g>
-  <circle class="red" cx="714" cy="703" r="34"/><text class="white" x="714" y="715" text-anchor="middle" font-size="35" font-weight="900">2</text>
-  <text x="765" y="713" class="label">공유 누르기</text>
-  <text x="690" y="782" class="ui">메뉴에서 <tspan font-weight="850">공유</tspan>를</text>
-  <text x="690" y="830" class="ui">선택합니다.</text>
-  <text x="690" y="892" class="small">공유 버튼을 바로 눌렀다면</text>
-  <text x="690" y="928" class="small">이 단계는 건너뜁니다.</text>
 
-  <rect class="panel" x="52" y="1008" width="976" height="342" rx="30"/>
-  <g transform="translate(78 1030)">
-    <rect class="screen" width="566" height="296" rx="30"/>
-    <rect x="24" y="20" width="518" height="256" rx="24" fill="#fff"/>
-    <rect x="236" y="34" width="94" height="7" rx="4" fill="#c8c0b3"/>
-    <text x="48" y="89" class="ui">공유 메뉴</text>
-    <line x1="44" x2="522" y1="112" y2="112" stroke="#e8e3d8" stroke-width="3"/>
-    <rect x="61" y="133" width="42" height="42" rx="9" fill="#e8e3d8" stroke="#65707a" stroke-width="3"/>
-    <path d="M70 155h24M82 143v24" stroke="#111820" stroke-width="4" stroke-linecap="round"/>
-    <text x="128" y="166" class="ui">홈 화면에 추가</text>
-    <rect class="redbox" x="44" y="122" width="478" height="72" rx="14"/>
-    <text x="68" y="237" class="small">읽기 목록에 추가</text>
+    <circle cx="737" cy="883" r="28" fill="#f7931a"/>
+    <text x="737" y="893" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="middle" letter-spacing="0">3</text>
+
+    <text x="777" y="893" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="start" letter-spacing="-1">메뉴 펼치기</text>
+    <text x="710" y="949" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">공유 창에서</text>
+<text x="710" y="990" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">더 보기를 누릅니다.</text>
+    <text x="710" y="1021" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="19" font-weight="500" text-anchor="start" letter-spacing="-0.5">‘간략히 보기’라면</text>
+<text x="710" y="1052" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="19" font-weight="500" text-anchor="start" letter-spacing="-0.5">이미 펼쳐진 상태입니다.</text>
+
+
+    <rect x="51" y="1116" width="978" height="272" rx="26" fill="#fffdf8" stroke="#c9c1b4" stroke-width="3"/>
+    <rect x="73" y="1136" width="586" height="232" rx="22" fill="#f1f2f3" stroke="#111820" stroke-width="4"/>
+    <g transform="translate(73 1136)">
+    <rect x="18" y="15" width="550" height="202" rx="22" fill="#3f4246" stroke="none" stroke-width="0"/>
+    <text x="47" y="52" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="800" text-anchor="start" letter-spacing="-0.5">공유 메뉴</text>
+    <text x="538" y="52" fill="#d9dde1" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="17" font-weight="550" text-anchor="end" letter-spacing="-0.5">간략히 보기</text>
+    <line x1="38" y1="67" x2="548" y2="67" stroke="#595d62" stroke-width="2"/>
+    <text x="54" y="104" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="600" text-anchor="start" letter-spacing="-0.5">즐겨찾기에 추가</text>
+    <text x="54" y="143" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="600" text-anchor="start" letter-spacing="-0.5">빠른 메모에 추가</text>
+    <rect x="38" y="155" width="510" height="58" rx="13" fill="#fff1dd" stroke="#df3327" stroke-width="7"/>
+    <rect x="53" y="170" width="28" height="28" rx="6" fill="none" stroke="#111820" stroke-width="3"/>
+    <text x="67" y="192" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="27" font-weight="700" text-anchor="middle" letter-spacing="-0.5">+</text>
+    <text x="99" y="193" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="850" text-anchor="start" letter-spacing="-0.5">홈 화면에 추가</text>
   </g>
-  <circle class="red" cx="714" cy="1073" r="34"/><text class="white" x="714" y="1085" text-anchor="middle" font-size="35" font-weight="900">3</text>
-  <text x="765" y="1083" class="label">홈 화면에 추가</text>
-  <text x="690" y="1150" class="ui">목록을 내려</text>
-  <text x="690" y="1198" class="ui"><tspan font-weight="850">홈 화면에 추가</tspan>를</text>
-  <text x="690" y="1246" class="ui">누릅니다.</text>
-  <text x="690" y="1300" class="small">안 보이면 맨 아래</text>
-  <text x="690" y="1336" class="small">‘동작 편집’에서 추가하세요.</text>
 
-  <rect class="panel" x="52" y="1378" width="976" height="342" rx="30"/>
-  <g transform="translate(78 1400)">
-    <rect class="screen" width="566" height="296" rx="30"/>
-    <rect x="24" y="20" width="518" height="256" rx="24" fill="#fff"/>
-    <text x="48" y="72" class="ui" font-weight="850">홈 화면에 추가</text>
-    <text class="blue" x="470" y="72" font-size="28" font-weight="850">추가</text>
-    <line x1="44" x2="522" y1="96" y2="96" stroke="#e8e3d8" stroke-width="3"/>
-    <text x="48" y="143" class="small">웹 앱으로 열기</text>
-    <rect x="430" y="115" width="74" height="42" rx="21" fill="#32c759"/>
-    <circle cx="482" cy="136" r="17" fill="#fff"/>
-    <rect class="redbox" x="38" y="105" width="476" height="64" rx="14"/>
-    <rect class="redbox" x="438" y="32" width="84" height="56" rx="14"/>
-    <rect x="48" y="194" width="58" height="58" rx="14" fill="#111820"/>
-    <circle cx="77" cy="223" r="21" fill="#f7931a"/>
-    <text class="white" x="77" y="226" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="29" font-weight="700" transform="rotate(13.88 77 223)">₿</text>
-    <text x="126" y="231" font-size="25" font-weight="750">P2P 계산기</text>
+    <circle cx="737" cy="1169" r="28" fill="#f7931a"/>
+    <text x="737" y="1179" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="middle" letter-spacing="0">4</text>
+
+    <text x="777" y="1179" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="start" letter-spacing="-1">홈 화면에 추가</text>
+    <text x="710" y="1235" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">펼친 목록에서</text>
+<text x="710" y="1276" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">홈 화면에 추가를</text>
+<text x="710" y="1317" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">누릅니다.</text>
+
+
+
+    <rect x="51" y="1402" width="978" height="272" rx="26" fill="#fffdf8" stroke="#c9c1b4" stroke-width="3"/>
+    <rect x="73" y="1422" width="586" height="232" rx="22" fill="#f1f2f3" stroke="#111820" stroke-width="4"/>
+    <g transform="translate(73 1422)">
+    <rect x="18" y="15" width="550" height="202" rx="22" fill="#ffffff" stroke="none" stroke-width="0"/>
+    <text x="44" y="59" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="23" font-weight="850" text-anchor="start" letter-spacing="-0.5">홈 화면에 추가</text>
+    <rect x="474" y="25" width="77" height="47" rx="13" fill="#fff1dd" stroke="#df3327" stroke-width="7"/>
+    <text x="513" y="58" fill="#1677d2" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="850" text-anchor="middle" letter-spacing="-0.5">추가</text>
+    <line x1="38" y1="82" x2="548" y2="82" stroke="#e5dfd5" stroke-width="2"/>
+    <rect x="48" y="99" width="68" height="68" rx="16" fill="#111820" stroke="none" stroke-width="0"/>
+<circle cx="82" cy="133" r="23" fill="#f7931a"/>
+<text x="82" y="138.44" fill="#fff" font-family="Arial,sans-serif" font-size="33" font-weight="700" text-anchor="middle" transform="rotate(13.88 82 133)">₿</text>
+    <text x="135" y="127" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="23" font-weight="800" text-anchor="start" letter-spacing="-0.5">P2P 계산기</text>
+    <text x="135" y="157" fill="#63707b" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="16" font-weight="500" text-anchor="start" letter-spacing="-0.5">bitcoin-p2p-check…</text>
+    <text x="48" y="201" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="650" text-anchor="start" letter-spacing="-0.5">웹 앱으로 열기</text>
+    <rect x="470" y="177" width="72" height="38" rx="19" fill="#2cc45a" stroke="none" stroke-width="0"/>
+    <circle cx="520" cy="196" r="15" fill="#ffffff"/>
   </g>
-  <circle class="red" cx="714" cy="1443" r="34"/><text class="white" x="714" y="1455" text-anchor="middle" font-size="35" font-weight="900">4</text>
-  <text x="765" y="1453" class="label">마지막으로 추가</text>
-  <text x="690" y="1521" class="ui"><tspan font-weight="850">웹 앱으로 열기</tspan>를 켜고</text>
-  <text x="690" y="1569" class="ui">오른쪽 위 <tspan font-weight="850">추가</tspan>를</text>
-  <text x="690" y="1617" class="ui">누릅니다.</text>
-  <text x="690" y="1674" class="small">이제 홈 화면의 아이콘으로</text>
-  <text x="690" y="1710" class="small">바로 실행할 수 있습니다.</text>
 
-  <rect x="52" y="1762" width="976" height="112" rx="24" fill="#111820"/>
-  <text class="gold" x="540" y="1810" text-anchor="middle" font-size="26" font-weight="800">비트코인 P2P 계산기</text>
-  <text class="light" x="540" y="1850" text-anchor="middle" font-size="22">실시간 시세 확인에는 인터넷 연결이 필요합니다.</text>
+    <circle cx="737" cy="1455" r="28" fill="#f7931a"/>
+    <text x="737" y="1465" fill="#ffffff" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="middle" letter-spacing="0">5</text>
+
+    <text x="777" y="1465" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="29" font-weight="900" text-anchor="start" letter-spacing="-1">추가 완료</text>
+    <text x="710" y="1521" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">웹 앱으로 열기를 확인하고</text>
+<text x="710" y="1562" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">오른쪽 위 추가를</text>
+<text x="710" y="1603" fill="#111820" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="24" font-weight="700" text-anchor="start" letter-spacing="-0.5">누릅니다.</text>
+
+
+
+    <rect x="51" y="1742" width="978" height="126" rx="24" fill="#111820" stroke="none" stroke-width="0"/>
+    <text x="540" y="1793" fill="#ffbf64" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="25" font-weight="800" text-anchor="middle" letter-spacing="-0.5">iPhone의 Safari에서 진행하세요.</text>
+    <text x="540" y="1836" fill="#d8d2c7" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="500" text-anchor="middle" letter-spacing="-0.5">브라우저 버전에 따라 버튼 이름과 모양이 조금 다를 수 있습니다.</text>
+
+
 </svg>

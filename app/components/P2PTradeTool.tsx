@@ -356,7 +356,13 @@ export function P2PTradeTool() {
             <span className="brand-mark" aria-hidden="true">₿</span>
             <h1 id="tool-title">비트코인 P2P 계산기</h1>
           </div>
-          <button className="refresh-button" type="button" onClick={() => void loadMarket()} disabled={marketState === "loading"}>
+          <button
+            className="refresh-button"
+            type="button"
+            aria-label={marketState === "loading" ? "업비트 시세 조회 중" : "업비트 시세 새로고침"}
+            onClick={() => void loadMarket()}
+            disabled={marketState === "loading"}
+          >
             {marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
           </button>
         </header>
@@ -384,7 +390,10 @@ export function P2PTradeTool() {
         ) : null}
 
         <fieldset className="role-fieldset">
-          <legend>나는 비트코인을</legend>
+          <legend>
+            <span>나는 비트코인을</span>
+            <small>시세는 합의의 기준일 뿐입니다.</small>
+          </legend>
           <div className="role-options">
             <label htmlFor="trade-role-buyer" aria-label="비트코인을 삽니다. 원화를 보내고 비트코인을 받습니다.">
               <input id="trade-role-buyer" type="radio" name="trade-role" checked={tradeRole === "buyer"} onChange={() => setTradeRole("buyer")} />
@@ -410,7 +419,16 @@ export function P2PTradeTool() {
             <label className="field" htmlFor="trade-sats">
               <span>보낼 사토시</span>
               <span className="input-with-unit">
-                <input id="trade-sats" inputMode="numeric" value={focusedField === "sats" ? satsAmount : grouped(satsAmount)} onFocus={() => setFocusedField("sats")} onBlur={() => setFocusedField(null)} onChange={(event) => setSatsAmount(digitsOnly(event.target.value, 16))} aria-describedby="trade-rounding premium-note" />
+                <input
+                  id="trade-sats"
+                  inputMode="numeric"
+                  value={focusedField === "sats" ? satsAmount : grouped(satsAmount)}
+                  onFocus={() => setFocusedField("sats")}
+                  onBlur={() => setFocusedField(null)}
+                  onChange={(event) => setSatsAmount(digitsOnly(event.target.value, 16))}
+                  aria-describedby={`trade-rounding premium-note${inputOutOfRange ? " sats-error" : ""}`}
+                  aria-invalid={inputOutOfRange || undefined}
+                />
                 <b>sats</b>
               </span>
             </label>
@@ -419,7 +437,14 @@ export function P2PTradeTool() {
           <label className="field" htmlFor="seller-premium">
             <span>판매자 프리미엄 (%)</span>
             <span className="input-with-unit">
-              <input id="seller-premium" inputMode="decimal" value={premiumInput} onChange={(event) => setPremiumInput(signedDecimalOnly(event.target.value, 2))} aria-describedby="premium-note" aria-invalid={Boolean(premiumError) || undefined} />
+              <input
+                id="seller-premium"
+                inputMode="decimal"
+                value={premiumInput}
+                onChange={(event) => setPremiumInput(signedDecimalOnly(event.target.value, 2))}
+                aria-describedby={`premium-note${premiumError ? " premium-error" : ""}${premiumWarning ? " premium-warning" : ""}`}
+                aria-invalid={Boolean(premiumError) || undefined}
+              />
               <b>%</b>
             </span>
           </label>
@@ -439,8 +464,9 @@ export function P2PTradeTool() {
           </label>
           <p className="premium-note" id="premium-note">{premiumSummary}</p>
           <p className="fund-source-note" id="fund-source-note">구매자가 제공한 정보이며, 거래 전에 서로 확인해 주세요.</p>
-          {premiumError ? <p className="input-alert" role="alert">{premiumError}</p> : null}
-          {premiumWarning ? <p className="input-alert" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
+          {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
+          {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
+          {inputOutOfRange ? <p className="input-alert" id="sats-error" role="alert">비트코인 수량이 지원 범위를 넘었습니다.</p> : null}
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -454,11 +480,11 @@ export function P2PTradeTool() {
                 구매자는 판매자에게 {formatKrw(quote.paymentKrw)}을 보내고, 판매자는 구매자에게 {formatSats(quote.sats)}를 보냅니다.
               </output>
               <dl>
-                <div className={`result-row ${tradeRole === "seller" ? "primary" : ""}`}>
+                <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
                   <dt>구매자 → 판매자</dt>
-                  <dd>{formatKrw(quote.paymentKrw)}</dd>
+                  <dd>{formatKrw(quote.paymentKrw)}<small className="result-spacer" aria-hidden="true">&nbsp;</small></dd>
                 </div>
-                <div className={`result-row ${tradeRole === "buyer" ? "primary" : ""}`}>
+                <div className={`result-row transfer-row ${tradeRole === "buyer" ? "primary" : ""}`}>
                   <dt>판매자 → 구매자</dt>
                   <dd>{formatSats(quote.sats)}<small>{formatBtc(quote.sats)}</small></dd>
                 </div>
@@ -508,18 +534,21 @@ export function P2PTradeTool() {
       {marketError && referenceMode === "upbit" ? <p className="market-error" role="alert">{marketError}</p> : null}
 
       <details className="price-settings">
-        <summary><span>기준 시세 직접 입력</span><strong>{referenceLabel} · {formatKrw(referencePrice)}</strong></summary>
+        <summary>
+          <span>기준 시세 직접 입력</span>
+          <strong>{referenceMode === "manual" ? "직접 입력" : "업비트"} · {formatKrw(referencePrice)}</strong>
+        </summary>
         <div className="settings-body">
           <label className="field" htmlFor="manual-price">
             <span>1 BTC 가격</span>
             <span className="input-with-unit">
-              <input id="manual-price" inputMode="numeric" value={focusedField === "manual" ? manualPrice : grouped(manualPrice)} onFocus={() => setFocusedField("manual")} onBlur={() => setFocusedField(null)} onChange={(event) => setManualPrice(digitsOnly(event.target.value, 15))} placeholder="예: 100,000,000" />
+              <input id="manual-price" inputMode="numeric" value={focusedField === "manual" ? manualPrice : grouped(manualPrice)} onFocus={() => setFocusedField("manual")} onBlur={() => setFocusedField(null)} onChange={(event) => setManualPrice(digitsOnly(event.target.value, 15))} placeholder="예: 100,000,000" aria-describedby="manual-price-note" />
               <b>원/BTC</b>
             </span>
           </label>
           <button className="secondary-button" type="button" onClick={applyManualPrice} disabled={manualPriceNumber === null || manualPriceNumber <= 0}>이 가격 사용</button>
           {referenceMode === "manual" ? <button className="secondary-button" type="button" onClick={() => setReferenceMode("upbit")} disabled={!market?.priceKrw}>업비트 시세로 돌아가기</button> : null}
-          <p className="settings-note">직접 입력한 가격을 사용하면 적용 시각도 거래 조건에 함께 기록됩니다.</p>
+          <p className="settings-note" id="manual-price-note">직접 입력한 가격을 사용하면 적용 시각도 거래 조건에 함께 기록됩니다.</p>
         </div>
       </details>
     </section>

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { P2PTradeTool } from "./components/P2PTradeTool";
 import { SupportPanel } from "./components/SupportPanel";
 
@@ -34,7 +33,7 @@ export default function Home() {
             <section className="reference-source" aria-labelledby="source-title">
               <div>
                 <p className="section-label">데이터와 한계</p>
-                <h2 id="source-title">시세는 합의의 기준일 뿐입니다</h2>
+                <h2 id="source-title">공식 출처와 계산 한계</h2>
               </div>
               <p>업비트 최근 체결가와 업비트 데이터랩 프리미엄을 사용합니다. 이 사이트는 계산만 제공하며 원화·비트코인을 보관하거나 거래를 중개하지 않습니다.</p>
               <div className="reference-links">
@@ -51,7 +50,7 @@ export default function Home() {
       <footer className="site-footer">
         <div>
           <span>₿ 비트코인 P2P 계산기</span>
-          <Link className="install-entry" href="/install">홈 화면에 추가하는 방법</Link>
+          <a className="install-entry" href="/install/">홈 화면에 추가하는 방법</a>
         </div>
         <p>입금 확인과 온체인 전송 확인은 거래 당사자가 직접 해야 합니다.</p>
       </footer>
