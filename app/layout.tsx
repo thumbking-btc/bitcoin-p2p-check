@@ -7,7 +7,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://bitcoin-p2p-check.thumbking.workers.dev"),
+  metadataBase: new URL("https://bitcoin-p2p-check.thumbking-btc.workers.dev"),
   title: "비트코인 P2P 계산기",
   description: "업비트 최근 체결가와 판매자 프리미엄으로 P2P 거래 조건을 계산하고 공유합니다.",
   alternates: {

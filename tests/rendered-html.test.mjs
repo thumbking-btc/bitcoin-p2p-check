@@ -291,7 +291,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /apple-touch-icon[^>]*href="\/icons\/apple-touch-icon-v2\.png"/);
   assert.match(html, /href="\/install\/"/);
-  assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking\.workers\.dev\/og\.png"/);
+  assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });
 
