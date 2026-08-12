@@ -34,19 +34,22 @@ function validPremium(value) {
   return parsed;
 }
 
-export function buildTradeFragment({ side, amount, premium, fundingSource, displayUnit = "sats" }) {
+export function buildTradeFragment({ side, amount, premium, fundingSource, displayUnit = "sats", amountBasis }) {
   if (side !== "buy" && side !== "sell") return "";
   if (displayUnit !== "btc" && displayUnit !== "sats") return "";
-  const amountNumber = validAmount(String(amount), side === "buy" ? 15 : 16);
-  if (amountNumber === null || (side === "sell" && amountNumber > MAX_SATS)) return "";
+  const basis = amountBasis ?? (side === "buy" ? "krw" : "bitcoin");
+  if (basis !== "krw" && basis !== "bitcoin") return "";
+  const amountNumber = validAmount(String(amount), basis === "krw" ? 15 : 16);
+  if (amountNumber === null || (basis === "bitcoin" && amountNumber > MAX_SATS)) return "";
   const premiumNumber = validPremium(String(premium));
   const fundingCode = FUNDING_CODE_BY_SOURCE.get(fundingSource);
   if (premiumNumber === null || !fundingCode) return "";
 
   const params = new URLSearchParams();
-  params.set("v", "1");
+  params.set("v", "2");
   params.set("side", side);
-  params.set(side === "buy" ? "krw" : "sats", String(amountNumber));
+  params.set("basis", basis === "krw" ? "krw" : "btc");
+  params.set(basis === "krw" ? "krw" : "sats", String(amountNumber));
   params.set("premium", String(premiumNumber));
   params.set("fund", fundingCode);
   params.set("unit", displayUnit);
@@ -59,20 +62,32 @@ export function parseTradeFragment(fragment) {
   if (["v", "side", "premium"].some((key) => params.getAll(key).length !== 1)) return null;
   if (params.getAll("fund").length > 1) return null;
   if (params.getAll("unit").length > 1) return null;
-  if (params.get("v") !== "1") return null;
+  const version = params.get("v");
+  if (version !== "1" && version !== "2") return null;
 
   const side = params.get("side");
   if (side !== "buy" && side !== "sell") return null;
-  if (params.getAll(side === "buy" ? "krw" : "sats").length !== 1) return null;
-  if (side === "buy" && params.has("sats")) return null;
-  if (side === "sell" && params.has("krw")) return null;
+  let amountBasis;
+  if (version === "1") {
+    if (params.has("basis")) return null;
+    amountBasis = side === "buy" ? "krw" : "bitcoin";
+  } else {
+    if (params.getAll("basis").length !== 1) return null;
+    const basis = params.get("basis");
+    if (basis !== "krw" && basis !== "btc") return null;
+    amountBasis = basis === "krw" ? "krw" : "bitcoin";
+  }
 
-  const amount = validAmount(params.get(side === "buy" ? "krw" : "sats"), side === "buy" ? 15 : 16);
-  if (amount === null || (side === "sell" && amount > MAX_SATS)) return null;
+  const amountKey = amountBasis === "krw" ? "krw" : "sats";
+  if (params.getAll(amountKey).length !== 1) return null;
+  if (params.has(amountKey === "krw" ? "sats" : "krw")) return null;
+
+  const amount = validAmount(params.get(amountKey), amountBasis === "krw" ? 15 : 16);
+  if (amount === null || (amountBasis === "bitcoin" && amount > MAX_SATS)) return null;
   const premium = validPremium(params.get("premium"));
   const fundingSource = FUNDING_SOURCE_BY_CODE.get(params.get("fund") ?? "none");
   const displayUnit = params.get("unit") ?? "sats";
   if (premium === null || !fundingSource || (displayUnit !== "btc" && displayUnit !== "sats")) return null;
 
-  return { side, amount, premium, fundingSource, displayUnit };
+  return { side, amount, amountBasis, premium, fundingSource, displayUnit };
 }

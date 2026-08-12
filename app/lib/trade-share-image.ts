@@ -2,6 +2,7 @@ import { getTradeRecipientLabel } from "./trade-share-copy.mjs";
 
 export type TradeShareImageInput = {
   tradeRole: "buyer" | "seller";
+  amountBasis: "krw" | "bitcoin";
   bitcoinDisplayUnit: "btc" | "sats";
   referenceLabel: string;
   referencePriceKrw: number;
@@ -267,6 +268,9 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   if (input.bitcoinDisplayUnit !== "btc" && input.bitcoinDisplayUnit !== "sats") {
     throw new RangeError("bitcoinDisplayUnit must be btc or sats.");
   }
+  if (input.amountBasis !== "krw" && input.amountBasis !== "bitcoin") {
+    throw new RangeError("amountBasis must be krw or bitcoin.");
+  }
   if (typeof document === "undefined") {
     throw new Error("Trade share images can only be created in a browser.");
   }
@@ -377,7 +381,8 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   const premiumReference = `시장 참고 · 업비트 프리미엄 ${formatPercentFromRatio(input.koreaPremiumRatio)}`;
   fitText(context, premiumReference, 1_080, 18, 14, 500);
   context.fillText(premiumReference, 145, 716);
-  const calculationNote = "계산 기준 · 기준가 × (1 + 판매자 프리미엄) · 반올림 1 sat·1원 · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
+  const amountBasisLabel = input.amountBasis === "krw" ? "원화 금액" : "비트코인 수량";
+  const calculationNote = `금액 기준 · ${amountBasisLabel} · 기준가 × (1 + 판매자 프리미엄) · 반올림 1 sat·1원 · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음`;
   fitText(context, calculationNote, 1_080, 18, 14, 500);
   context.fillText(calculationNote, 145, 744);
   context.fillStyle = ORANGE;

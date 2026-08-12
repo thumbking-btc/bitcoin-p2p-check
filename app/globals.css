@@ -39,7 +39,7 @@ a { color: inherit; }
 
 .market-strip { display: grid; grid-template-columns: 1.35fr .85fr; border-top: 1px solid var(--ink); border-left: 1px solid var(--ink); }
 .market-cell { display: grid; min-width: 0; gap: 3px; padding: 9px 10px; border-right: 1px solid var(--ink); border-bottom: 1px solid var(--ink); background: #fff; }
-.market-cell > span, .field > span:first-child, .role-fieldset legend, .result-row dt, .section-label { color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }
+.market-cell > span, .field > span:first-child, .field > label, .role-fieldset legend, .result-row dt, .section-label { color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }
 .market-cell strong { min-width: 0; overflow-wrap: anywhere; font: 820 clamp(14px, 4vw, 20px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .market-cell:last-child strong { color: var(--orange-dark); }
 .market-cell small { color: var(--muted); font-size: 11px; line-height: 1.35; }
@@ -60,10 +60,12 @@ a { color: inherit; }
 
 .trade-form { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(112px, .8fr); gap: 8px 10px; margin-top: 10px; padding: 10px; border: 1px solid var(--line); background: #f7f3ea; }
 .field { display: grid; min-width: 0; align-content: start; }
-.field > span:first-child { display: block; margin-bottom: 5px; }
+.field > span:first-child, .field > label { display: block; margin-bottom: 5px; }
 .input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid var(--control-line); background: #fff; }
 .input-with-unit input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 9px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: 760 clamp(15px, 4vw, 18px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .input-with-unit b { display: grid; min-width: 42px; min-height: 44px; align-self: stretch; place-items: center; padding: 0 10px; border-left: 1px solid var(--soft); background: #f7f3ea; color: var(--muted); font: 780 11px/1 var(--sans); white-space: nowrap; }
+.amount-unit-select { width: 54px; min-width: 54px; min-height: 44px; align-self: stretch; padding: 0 4px; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1 var(--sans); text-align: center; }
+.amount-unit-select:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: -4px; box-shadow: none; }
 .fund-source-field { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.1fr); gap: 10px; align-items: center; }
 .fund-source-field > span { color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }
 .fund-source-field small { margin-left: 5px; color: var(--orange-dark); font-size: 10px; font-weight: 780; }
@@ -280,6 +282,7 @@ a { color: inherit; }
   .fund-source-field select { padding-inline: 8px; }
   .input-with-unit input { padding-inline: 4px; }
   .input-with-unit b { min-width: 36px; padding-inline: 4px; }
+  .amount-unit-select { width: 46px; min-width: 46px; padding-inline: 2px; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
   .capture-meta { gap: 3px 4px; }

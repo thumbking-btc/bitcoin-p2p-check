@@ -11,6 +11,8 @@ import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-s
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
 type BitcoinDisplayUnit = "btc" | "sats";
+type AmountBasis = "krw" | "bitcoin";
+type AmountInputUnit = "krw" | BitcoinDisplayUnit;
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -159,8 +161,9 @@ function downloadTradeImage(file: File) {
 
 export function P2PTradeTool() {
   const [tradeRole, setTradeRole] = useState<TradeRole>("buyer");
-  const [krwAmount, setKrwAmount] = useState("3000000");
-  const [bitcoinAmountInput, setBitcoinAmountInput] = useState("3000000");
+  const [krwAmounts, setKrwAmounts] = useState<Record<TradeRole, string>>({ buyer: "3000000", seller: "3000000" });
+  const [bitcoinAmountInputs, setBitcoinAmountInputs] = useState<Record<TradeRole, string>>({ buyer: "3000000", seller: "3000000" });
+  const [amountBasisByRole, setAmountBasisByRole] = useState<Record<TradeRole, AmountBasis>>({ buyer: "krw", seller: "bitcoin" });
   const [premiumInput, setPremiumInput] = useState("2");
   const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({
     buyer: "기재하지 않음",
@@ -222,12 +225,16 @@ export function P2PTradeTool() {
     if (!imported) return;
     const timeout = window.setTimeout(() => {
       const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
+      const importedBasis = imported.amountBasis as AmountBasis;
       setTradeRole(importedRole);
-      if (importedRole === "buyer") {
-        setKrwAmount(String(imported.amount));
-        setBitcoinAmountInput(imported.displayUnit === "btc" ? satsToBtcInput(3_000_000) : "3000000");
+      setAmountBasisByRole((current) => ({ ...current, [importedRole]: importedBasis }));
+      if (importedBasis === "krw") {
+        setKrwAmounts((current) => ({ ...current, [importedRole]: String(imported.amount) }));
       } else {
-        setBitcoinAmountInput(imported.displayUnit === "btc" ? satsToBtcInput(imported.amount) : String(imported.amount));
+        setBitcoinAmountInputs((current) => ({
+          ...current,
+          [importedRole]: imported.displayUnit === "btc" ? satsToBtcInput(imported.amount) : String(imported.amount),
+        }));
       }
       setPremiumInput(String(imported.premium));
       setFundingSources((current) => ({ ...current, [importedRole]: imported.fundingSource as FundingSource }));
@@ -259,9 +266,18 @@ export function P2PTradeTool() {
   const referenceTime = market?.priceObservedAt ?? null;
   const fundingSource = fundingSources[tradeRole];
   const fundingSourceFieldLabel = "구매자 자금 출처";
+  const amountBasis = amountBasisByRole[tradeRole];
+  const krwAmount = krwAmounts[tradeRole];
+  const bitcoinAmountInput = bitcoinAmountInputs[tradeRole];
+  const amountInputUnit: AmountInputUnit = amountBasis === "krw" ? "krw" : bitcoinDisplayUnit;
+  const amountInputLabel = amountBasis === "krw"
+    ? tradeRole === "buyer" ? "보낼 원화" : "받을 원화"
+    : tradeRole === "buyer"
+      ? bitcoinDisplayUnit === "btc" ? "받을 BTC" : "받을 사토시"
+      : bitcoinDisplayUnit === "btc" ? "보낼 BTC" : "보낼 사토시";
   const parsedBitcoinAmount = parseBitcoinAmount(bitcoinAmountInput, bitcoinDisplayUnit);
-  const amount = tradeRole === "buyer" ? numeric(krwAmount) : parsedBitcoinAmount.sats;
-  const bitcoinAmountError = tradeRole !== "seller" || !bitcoinAmountInput.trim()
+  const amount = amountBasis === "krw" ? numeric(krwAmount) : parsedBitcoinAmount.sats;
+  const bitcoinAmountError = amountBasis !== "bitcoin" || !bitcoinAmountInput.trim()
     ? ""
     : parsedBitcoinAmount.error === "precision"
       ? "BTC는 소수점 이하 8자리까지 입력하세요."
@@ -274,12 +290,12 @@ export function P2PTradeTool() {
   const quote = useMemo(() => {
     if (amount === null || referencePrice === null || premiumPercent === null) return null;
     return calculateP2PQuote({
-      mode: tradeRole === "buyer" ? "krw" : "sats",
+      mode: amountBasis === "krw" ? "krw" : "sats",
       amount,
       referencePrice,
       premiumPercent,
     });
-  }, [amount, premiumPercent, referencePrice, tradeRole]);
+  }, [amount, amountBasis, premiumPercent, referencePrice]);
 
   const multiplier = premiumPercent === null ? null : 1 + premiumPercent / 100;
   const premiumSummary = premiumPercent === null
@@ -315,6 +331,7 @@ export function P2PTradeTool() {
 
   const tradeIntent = quote ? buildTradeIntent({
     tradeRole,
+    amountBasis,
     paymentKrw: quote.paymentKrw,
     sats: quote.sats,
     bitcoinDisplayUnit,
@@ -327,6 +344,7 @@ export function P2PTradeTool() {
     `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
     "",
     "[가격 계산]",
+    `금액 기준: ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"}`,
     `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
     `판매자 프리미엄: ${premiumPercent}%`,
     `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
@@ -340,6 +358,7 @@ export function P2PTradeTool() {
     if (!quote || referencePrice === null || premiumPercent === null) return null;
     return {
       tradeRole,
+      amountBasis,
       bitcoinDisplayUnit,
       referenceLabel,
       referencePriceKrw: referencePrice,
@@ -352,7 +371,7 @@ export function P2PTradeTool() {
       btcAmount: quote.sats / SATS_PER_BTC,
       appliedPriceKrw: quote.appliedPrice,
     };
-  }, [bitcoinDisplayUnit, effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
+  }, [amountBasis, bitcoinDisplayUnit, effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
 
   const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
   const shareImageAllowed = Boolean(shareImageInput)
@@ -402,6 +421,7 @@ export function P2PTradeTool() {
     const tradeFragment = buildTradeFragment({
       side: tradeRole === "buyer" ? "buy" : "sell",
       amount: amount ?? "",
+      amountBasis,
       premium: premiumPercent ?? "",
       fundingSource,
       displayUnit: bitcoinDisplayUnit,
@@ -437,11 +457,36 @@ export function P2PTradeTool() {
 
   function changeBitcoinDisplayUnit(nextUnit: BitcoinDisplayUnit) {
     if (nextUnit === bitcoinDisplayUnit) return;
-    const current = parseBitcoinAmount(bitcoinAmountInput, bitcoinDisplayUnit);
-    setBitcoinAmountInput(current.sats === null
-      ? ""
-      : nextUnit === "btc" ? satsToBtcInput(current.sats) : String(current.sats));
+    setBitcoinAmountInputs((current) => Object.fromEntries(
+      (Object.keys(current) as TradeRole[]).map((role) => {
+        const parsed = parseBitcoinAmount(current[role], bitcoinDisplayUnit);
+        return [role, parsed.sats === null ? "" : nextUnit === "btc" ? satsToBtcInput(parsed.sats) : String(parsed.sats)];
+      }),
+    ) as Record<TradeRole, string>);
     setBitcoinDisplayUnit(nextUnit);
+    setFocusedField(null);
+  }
+
+  function changeAmountInputUnit(nextUnit: AmountInputUnit) {
+    if (nextUnit === "krw") {
+      if (quote) setKrwAmounts((current) => ({ ...current, [tradeRole]: String(quote.paymentKrw) }));
+      setAmountBasisByRole((current) => ({ ...current, [tradeRole]: "krw" }));
+      setFocusedField(null);
+      return;
+    }
+
+    const nextDisplayUnit: BitcoinDisplayUnit = nextUnit;
+    setBitcoinAmountInputs((current) => Object.fromEntries(
+      (Object.keys(current) as TradeRole[]).map((role) => {
+        if (role === tradeRole && quote) {
+          return [role, nextDisplayUnit === "btc" ? satsToBtcInput(quote.sats) : String(quote.sats)];
+        }
+        const parsed = parseBitcoinAmount(current[role], bitcoinDisplayUnit);
+        return [role, parsed.sats === null ? "" : nextDisplayUnit === "btc" ? satsToBtcInput(parsed.sats) : String(parsed.sats)];
+      }),
+    ) as Record<TradeRole, string>);
+    setBitcoinDisplayUnit(nextDisplayUnit);
+    setAmountBasisByRole((current) => ({ ...current, [tradeRole]: "bitcoin" }));
     setFocusedField(null);
   }
 
@@ -509,41 +554,46 @@ export function P2PTradeTool() {
         </fieldset>
 
         <form className="trade-form" onSubmit={(event) => event.preventDefault()}>
-          {tradeRole === "buyer" ? (
-            <label className="field" htmlFor="trade-krw">
-              <span>보낼 원화</span>
-              <span className="input-with-unit">
-                <input id="trade-krw" inputMode="numeric" value={focusedField === "krw" ? krwAmount : grouped(krwAmount)} onFocus={() => setFocusedField("krw")} onBlur={() => setFocusedField(null)} onChange={(event) => setKrwAmount(digitsOnly(event.target.value, 15))} aria-describedby="trade-rounding premium-note" />
-                <b>원</b>
-              </span>
-            </label>
-          ) : (
-            <label className="field" htmlFor="trade-bitcoin">
-              <span>{bitcoinDisplayUnit === "btc" ? "보낼 BTC" : "보낼 사토시"}</span>
-              <span className="input-with-unit">
-                <input
-                  id="trade-bitcoin"
-                  inputMode={bitcoinDisplayUnit === "btc" ? "decimal" : "numeric"}
-                  value={focusedField === "bitcoin"
+          <div className="field">
+            <label htmlFor="trade-amount">{amountInputLabel}</label>
+            <span className="input-with-unit">
+              <input
+                id="trade-amount"
+                inputMode={amountBasis === "krw" || bitcoinDisplayUnit === "sats" ? "numeric" : "decimal"}
+                value={amountBasis === "krw"
+                  ? focusedField === "krw" ? krwAmount : grouped(krwAmount)
+                  : focusedField === "bitcoin"
                     ? bitcoinAmountInput
                     : bitcoinDisplayUnit === "btc" ? groupedBtcInput(bitcoinAmountInput) : grouped(bitcoinAmountInput)}
-                  onFocus={() => setFocusedField("bitcoin")}
-                  onBlur={() => setFocusedField(null)}
-                  onChange={(event) => {
-                    if (bitcoinDisplayUnit === "sats") {
-                      setBitcoinAmountInput(digitsOnly(event.target.value, 16));
-                      return;
-                    }
-                    const normalized = normalizeBtcInput(event.target.value);
-                    if (normalized !== null) setBitcoinAmountInput(normalized);
-                  }}
-                  aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
-                  aria-invalid={Boolean(bitcoinAmountError) || undefined}
-                />
-                <b>{bitcoinDisplayUnit === "btc" ? "BTC" : "sats"}</b>
-              </span>
-            </label>
-          )}
+                onFocus={() => setFocusedField(amountBasis === "krw" ? "krw" : "bitcoin")}
+                onBlur={() => setFocusedField(null)}
+                onChange={(event) => {
+                  if (amountBasis === "krw") {
+                    setKrwAmounts((current) => ({ ...current, [tradeRole]: digitsOnly(event.target.value, 15) }));
+                    return;
+                  }
+                  if (bitcoinDisplayUnit === "sats") {
+                    setBitcoinAmountInputs((current) => ({ ...current, [tradeRole]: digitsOnly(event.target.value, 16) }));
+                    return;
+                  }
+                  const normalized = normalizeBtcInput(event.target.value);
+                  if (normalized !== null) setBitcoinAmountInputs((current) => ({ ...current, [tradeRole]: normalized }));
+                }}
+                aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
+                aria-invalid={Boolean(bitcoinAmountError) || undefined}
+              />
+              <select
+                className="amount-unit-select"
+                value={amountInputUnit}
+                onChange={(event) => changeAmountInputUnit(event.target.value as AmountInputUnit)}
+                aria-label="거래 금액 입력 단위"
+              >
+                <option value="krw">원</option>
+                <option value="sats">sats</option>
+                <option value="btc">BTC</option>
+              </select>
+            </span>
+          </div>
 
           <label className="field" htmlFor="seller-premium">
             <span>판매자 프리미엄 (%)</span>
@@ -584,14 +634,14 @@ export function P2PTradeTool() {
           <header className="result-head">
             <h2 id="result-title">거래 조건</h2>
             <label className="result-unit-select">
-              <span className="visually-hidden">비트코인 입력 및 표시 단위</span>
+              <span className="visually-hidden">비트코인 표시 단위</span>
               <select
                 value={bitcoinDisplayUnit}
                 onChange={(event) => changeBitcoinDisplayUnit(event.target.value as BitcoinDisplayUnit)}
-                aria-label="비트코인 입력 및 표시 단위"
+                aria-label="비트코인 표시 단위"
               >
-                <option value="sats">sats 기준</option>
-                <option value="btc">BTC 기준</option>
+                <option value="sats">sats로 보기</option>
+                <option value="btc">BTC로 보기</option>
               </select>
             </label>
           </header>
@@ -599,8 +649,8 @@ export function P2PTradeTool() {
             <>
               <output className="visually-hidden" aria-live="polite" aria-atomic="true">
                 {tradeRole === "buyer"
-                  ? `구매 조건. 내가 보낼 원화 ${formatKrw(quote.paymentKrw)}, 내가 받을 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}.`
-                  : `판매 조건. 내가 보낼 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}, 내가 받을 원화 ${formatKrw(quote.paymentKrw)}.`}
+                  ? `구매 조건. 내가 보낼 원화 ${formatKrw(quote.paymentKrw)}, 내가 받을 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}. ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"} 기준.`
+                  : `판매 조건. 내가 보낼 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}, 내가 받을 원화 ${formatKrw(quote.paymentKrw)}. ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"} 기준.`}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
