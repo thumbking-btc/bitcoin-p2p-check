@@ -156,10 +156,10 @@ a { color: inherit; }
 .creator-profile { display: grid; gap: 8px; min-width: 0; }
 .creator-profile h2 { margin: 0; }
 .creator-name { margin: 0; font-size: clamp(28px, 5vw, 42px); font-weight: 820; line-height: 1; letter-spacing: -.03em; }
-.creator-profile nav { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; justify-items: start; }
-.creator-profile a { display: inline-flex; min-height: 44px; align-items: center; color: var(--orange-dark); font-size: 12px; font-weight: 780; line-height: 1.35; text-decoration-thickness: 1px; text-underline-offset: 4px; white-space: nowrap; }
-.creator-profile a:first-child { align-items: flex-end; padding-bottom: 5px; }
-.creator-profile a + a { align-items: flex-start; padding-top: 5px; }
+.creator-profile nav { display: grid; grid-template-columns: minmax(0, 1fr); width: min(100%, 560px); margin-top: 4px; overflow: hidden; border: 1px solid var(--control-line); }
+.creator-profile a { display: flex; width: 100%; min-height: 48px; align-items: center; padding: 0 14px; color: var(--ink); font-size: 13px; font-weight: 780; line-height: 1.35; text-decoration: none; white-space: nowrap; }
+.creator-profile a:first-child { color: var(--orange-dark); }
+.creator-profile a + a { border-top: 1px solid var(--control-line); }
 .creator-profile a:hover { color: var(--ink); }
 .creator-profile a:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 3px; }
 .support-card { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 28px 42px; align-items: center; padding: 28px; border: 1px solid var(--ink); background: var(--surface); }
@@ -236,10 +236,8 @@ a { color: inherit; }
   .creator-card { grid-template-columns: 1fr; gap: 16px; justify-items: center; padding: 20px; }
   .creator-logo { width: 104px; height: 104px; }
   .creator-profile { width: 100%; text-align: center; }
-  .creator-profile nav { gap: 0; justify-items: stretch; margin-top: 4px; text-align: left; }
-  .creator-profile a { border: 1px solid var(--control-line); }
-  .creator-profile a:first-child { padding: 0 12px 5px; }
-  .creator-profile a + a { padding: 5px 12px 0; border-top: 0; }
+  .creator-profile nav { width: 100%; text-align: left; }
+  .creator-profile a { min-height: 48px; padding-inline: 12px; }
   .support-card { grid-template-columns: 1fr; gap: 20px; padding: 20px; }
   .support-figure { width: min(280px, 100%); }
   .site-footer { align-items: flex-start; flex-direction: column; }
