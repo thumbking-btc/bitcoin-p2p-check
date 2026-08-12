@@ -6,6 +6,7 @@ import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput 
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
 import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
+import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
 import {
   readTradeDraft,
   TRADE_DRAFT_MAX_RAW_LENGTH,
@@ -247,6 +248,15 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
+test("schedules visible market refreshes just beyond the 15-second server cache", () => {
+  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);
+  assert.equal(getMarketRefreshDelay(0, 100_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);
+  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);
+});
+
 test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
   const now = 1_800_000_000_000;
   const values = new Map();
@@ -413,6 +423,18 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /feeRates\?\.nextBlock/);
   assert.match(component, /feeRates\?\.halfHour/);
   assert.match(component, /feeRates\?\.hour/);
+  assert.match(component, /getMarketRefreshDelay\(lastMarketRefreshAtRef\.current\)/);
+  assert.match(component, /document\.visibilityState !== "visible"/);
+  assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(component, /if \(activeRefresh\) \{[\s\S]*return activeRefresh\.promise/);
+  assert.match(component, /marketRequestRef\.current === refresh/);
+  assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
+  assert.match(component, /pendingMarketSnapshotRef\.current = data/);
+  assert.match(component, /applyMarketSnapshot\(pendingSnapshot, true\)/);
+  assert.match(component, /preparedShareFormKeyRef\.current !== shareFormKey/);
+  assert.match(component, /setShareStatus\(\(current\) => formChanged/);
+  assert.doesNotMatch(component, /<dl aria-live="polite" aria-label="mempool\.space/);
   assert.doesNotMatch(component, /manualReferencePrice|기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.match(component, /navigator\.share/);
   assert.match(component, /navigator\.canShare/);
@@ -526,6 +548,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.result-row\s*\{[^}]*min-height:\s*60px/s);
   assert.match(css, /\.result-row\.primary\s*\{[^}]*box-shadow:\s*inset 4px 0 0 var\(--orange\)/s);
   assert.match(css, /\.network-fees dl\s*\{[^}]*grid-template-columns:\s*repeat\(3/s);
+  assert.match(css, /\.share-button\.is-background-preparing:disabled\s*\{[^}]*background:\s*var\(--orange\)/s);
   assert.match(component, /className="result-badge">내가 받음/);
   assert.match(component, /구매 조건\. 내가 보낼 원화/);
   assert.match(component, /판매 조건\. 내가 보낼 비트코인/);

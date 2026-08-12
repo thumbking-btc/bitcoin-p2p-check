@@ -112,6 +112,7 @@ a { color: inherit; }
 .share-button { border: 1px solid var(--orange); background: var(--orange); color: #241303; }
 .share-button:not(:disabled):hover { background: #ffab45; }
 .share-button:disabled { border-color: #9b9285; background: #d8d1c5; color: #4e5861; cursor: not-allowed; }
+.share-button.is-background-preparing:disabled { border-color: var(--orange); background: var(--orange); color: #241303; cursor: wait; }
 .share-status { min-width: 0; min-height: 15px; margin: 0; font-size: 11px; line-height: 1.35; text-align: center; }
 .share-status.is-idle { color: var(--muted); font-weight: 620; }
 .share-status.is-feedback { color: var(--green); font-weight: 720; }
