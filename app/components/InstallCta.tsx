@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  getInstallInviteDismissedUntil,
+  INSTALL_INVITE_DISMISS_KEY,
+  isInstallInviteSuppressed,
+} from "../lib/install-invite.mjs";
 
 type InstallMode = "guide" | "ios" | "ready" | "installed";
 
@@ -21,11 +26,39 @@ function isAppleMobileBrowser() {
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+function isMobileBrowser() {
+  return isAppleMobileBrowser()
+    || /Android|Mobile/i.test(navigator.userAgent)
+    || window.matchMedia("(max-width: 700px)").matches;
+}
+
+function isInviteDismissed() {
+  try {
+    return isInstallInviteSuppressed(window.localStorage.getItem(INSTALL_INVITE_DISMISS_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function rememberInviteDismissal() {
+  try {
+    window.localStorage.setItem(
+      INSTALL_INVITE_DISMISS_KEY,
+      String(getInstallInviteDismissedUntil()),
+    );
+  } catch {
+    // Storage can be unavailable in private or embedded browsers.
+  }
+}
+
 export function InstallCta() {
   const [mode, setMode] = useState<InstallMode>("guide");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [inviteVisible, setInviteVisible] = useState(false);
+  const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
+    let promptReceived = false;
     const displayQueries = ["standalone", "minimal-ui", "fullscreen", "window-controls-overlay"]
       .map((displayMode) => window.matchMedia(`(display-mode: ${displayMode})`));
 
@@ -33,25 +66,36 @@ export function InstallCta() {
       if (isInstalledDisplayMode()) {
         setDeferredPrompt(null);
         setMode("installed");
+        setInviteVisible(false);
       }
     };
     const handleBeforeInstallPrompt = (event: Event) => {
       if (isInstalledDisplayMode()) return;
+      promptReceived = true;
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
       setMode("ready");
+      if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
     };
     const handleAppInstalled = () => {
       setDeferredPrompt(null);
       setMode("installed");
+      setInviteVisible(false);
     };
 
-    const initialStateTimeout = window.setTimeout(() => {
-      setMode(isInstalledDisplayMode() ? "installed" : isAppleMobileBrowser() ? "ios" : "guide");
-    }, 0);
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     window.addEventListener("appinstalled", handleAppInstalled);
     displayQueries.forEach((query) => query.addEventListener("change", updateInstalledState));
+    const initialStateTimeout = window.setTimeout(() => {
+      if (promptReceived) return;
+      if (isInstalledDisplayMode()) {
+        setMode("installed");
+        setInviteVisible(false);
+      } else {
+        setMode(isAppleMobileBrowser() ? "ios" : "guide");
+        setInviteVisible(isMobileBrowser() && !isInviteDismissed());
+      }
+    }, 0);
 
     return () => {
       window.clearTimeout(initialStateTimeout);
@@ -65,21 +109,87 @@ export function InstallCta() {
     const prompt = deferredPrompt;
     if (!prompt) return;
     setDeferredPrompt(null);
+    setInstalling(true);
     try {
       await prompt.prompt();
       const choice = await prompt.userChoice;
-      setMode(choice.outcome === "accepted" ? "installed" : "guide");
+      if (choice.outcome === "accepted") {
+        setMode("installed");
+        setInviteVisible(false);
+      } else {
+        rememberInviteDismissal();
+        setMode("guide");
+        setInviteVisible(false);
+      }
     } catch {
       setMode("guide");
+    } finally {
+      setInstalling(false);
     }
   }
 
+  function dismissInvite() {
+    rememberInviteDismissal();
+    setInviteVisible(false);
+  }
+
   if (mode === "installed") return null;
-  if (mode === "ready") {
-    return <button className="install-entry install-entry-button" type="button" onClick={() => void install()}>홈 화면에 추가</button>;
-  }
-  if (mode === "ios") {
-    return <a className="install-entry" href="/install/#iphone">Safari에서 홈 화면에 추가</a>;
-  }
-  return <a className="install-entry" href="/install/">홈 화면에 추가하는 방법</a>;
+
+  const guideHref = mode === "ios" ? "/install/#iphone" : "/install/#android";
+  const inviteTitle = mode === "ready"
+    ? "P2P 계산기를 설치할까요?"
+    : "P2P 계산기를 홈 화면에 추가할까요?";
+  const inviteDescription = mode === "ready"
+    ? "다음부터 주소 입력 없이 바로 열 수 있습니다."
+    : mode === "ios"
+      ? "공유 메뉴에서 홈 화면에 추가할 수 있습니다."
+      : "브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.";
+
+  return (
+    <>
+      {mode === "ready" ? (
+        <button
+          aria-busy={installing}
+          className="install-entry install-entry-button"
+          disabled={installing}
+          type="button"
+          onClick={() => void install()}
+        >
+          {installing ? "설치 창 여는 중…" : "홈 화면에 추가"}
+        </button>
+      ) : (
+        <a className="install-entry" href={guideHref}>
+          {mode === "ios" ? "iPhone 홈 화면에 추가" : "홈 화면에 추가하는 방법"}
+        </a>
+      )}
+
+      {inviteVisible ? (
+        <aside className="install-invite" aria-labelledby="install-invite-title">
+          <div className="install-invite-heading">
+            <span className="install-invite-icon" aria-hidden="true">₿</span>
+            <div>
+              <h2 id="install-invite-title">{inviteTitle}</h2>
+              <p>{inviteDescription}</p>
+            </div>
+          </div>
+          <div className="install-invite-actions">
+            {mode === "ready" ? (
+              <button
+                aria-busy={installing}
+                className="install-invite-primary"
+                disabled={installing}
+                type="button"
+                onClick={() => void install()}
+              >
+                {installing ? "설치 창 여는 중…" : "설치하기"}
+              </button>
+            ) : (
+              <a className="install-invite-primary" href={guideHref}>추가 방법 보기</a>
+            )}
+            <button className="install-invite-later" type="button" onClick={dismissInvite}>나중에</button>
+          </div>
+        </aside>
+      ) : null}
+    </>
+  );
 }

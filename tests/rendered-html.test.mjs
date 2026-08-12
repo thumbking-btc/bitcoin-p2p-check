@@ -4,6 +4,11 @@ import test from "node:test";
 import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
+import {
+  getInstallInviteDismissedUntil,
+  INSTALL_INVITE_DISMISS_MS,
+  isInstallInviteSuppressed,
+} from "../app/lib/install-invite.mjs";
 
 async function readPngSize(url) {
   const buffer = await readFile(url);
@@ -40,6 +45,16 @@ test("calculates buyer and seller quotes without hiding fees", () => {
   assert.equal(buyerDiscount?.sats, 3_061_224);
   const sellerDiscount = calculateP2PQuote({ mode: "sats", amount: 3_000_000, referencePrice: 100_000_000, premiumPercent: -2 });
   assert.equal(sellerDiscount?.paymentKrw, 2_940_000);
+});
+
+test("suppresses a dismissed install invitation for one day", () => {
+  const now = 1_800_000_000_000;
+  const dismissedUntil = getInstallInviteDismissedUntil(now);
+  assert.equal(dismissedUntil, now + INSTALL_INVITE_DISMISS_MS);
+  assert.equal(isInstallInviteSuppressed(String(dismissedUntil), now), true);
+  assert.equal(isInstallInviteSuppressed(String(dismissedUntil), dismissedUntil), false);
+  assert.equal(isInstallInviteSuppressed("invalid", now), false);
+  assert.equal(isInstallInviteSuppressed(null, now), false);
 });
 
 test("rejects invalid, zero-result, non-finite, and out-of-range quotes", () => {
@@ -360,8 +375,12 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /await prompt\.userChoice/);
   assert.match(installCta, /appinstalled/);
   assert.match(installCta, /window-controls-overlay/);
-  assert.match(installCta, /Safari에서 홈 화면에 추가/);
-  assert.match(installCta, /href="\/install\/#iphone"/);
+  assert.match(installCta, /P2P 계산기를 설치할까요\?/);
+  assert.match(installCta, /설치하기/);
+  assert.match(installCta, /나중에/);
+  assert.match(installCta, /INSTALL_INVITE_DISMISS_KEY/);
+  assert.match(installCta, /"\/install\/#iphone"/);
+  assert.match(installCta, /"\/install\/#android"/);
   assert.match(serviceWorker, /bitcoin-p2p-check-v3/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
@@ -372,7 +391,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   const html = await response.text();
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /apple-touch-icon[^>]*href="\/icons\/apple-touch-icon-v2\.png"/);
-  assert.match(html, /href="\/install\/"/);
+  assert.match(html, /href="\/install\/#android"/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });

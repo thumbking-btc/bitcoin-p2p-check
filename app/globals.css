@@ -182,6 +182,20 @@ a { color: inherit; }
 .install-entry { display: inline-flex; min-height: 44px; align-items: center; color: var(--orange-dark); font-weight: 780; text-underline-offset: 3px; }
 .install-entry-button { padding: 0 12px; border: 1px solid var(--orange-dark); background: var(--orange); color: #241303; cursor: pointer; font: inherit; text-decoration: none; }
 .install-entry-button:hover { background: #ffab45; }
+.install-entry-button:disabled { background: #d8d1c5; color: #4e5861; cursor: wait; }
+.install-invite { position: fixed; z-index: 40; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 12px; display: grid; width: min(calc(100% - 24px), 440px); gap: 10px; margin-inline: auto; padding: 13px; border: 1px solid var(--ink); background: var(--surface); box-shadow: 0 12px 30px rgba(17, 24, 32, .24); color: var(--ink); }
+.install-invite-heading { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.install-invite-icon { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 50%; background: var(--orange); color: #fff; font-size: 23px; font-weight: 850; line-height: 1; transform: rotate(13.88deg); }
+.install-invite h2 { margin: 0; font-size: 15px; line-height: 1.25; letter-spacing: -.015em; }
+.install-invite p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.install-invite-actions { display: grid; grid-template-columns: minmax(0, 1fr) 82px; gap: 7px; }
+.install-invite-actions a, .install-invite-actions button { display: grid; min-height: 44px; place-items: center; padding: 7px 10px; border-radius: 0; cursor: pointer; font-size: 12px; font-weight: 800; text-align: center; text-decoration: none; }
+.install-invite-primary { border: 1px solid var(--orange-dark); background: var(--orange); color: #241303; }
+.install-invite-primary:hover { background: #ffab45; }
+.install-invite-primary:disabled { background: #d8d1c5; color: #4e5861; cursor: wait; }
+.install-invite-later { border: 1px solid var(--control-line); background: #fff; color: var(--muted); }
+.install-invite-later:hover { border-color: var(--ink); color: var(--ink); }
+.install-invite-actions a:focus-visible, .install-invite-actions button:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 2px; }
 .site-footer p { margin: 0; text-align: right; }
 
 .install-page { width: min(100% - 28px, 1120px); margin-inline: auto; padding: 28px 0 88px; }
@@ -209,7 +223,7 @@ a { color: inherit; }
 .install-caveat p { margin: 8px 0 0; color: #bdc6ce; font-size: 12px; line-height: 1.65; }
 
 @media (display-mode: standalone), (display-mode: minimal-ui), (display-mode: fullscreen), (display-mode: window-controls-overlay) {
-  .install-entry { display: none; }
+  .install-entry, .install-invite { display: none; }
 }
 
 @media (max-width: 700px) {
