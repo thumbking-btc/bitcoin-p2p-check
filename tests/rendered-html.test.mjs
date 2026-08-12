@@ -395,6 +395,13 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음/);
   assert.doesNotMatch(imageRenderer, /반올림/);
   assert.match(imageRenderer, /확인용 · 원화 입금·BTC 수령 증빙 아님/);
+  assert.match(imageRenderer, /const DARK_PANEL_HEIGHT = 652;/);
+  assert.match(imageRenderer, /const INNER_PANEL_TOP = 204;/);
+  assert.match(imageRenderer, /const INNER_PANEL_HEIGHT = 604;/);
+  assert.match(imageRenderer, /const INNER_PANEL_VERTICAL_PADDING = 35;/);
+  assert.match(imageRenderer, /roundedRect\(context, 72, 180, 1_456, DARK_PANEL_HEIGHT, 10\)/);
+  assert.match(imageRenderer, /"비트코인 기준 가격", 130, INNER_PANEL_TOP \+ INNER_PANEL_VERTICAL_PADDING/);
+  assert.match(imageRenderer, /INNER_PANEL_TOP \+ INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.match(component, /amount: amount \?\? ""/);
   assert.match(component, /premium: premiumPercent \?\? ""/);

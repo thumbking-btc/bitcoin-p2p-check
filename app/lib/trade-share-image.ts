@@ -23,6 +23,10 @@ const INK = "#101619";
 const PAPER = "#f5f0e3";
 const MUTED_PAPER = "#d9d1c1";
 const ORANGE = "#f7931a";
+const DARK_PANEL_HEIGHT = 652;
+const INNER_PANEL_TOP = 204;
+const INNER_PANEL_HEIGHT = 604;
+const INNER_PANEL_VERTICAL_PADDING = 35;
 const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 // Canonical white mark from bitcoin.org/img/icons/logotop.svg.
 // The vector already contains Bitcoin's characteristic 13.88° clockwise tilt.
@@ -305,19 +309,19 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.fillText(input.tradeRole === "buyer" ? "비트코인 구매" : "비트코인 판매", 1_412, 109);
 
   context.fillStyle = INK;
-  roundedRect(context, 72, 180, 1_456, 628, 10);
+  roundedRect(context, 72, 180, 1_456, DARK_PANEL_HEIGHT, 10);
   context.fill();
 
   context.strokeStyle = "rgba(245, 240, 227, 0.3)";
   context.lineWidth = 2;
-  roundedRect(context, 96, 204, 1_408, 580, 6);
+  roundedRect(context, 96, INNER_PANEL_TOP, 1_408, INNER_PANEL_HEIGHT, 6);
   context.stroke();
 
   context.fillStyle = MUTED_PAPER;
   context.textAlign = "left";
   context.textBaseline = "middle";
   setFont(context, 21, 600);
-  context.fillText("비트코인 기준 가격", 130, 239);
+  context.fillText("비트코인 기준 가격", 130, INNER_PANEL_TOP + INNER_PANEL_VERTICAL_PADDING);
   context.fillStyle = PAPER;
   fitText(context, input.referenceLabel, 410, 29, 21, 700);
   context.fillText(input.referenceLabel, 130, 276);
@@ -388,7 +392,11 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.fillStyle = ORANGE;
   const evidenceNote = "확인용 · 원화 입금·BTC 수령 증빙 아님";
   fitText(context, evidenceNote, 1_080, 17, 14, 700);
-  context.fillText(evidenceNote, 145, 773);
+  context.fillText(
+    evidenceNote,
+    145,
+    INNER_PANEL_TOP + INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING,
+  );
 
   context.save();
   context.strokeStyle = "rgba(245, 240, 227, 0.38)";
