@@ -1,6 +1,7 @@
 import { P2PTradeTool } from "./components/P2PTradeTool";
 import { SupportPanel } from "./components/SupportPanel";
 import { InstallCta } from "./components/InstallCta";
+import { SiteRouteNav } from "./components/SiteRouteNav";
 
 export const dynamic = "force-static";
 
@@ -53,11 +54,9 @@ export default function Home() {
         <SupportPanel />
       </main>
 
+      <InstallCta showEntry={false} />
       <footer className="site-footer">
-        <div>
-          <span>₿ 비트코인 P2P 계산기</span>
-          <InstallCta />
-        </div>
+        <SiteRouteNav current="calculator" />
         <p>입금 확인과 온체인 전송 확인은 거래 당사자가 직접 해야 합니다.</p>
       </footer>
     </>

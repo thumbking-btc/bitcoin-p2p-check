@@ -514,6 +514,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /설치하기/);
   assert.match(installCta, /나중에/);
   assert.match(installCta, /INSTALL_INVITE_DISMISS_KEY/);
+  assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
   assert.match(serviceWorker, /bitcoin-p2p-check-v3/);
@@ -527,6 +528,9 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /apple-touch-icon[^>]*href="\/icons\/apple-touch-icon-v2\.png"/);
   assert.match(html, /href="\/install\/"/);
+  assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
+  assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
+  assert.match(html, /href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });
@@ -576,6 +580,9 @@ test("renders BIP39-style home-screen installation guides for mobile and PC", as
   assert.ok(installSource.indexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/iphone-guide-v1.png"'));
   assert.ok(installSource.lastIndexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/android-guide-v1.png"'));
   assert.match(html, /href="\/"[^>]*>← 계산기로 돌아가기<\/a>/);
+  assert.match(html, /<footer class="site-footer site-footer-nav-only">/);
+  assert.match(html, /href="\/">₿ 비트코인 P2P 계산기<\/a>/);
+  assert.match(html, /aria-current="page">홈 화면에 추가하는 방법<\/span>/);
   assert.deepEqual(iphoneSize, { width: 1080, height: 1920 });
   assert.deepEqual(androidSize, { width: 1080, height: 1920 });
 });

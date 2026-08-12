@@ -57,7 +57,7 @@ function rememberInviteDismissal() {
   }
 }
 
-export function InstallCta() {
+export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
   const [mode, setMode] = useState<InstallMode>("guide");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [inviteVisible, setInviteVisible] = useState(false);
@@ -159,7 +159,7 @@ export function InstallCta() {
 
   return (
     <>
-      {mode === "ready" ? (
+      {showEntry && mode === "ready" ? (
         <button
           aria-busy={installing}
           className="install-entry install-entry-button"
@@ -169,7 +169,7 @@ export function InstallCta() {
         >
           {installing ? "설치 창 여는 중…" : "홈 화면에 추가"}
         </button>
-      ) : (
+      ) : showEntry ? (
         <a className="install-entry" href={guideHref}>
           {mode === "ios"
             ? "iPhone 홈 화면에 추가"
@@ -177,7 +177,7 @@ export function InstallCta() {
               ? "Android 홈 화면에 추가"
               : "홈 화면에 추가하는 방법"}
         </a>
-      )}
+      ) : null}
 
       {inviteVisible ? (
         <aside className="install-invite" aria-labelledby="install-invite-title">
