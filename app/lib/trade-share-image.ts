@@ -382,7 +382,7 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   fitText(context, premiumReference, 1_080, 18, 14, 500);
   context.fillText(premiumReference, 145, 716);
   const amountBasisLabel = input.amountBasis === "krw" ? "원화 금액" : "비트코인 수량";
-  const calculationNote = `금액 기준 · ${amountBasisLabel} · 기준가 × (1 + 판매자 프리미엄) · 반올림 1 sat·1원 · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음`;
+  const calculationNote = `금액 기준 · ${amountBasisLabel} · 기준가 × (1 + 판매자 프리미엄) · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음`;
   fitText(context, calculationNote, 1_080, 18, 14, 500);
   context.fillText(calculationNote, 145, 744);
   context.fillStyle = ORANGE;

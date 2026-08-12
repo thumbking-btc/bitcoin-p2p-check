@@ -350,7 +350,6 @@ export function P2PTradeTool() {
     `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
     `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
     "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
-    "반올림: 1 sat·1원",
     "확인용: 원화 입금·BTC 수령 증빙 아님",
   ].join("\n") : "";
 

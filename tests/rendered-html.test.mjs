@@ -346,6 +346,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   ].map((token) => shareTextBlock.indexOf(token));
   assert.ok(shareTextOrder.every((index) => index >= 0));
   assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
+  assert.doesNotMatch(shareTextBlock, /반올림/);
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
   assert.match(component, /BTC로 보기/);
@@ -392,6 +393,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /구매자 제공 정보 · 거래 전 상호 확인/);
   assert.match(imageRenderer, /시장 참고 · 업비트 프리미엄/);
   assert.match(imageRenderer, /온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음/);
+  assert.doesNotMatch(imageRenderer, /반올림/);
   assert.match(imageRenderer, /확인용 · 원화 입금·BTC 수령 증빙 아님/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.match(component, /amount: amount \?\? ""/);
