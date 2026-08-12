@@ -268,10 +268,11 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /구매 조건\. 내가 보낼 원화/);
   assert.match(component, /판매 조건\. 내가 보낼 비트코인/);
   assert.match(css, /\.creator-profile nav\s*\{[^}]*display:\s*grid/s);
-  assert.match(css, /\.creator-profile nav\s*\{[^}]*border:\s*1px solid var\(--control-line\)/s);
+  assert.match(css, /\.creator-profile nav\s*\{[^}]*gap:\s*8px/s);
   assert.match(css, /\.creator-profile a\s*\{[^}]*min-height:\s*48px/s);
-  assert.match(css, /\.creator-profile a\s*\{[^}]*text-decoration:\s*none/s);
-  assert.match(css, /\.creator-profile a \+ a\s*\{[^}]*border-top:/s);
+  assert.match(css, /\.creator-profile a\s*\{[^}]*border:\s*1px solid #cbd5e1/s);
+  assert.match(css, /\.creator-profile a\s*\{[^}]*border-radius:\s*7px/s);
+  assert.match(css, /\.creator-profile a\s*\{[^}]*text-decoration:\s*underline/s);
   assert.match(css, /\.support-address-card button\s*\{[^}]*width:\s*44px/s);
   assert.match(css, /\.support-status:empty\s*\{[^}]*min-height:\s*0/s);
   assert.doesNotMatch(`${component}\n${imageRenderer}`, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
