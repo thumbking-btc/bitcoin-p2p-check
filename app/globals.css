@@ -67,7 +67,7 @@ a { color: inherit; }
 .input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid var(--control-line); background: #fff; }
 .input-with-unit input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 9px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: 760 clamp(15px, 4vw, 18px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .input-with-unit b { display: grid; min-width: 42px; min-height: 44px; align-self: stretch; place-items: center; padding: 0 10px; border-left: 1px solid var(--soft); background: #f7f3ea; color: var(--muted); font: 780 11px/1 var(--sans); white-space: nowrap; }
-.amount-unit-select { width: 54px; min-width: 54px; min-height: 44px; align-self: stretch; padding: 0 4px; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1 var(--sans); text-align: center; }
+.amount-unit-select { width: 54px; min-width: 54px; min-height: 44px; align-self: stretch; padding: 0 4px; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1.3 var(--sans); text-align: center; }
 .amount-unit-select:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: -4px; box-shadow: none; }
 .fund-source-field { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.1fr); gap: 10px; align-items: center; }
 .fund-source-field > span { color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }

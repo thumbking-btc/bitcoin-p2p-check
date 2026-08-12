@@ -540,6 +540,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.input-with-unit\s*\{[^}]*display:\s*grid/s);
   assert.match(css, /\.input-with-unit b\s*\{[^}]*border-left:/s);
   assert.match(css, /\.amount-unit-select\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.amount-unit-select\s*\{[^}]*font:\s*780 11px\/1\.3 var\(--sans\)/s);
   assert.match(css, /\.fund-source-field\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
