@@ -531,23 +531,25 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });
 
-test("renders shareable iPhone and Android home-screen installation guides", async () => {
-  const [response, iphoneSize, androidSize, installSource] = await Promise.all([
+test("renders BIP39-style home-screen installation guides for mobile and PC", async () => {
+  const [response, iphoneSize, androidSize, installSource, css] = await Promise.all([
     render("/install"),
     readPngSize(new URL("../public/install/iphone-guide-v1.png", import.meta.url)),
     readPngSize(new URL("../public/install/android-guide-v1.png", import.meta.url)),
     readFile(new URL("../app/install/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<!-- -->/g, "");
 
-  assert.match(html, /<h1[^>]*><span>홈 화면에<\/span> <span>추가하기<\/span><\/h1>/);
-  assert.match(html, /자동 설치가 아닙니다/);
-  assert.match(html, /href="#iphone"[^>]*><span>iPhone<\/span><small>Safari<\/small><\/a>/);
-  assert.match(html, /href="#android"[^>]*><span>Android<\/span><small>Chrome<\/small><\/a>/);
-  assert.match(html, /Discord·X 같은 앱 안에서 열었나요\?/);
-  assert.match(html, /앱 안 브라우저에서 열었나요\?/);
-  assert.match(html, /Safari 아래쪽의 더 보기/);
+  assert.match(html, /<h1[^>]*>홈 화면에 추가하기<\/h1>/);
+  assert.match(html, /자동 다운로드와는 다릅니다/);
+  assert.match(html, /href="#iphone"[^>]*>iPhone<\/a>/);
+  assert.match(html, /href="#android"[^>]*>Android<\/a>/);
+  assert.match(html, /href="#desktop"[^>]*>PC<\/a>/);
+  assert.match(html, /Discord·X 같은 앱 안에서 열었다면 Safari로 연 뒤/);
+  assert.match(html, /앱 안 브라우저에서 열었다면 Chrome으로 연 뒤/);
+  assert.match(html, /아래쪽의 더 보기/);
   assert.match(html, /빠른 메뉴에서 공유/);
   assert.match(html, /‘간략히 보기’라고 표시된다면/);
   assert.match(html, /펼친 목록에서 홈 화면에 추가/);
@@ -555,18 +557,22 @@ test("renders shareable iPhone and Android home-screen installation guides", asy
   assert.match(html, /설치 및 바로가기 만들기/);
   assert.match(html, /확인 창에서 설치를 누릅니다/);
   assert.match(html, /실시간 시세 확인에는 인터넷 연결이 필요합니다/);
+  assert.match(html, /id="desktop"/);
+  assert.match(html, /<h2>PC에서 설치<\/h2>/);
+  assert.match(html, /주소창의 설치 아이콘/);
   assert.match(html, /src="\/install\/iphone-guide-v1\.png"/);
   assert.match(html, /src="\/install\/android-guide-v1\.png"/);
   const iphoneCard = html.match(/<article[^>]*id="iphone"[\s\S]*?<\/article>/)?.[0] ?? "";
   const androidCard = html.match(/<article[^>]*id="android"[\s\S]*?<\/article>/)?.[0] ?? "";
   assert.equal((iphoneCard.match(/<li>/g) ?? []).length, 5);
   assert.equal((androidCard.match(/<li>/g) ?? []).length, 3);
-  assert.match(iphoneCard, /1단계/);
-  assert.match(androidCard, /1단계/);
+  assert.doesNotMatch(iphoneCard, /1단계/);
+  assert.doesNotMatch(androidCard, /1단계/);
   assert.match(html, /iPhone 안내 이미지 저장/);
   assert.match(html, /Android 안내 이미지 저장/);
-  assert.match(html, /Apple 공식 안내 보기/);
-  assert.match(html, /Chrome 공식 안내 보기/);
+  assert.doesNotMatch(html, /Apple 공식 안내 보기/);
+  assert.doesNotMatch(html, /Chrome 공식 안내 보기/);
+  assert.match(css, /@media \(min-width: 761px\)[\s\S]*?\.install-guide-grid \{ align-items: stretch; \}[\s\S]*?\.install-guide-card \{ display: flex; flex-direction: column; \}[\s\S]*?\.install-guide-card > img \{ flex: 0 0 auto; margin-top: auto; \}/);
   assert.ok(installSource.indexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/iphone-guide-v1.png"'));
   assert.ok(installSource.lastIndexOf('<ol className="install-steps">') < installSource.indexOf('src="/install/android-guide-v1.png"'));
   assert.match(html, /href="\/"[^>]*>← 계산기로 돌아가기<\/a>/);
