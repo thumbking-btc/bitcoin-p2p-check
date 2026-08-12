@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" role="img" aria-labelledby="title desc">
+  <title id="title">Android에서 비트코인 P2P 계산기를 홈 화면에 설치하는 방법</title>
+  <desc id="desc">Chrome의 더보기, 설치 및 바로가기 만들기, 설치 버튼을 차례대로 안내합니다.</desc>
+  <style>
+    text { font-family: "Malgun Gothic", "Noto Sans KR", sans-serif; fill: #111820; }
+    .panel { fill: #fffdf8; stroke: #c8c0b3; stroke-width: 3; }
+    .screen { fill: #f4f5f6; stroke: #111820; stroke-width: 4; }
+    .ui { font-size: 30px; font-weight: 700; }
+    .small { font-size: 24px; fill: #65707a; }
+    .label { font-size: 32px; font-weight: 800; }
+    .redbox { fill: none; stroke: #d92d20; stroke-width: 8; }
+    .red { fill: #d92d20; }
+    .white { fill: #fff; }
+    .accent { fill: #a94d00; }
+    .gold { fill: #ffc46f; }
+    .light { fill: #d9d1c1; }
+  </style>
+  <rect width="1080" height="1920" fill="#f1eee6"/>
+
+  <g transform="translate(66 58)">
+    <rect width="112" height="112" rx="28" fill="#111820"/>
+    <circle cx="56" cy="56" r="40" fill="#f7931a"/>
+    <text class="white" x="56" y="60" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="56" font-weight="700" transform="rotate(13.88 56 56)">₿</text>
+  </g>
+  <text class="accent" x="210" y="101" font-size="34" font-weight="750">Android · Chrome</text>
+  <text x="210" y="163" font-size="62" font-weight="850" letter-spacing="-3">홈 화면에 설치하기</text>
+  <text x="68" y="224" font-size="27" fill="#65707a">빨간 표시를 순서대로 누르면 일반 앱처럼 실행할 수 있습니다.</text>
+
+  <rect class="panel" x="52" y="278" width="976" height="430" rx="30"/>
+  <g transform="translate(78 306)">
+    <rect class="screen" width="566" height="374" rx="30"/>
+    <rect x="22" y="20" width="522" height="54" rx="27" fill="#fff" stroke="#c8c0b3" stroke-width="2"/>
+    <text x="55" y="56" font-size="24" fill="#65707a">bitcoin-p2p-check.thumbking…</text>
+    <text x="508" y="57" text-anchor="middle" font-size="34" font-weight="900">⋮</text>
+    <rect class="redbox" x="474" y="10" width="68" height="74" rx="17"/>
+    <rect x="22" y="92" width="522" height="256" rx="18" fill="#fff"/>
+    <circle cx="58" cy="130" r="23" fill="#f7931a"/>
+    <text class="white" x="58" y="133" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" transform="rotate(13.88 58 130)">₿</text>
+    <text x="94" y="139" class="ui" font-size="24">비트코인 P2P 계산기</text>
+    <rect x="42" y="166" width="482" height="48" rx="7" fill="#111820"/>
+    <rect x="42" y="230" width="225" height="70" rx="7" fill="#e8e3d8"/>
+    <rect x="280" y="230" width="244" height="70" rx="7" fill="#e8e3d8"/>
+  </g>
+  <circle class="red" cx="714" cy="354" r="34"/><text class="white" x="714" y="366" text-anchor="middle" font-size="35" font-weight="900">1</text>
+  <text x="765" y="364" class="label">Chrome에서 열기</text>
+  <text x="690" y="438" class="ui">오른쪽 위의</text>
+  <text x="690" y="490" class="ui"><tspan fill="#d92d20" font-weight="900">⋮</tspan> <tspan font-weight="850">더보기</tspan>를 누릅니다.</text>
+  <text x="690" y="560" class="small">주소창 옆 세로 점 3개</text>
+  <text x="690" y="598" class="small">버튼입니다.</text>
+
+  <rect class="panel" x="52" y="746" width="976" height="430" rx="30"/>
+  <g transform="translate(78 774)">
+    <rect class="screen" width="566" height="374" rx="30"/>
+    <rect x="100" y="18" width="442" height="338" rx="18" fill="#fff" stroke="#c8c0b3" stroke-width="2"/>
+    <text x="132" y="72" class="ui">새 탭</text>
+    <text x="132" y="126" class="ui">방문 기록</text>
+    <text x="132" y="180" class="ui">다운로드</text>
+    <line x1="122" x2="520" y1="205" y2="205" stroke="#e8e3d8" stroke-width="3"/>
+    <text x="132" y="259" class="ui">설치 및 바로가기 만들기</text>
+    <path d="M486 240l14 14-14 14" fill="none" stroke="#65707a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect class="redbox" x="116" y="216" width="410" height="72" rx="14"/>
+    <text x="132" y="330" class="ui">설정</text>
+  </g>
+  <circle class="red" cx="714" cy="822" r="34"/><text class="white" x="714" y="834" text-anchor="middle" font-size="35" font-weight="900">2</text>
+  <text x="765" y="832" class="label">설치 메뉴 선택</text>
+  <text x="690" y="908" class="ui"><tspan font-weight="850">설치 및 바로가기</tspan></text>
+  <text x="690" y="958" class="ui"><tspan font-weight="850">만들기</tspan>를 누릅니다.</text>
+  <text x="690" y="1028" class="small">기기에 따라 ‘앱 설치’ 또는</text>
+  <text x="690" y="1066" class="small">‘홈 화면에 추가’로 보일 수 있습니다.</text>
+
+  <rect class="panel" x="52" y="1214" width="976" height="430" rx="30"/>
+  <g transform="translate(78 1242)">
+    <rect class="screen" width="566" height="374" rx="30"/>
+    <rect x="42" y="42" width="482" height="286" rx="24" fill="#fff" stroke="#c8c0b3" stroke-width="2"/>
+    <rect x="72" y="74" width="66" height="66" rx="16" fill="#111820"/>
+    <circle cx="105" cy="107" r="24" fill="#f7931a"/>
+    <text class="white" x="105" y="110" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" transform="rotate(13.88 105 107)">₿</text>
+    <text x="158" y="102" font-size="29" font-weight="850">비트코인 P2P 계산기</text>
+    <text x="158" y="136" class="small" font-size="20">앱을 설치하시겠습니까?</text>
+    <line x1="66" x2="500" y1="190" y2="190" stroke="#e8e3d8" stroke-width="3"/>
+    <text x="332" y="263" font-size="28" font-weight="800" fill="#65707a">취소</text>
+    <rect x="390" y="218" width="108" height="68" rx="18" fill="#111820"/>
+    <text class="white" x="444" y="262" text-anchor="middle" font-size="28" font-weight="850">설치</text>
+    <rect class="redbox" x="380" y="208" width="128" height="88" rx="22"/>
+  </g>
+  <circle class="red" cx="714" cy="1290" r="34"/><text class="white" x="714" y="1302" text-anchor="middle" font-size="35" font-weight="900">3</text>
+  <text x="765" y="1300" class="label">설치 완료</text>
+  <text x="690" y="1376" class="ui">하위 메뉴의 <tspan font-weight="850">설치</tspan>와</text>
+  <text x="690" y="1426" class="ui">확인창의 <tspan font-weight="850">설치</tspan>를</text>
+  <text x="690" y="1476" class="ui">차례로 누릅니다.</text>
+  <text x="690" y="1546" class="small">이제 홈 화면의 아이콘으로</text>
+  <text x="690" y="1584" class="small">바로 실행할 수 있습니다.</text>
+
+  <rect x="52" y="1690" width="976" height="154" rx="24" fill="#111820"/>
+  <text class="gold" x="540" y="1748" text-anchor="middle" font-size="27" font-weight="800">버튼 이름은 Chrome 버전에 따라 조금 다를 수 있습니다.</text>
+  <text class="light" x="540" y="1792" text-anchor="middle" font-size="23">이미 설치했다면 설치 메뉴가 보이지 않을 수 있습니다.</text>
+  <text class="light" x="540" y="1829" text-anchor="middle" font-size="23">실시간 시세 확인에는 인터넷 연결이 필요합니다.</text>
+</svg>
