@@ -463,7 +463,7 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
@@ -473,6 +473,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
     readFile(new URL("../public/icons/app-icon.svg", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../public/og-v2.png", import.meta.url)),
   ]);
   const manifest = JSON.parse(manifestText);
 
@@ -500,6 +501,12 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
     { width: 512, height: 512 },
     { width: 180, height: 180 },
   ]);
+  assert.equal(ogImage.subarray(1, 4).toString("ascii"), "PNG");
+  assert.deepEqual(
+    { width: ogImage.readUInt32BE(16), height: ogImage.readUInt32BE(20) },
+    { width: 1200, height: 630 },
+  );
+  assert.ok(ogImage.byteLength < 500_000, `OG image is too large: ${ogImage.byteLength} bytes`);
 
   assert.match(appIconSource, /rotate\(13\.88 256 256\)/);
   assert.match(maskableSource, /rotate\(13\.88 256 256\)/);
@@ -540,8 +547,14 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(registration, /"is-installed-pwa"/);
   assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
   assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
-  assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
-  assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
+  assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다\. 공유된 조건은 현재 시세로 다시 계산됩니다\."/);
+  assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
+  assert.match(html, /property="og:image:width" content="1200"/);
+  assert.match(html, /property="og:image:height" content="630"/);
+  assert.match(html, /property="og:image:alt" content="비트코인 P2P 계산기 — 원화와 비트코인 거래 조건 계산 및 공유"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
+  assert.doesNotMatch(html, /https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png/);
+  assert.doesNotMatch(html, /http:\/\/localhost:3000\/og-v2\.png/);
 });
 
 test("renders BIP39-style home-screen installation guides for mobile and PC", async () => {

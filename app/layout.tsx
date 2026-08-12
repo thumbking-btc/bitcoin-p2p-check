@@ -26,16 +26,21 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "비트코인 P2P 계산기",
-    description: "원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다.",
+    description: "원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다. 공유된 조건은 현재 시세로 다시 계산됩니다.",
     type: "website",
     locale: "ko_KR",
-    images: [{ url: "/og.png", width: 1727, height: 911, alt: "비트코인 P2P 거래 조건 계산 예시" }],
+    images: [{
+      url: "/og-v2.png",
+      width: 1200,
+      height: 630,
+      alt: "비트코인 P2P 계산기 — 원화와 비트코인 거래 조건 계산 및 공유",
+    }],
   },
   twitter: {
     card: "summary_large_image",
     title: "비트코인 P2P 계산기",
-    description: "원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다.",
-    images: ["/og.png"],
+    description: "원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다. 공유된 조건은 현재 시세로 다시 계산됩니다.",
+    images: ["/og-v2.png"],
   },
 };
 

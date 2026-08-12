@@ -18,6 +18,10 @@
 /icons/*-v2.png
   Cache-Control: public, max-age=31536000, immutable
 
+/og-v2.png
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: image/png
+
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
 
