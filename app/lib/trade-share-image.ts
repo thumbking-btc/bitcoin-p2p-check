@@ -1,5 +1,8 @@
+import { getTradeRecipientLabel } from "./trade-share-copy.mjs";
+
 export type TradeShareImageInput = {
   tradeRole: "buyer" | "seller";
+  bitcoinDisplayUnit: "btc" | "sats";
   referenceLabel: string;
   referencePriceKrw: number;
   referenceTime: string | number | Date | null;
@@ -83,7 +86,6 @@ function formatSats(value: number) {
 
 function formatBtc(value: number) {
   return `${value.toLocaleString("ko-KR", {
-    minimumFractionDigits: 1,
     maximumFractionDigits: 8,
   })} BTC`;
 }
@@ -187,10 +189,11 @@ function drawFlowRow(
     label: string;
     value: string;
     subvalue?: string;
+    recipientLabel?: string;
     highlighted: boolean;
   },
 ) {
-  const { y, label, value, subvalue, highlighted } = options;
+  const { y, label, value, subvalue, recipientLabel, highlighted } = options;
   drawPersonIcon(context, 175, y);
 
   if (highlighted) {
@@ -203,7 +206,19 @@ function drawFlowRow(
   context.textAlign = "left";
   context.textBaseline = "middle";
   setFont(context, 38, 700);
-  context.fillText(label, 260, y);
+  context.fillText(label, 260, recipientLabel ? y - 15 : y);
+
+  if (recipientLabel) {
+    setFont(context, 20, 800);
+    const badgeWidth = Math.ceil(context.measureText(recipientLabel).width) + 32;
+    context.fillStyle = ORANGE;
+    roundedRect(context, 260, y + 11, badgeWidth, 34, 17);
+    context.fill();
+    context.fillStyle = INK;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(recipientLabel, 260 + badgeWidth / 2, y + 28);
+  }
 
   context.fillStyle = highlighted ? ORANGE : PAPER;
   context.textAlign = "right";
@@ -248,6 +263,9 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   }
   if (!input.buyerFundingSource.trim()) {
     throw new RangeError("buyerFundingSource must not be empty.");
+  }
+  if (input.bitcoinDisplayUnit !== "btc" && input.bitcoinDisplayUnit !== "sats") {
+    throw new RangeError("bitcoinDisplayUnit must be btc or sats.");
   }
   if (typeof document === "undefined") {
     throw new Error("Trade share images can only be created in a browser.");
@@ -314,18 +332,21 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   );
 
   drawRule(context, 322);
+  const recipientLabel = getTradeRecipientLabel(input.tradeRole);
   drawFlowRow(context, {
     y: 390,
     label: "구매자 → 판매자",
     value: formatKrw(input.paymentKrw),
+    recipientLabel: input.tradeRole === "seller" ? recipientLabel : undefined,
     highlighted: input.tradeRole === "seller",
   });
   drawRule(context, 458);
   drawFlowRow(context, {
     y: 528,
     label: "판매자 → 구매자",
-    value: formatSats(input.sats),
-    subvalue: formatBtc(input.btcAmount),
+    value: input.bitcoinDisplayUnit === "btc" ? formatBtc(input.btcAmount) : formatSats(input.sats),
+    subvalue: input.bitcoinDisplayUnit === "btc" ? formatSats(input.sats) : formatBtc(input.btcAmount),
+    recipientLabel: input.tradeRole === "buyer" ? recipientLabel : undefined,
     highlighted: input.tradeRole === "buyer",
   });
   drawRule(context, 598);

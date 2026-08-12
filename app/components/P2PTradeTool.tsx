@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { calculateP2PQuote, MAX_SATS, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
+import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "sats" | null;
+type BitcoinDisplayUnit = "btc" | "sats";
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -164,6 +166,7 @@ export function P2PTradeTool() {
     seller: "기재하지 않음",
   });
   const [importedTradeLink, setImportedTradeLink] = useState(false);
+  const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>("sats");
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [marketState, setMarketState] = useState<"loading" | "ready" | "error">("loading");
@@ -223,6 +226,7 @@ export function P2PTradeTool() {
       else setSatsAmount(String(imported.amount));
       setPremiumInput(String(imported.premium));
       setFundingSources((current) => ({ ...current, [importedRole]: imported.fundingSource as FundingSource }));
+      setBitcoinDisplayUnit(imported.displayUnit as BitcoinDisplayUnit);
       setImportedTradeLink(true);
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }, 0);
@@ -295,14 +299,22 @@ export function P2PTradeTool() {
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
         : "mempool.space · 조회 불가";
 
-  const shareText = quote && multiplier !== null ? [
-    "[비트코인 P2P 거래 조건]",
-    `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
-    `시각: ${formatTime(referenceTime)}`,
-    `판매자 프리미엄: ${premiumPercent}%`,
-    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
+  const tradeIntent = quote ? buildTradeIntent({
+    tradeRole,
+    paymentKrw: quote.paymentKrw,
+    sats: quote.sats,
+    bitcoinDisplayUnit,
+  }) : "";
+  const shareText = quote && multiplier !== null && tradeIntent ? [
+    tradeIntent,
+    `계산 시각: ${formatTime(referenceTime)}`,
     `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
-    `판매자 → 구매자: ${formatSats(quote.sats)} (${formatBtc(quote.sats)})`,
+    `판매자 → 구매자: ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)} (${bitcoinDisplayUnit === "btc" ? formatSats(quote.sats) : formatBtc(quote.sats)})`,
+    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
+    "",
+    "[가격 계산]",
+    `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
+    `판매자 프리미엄: ${premiumPercent}%`,
     `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
     `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
     "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
@@ -314,6 +326,7 @@ export function P2PTradeTool() {
     if (!quote || referencePrice === null || premiumPercent === null) return null;
     return {
       tradeRole,
+      bitcoinDisplayUnit,
       referenceLabel,
       referencePriceKrw: referencePrice,
       referenceTime,
@@ -325,7 +338,7 @@ export function P2PTradeTool() {
       btcAmount: quote.sats / SATS_PER_BTC,
       appliedPriceKrw: quote.appliedPrice,
     };
-  }, [effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
+  }, [bitcoinDisplayUnit, effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
 
   const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
   const shareImageAllowed = Boolean(shareImageInput)
@@ -377,6 +390,7 @@ export function P2PTradeTool() {
       amount: amount ?? "",
       premium: premiumPercent ?? "",
       fundingSource,
+      displayUnit: bitcoinDisplayUnit,
     });
     const tradeLink = tradeFragment ? `${window.location.origin}/${tradeFragment}` : "";
     const textWithLink = tradeLink
@@ -387,7 +401,7 @@ export function P2PTradeTool() {
     try {
       const outcome = await shareImageFile({
         file: preparedShareFile,
-        title: "비트코인 P2P 거래 조건",
+        title: tradeIntent,
         text: textWithLink,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
         nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
@@ -449,7 +463,7 @@ export function P2PTradeTool() {
         ) : null}
         {importedTradeLink ? (
           <p className="imported-trade-notice" role="status">
-            공유된 입력값을 불러와 현재 업비트 시세로 다시 계산했습니다. 링크의 값은 수정될 수 있으니 거래 전에 다시 확인하세요.
+            공유된 입력값을 현재 업비트 시세로 다시 계산했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
           </p>
         ) : null}
 
@@ -536,14 +550,24 @@ export function P2PTradeTool() {
         <section className="trade-result" aria-labelledby="result-title">
           <header className="result-head">
             <h2 id="result-title">거래 조건</h2>
-            <span>{tradeRole === "buyer" ? "구매 금액 기준" : "판매 수량 기준"}</span>
+            <label className="result-unit-select">
+              <span className="visually-hidden">비트코인 표시 단위</span>
+              <select
+                value={bitcoinDisplayUnit}
+                onChange={(event) => setBitcoinDisplayUnit(event.target.value as BitcoinDisplayUnit)}
+                aria-label="비트코인 표시 단위"
+              >
+                <option value="sats">sats로 보기</option>
+                <option value="btc">BTC로 보기</option>
+              </select>
+            </label>
           </header>
           {quote && multiplier !== null ? (
             <>
               <output className="visually-hidden" aria-live="polite" aria-atomic="true">
                 {tradeRole === "buyer"
-                  ? `구매 조건. 내가 보낼 원화 ${formatKrw(quote.paymentKrw)}, 내가 받을 비트코인 ${formatSats(quote.sats)}.`
-                  : `판매 조건. 내가 보낼 비트코인 ${formatSats(quote.sats)}, 내가 받을 원화 ${formatKrw(quote.paymentKrw)}.`}
+                  ? `구매 조건. 내가 보낼 원화 ${formatKrw(quote.paymentKrw)}, 내가 받을 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}.`
+                  : `판매 조건. 내가 보낼 비트코인 ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}, 내가 받을 원화 ${formatKrw(quote.paymentKrw)}.`}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
@@ -552,7 +576,10 @@ export function P2PTradeTool() {
                 </div>
                 <div className={`result-row transfer-row ${tradeRole === "buyer" ? "primary" : ""}`}>
                   <dt>판매자 → 구매자{tradeRole === "buyer" ? <small className="result-badge">내가 받음</small> : null}</dt>
-                  <dd>{formatSats(quote.sats)}<small>{formatBtc(quote.sats)}</small></dd>
+                  <dd>
+                    {bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}
+                    <small>{bitcoinDisplayUnit === "btc" ? formatSats(quote.sats) : formatBtc(quote.sats)}</small>
+                  </dd>
                 </div>
                 <div className="result-row">
                   <dt>판매자가 파는 BTC 가격</dt>
@@ -599,7 +626,7 @@ export function P2PTradeTool() {
 
       <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">
         <header>
-          <h2 id="network-fees-title">현재 온체인 수수료율</h2>
+          <h2 id="network-fees-title">현재 온체인 수수료율<small>· 참고용</small></h2>
           <p>{feeStatus}</p>
         </header>
         <dl aria-live="polite" aria-label="mempool.space 권장 온체인 수수료율">

@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
+import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import {
   getInstallInviteDismissedUntil,
@@ -45,6 +46,27 @@ test("calculates buyer and seller quotes without hiding fees", () => {
   assert.equal(buyerDiscount?.sats, 3_061_224);
   const sellerDiscount = calculateP2PQuote({ mode: "sats", amount: 3_000_000, referencePrice: 100_000_000, premiumPercent: -2 });
   assert.equal(sellerDiscount?.paymentKrw, 2_940_000);
+});
+
+test("writes a natural buy or sell sentence at the start of a share", () => {
+  assert.equal(
+    buildTradeIntent({ tradeRole: "buyer", paymentKrw: 10_000, sats: 10_000 }),
+    "비트코인 10,000원어치 삽니다.",
+  );
+  assert.equal(
+    buildTradeIntent({ tradeRole: "seller", paymentKrw: 10_000, sats: 10_000_000, bitcoinDisplayUnit: "btc" }),
+    "0.1 BTC 팝니다.",
+  );
+  assert.equal(
+    buildTradeIntent({ tradeRole: "seller", paymentKrw: 10_000, sats: 1, bitcoinDisplayUnit: "btc" }),
+    "0.00000001 BTC 팝니다.",
+  );
+  assert.equal(
+    buildTradeIntent({ tradeRole: "seller", paymentKrw: 10_000, sats: 10_000_000, bitcoinDisplayUnit: "sats" }),
+    "10,000,000 sats 팝니다.",
+  );
+  assert.equal(getTradeRecipientLabel("buyer"), "구매자가 받음");
+  assert.equal(getTradeRecipientLabel("seller"), "판매자가 받음");
 });
 
 test("suppresses a dismissed install invitation for one day", () => {
@@ -128,15 +150,19 @@ test("blocks stale or loading Upbit references", () => {
 });
 
 test("round-trips validated trade inputs in a server-private URL fragment", () => {
-  const buyerFragment = buildTradeFragment({ side: "buy", amount: "3000000", premium: "2", fundingSource: "근로소득" });
-  assert.equal(buyerFragment, "#v=1&side=buy&krw=3000000&premium=2&fund=salary");
-  assert.deepEqual(parseTradeFragment(buyerFragment), { side: "buy", amount: 3_000_000, premium: 2, fundingSource: "근로소득" });
+  const buyerFragment = buildTradeFragment({ side: "buy", amount: "3000000", premium: "2", fundingSource: "근로소득", displayUnit: "btc" });
+  assert.equal(buyerFragment, "#v=1&side=buy&krw=3000000&premium=2&fund=salary&unit=btc");
+  assert.deepEqual(parseTradeFragment(buyerFragment), { side: "buy", amount: 3_000_000, premium: 2, fundingSource: "근로소득", displayUnit: "btc" });
 
-  const sellerFragment = buildTradeFragment({ side: "sell", amount: "3000000", premium: "-2.5", fundingSource: "기재하지 않음" });
-  assert.deepEqual(parseTradeFragment(sellerFragment), { side: "sell", amount: 3_000_000, premium: -2.5, fundingSource: "기재하지 않음" });
+  const sellerFragment = buildTradeFragment({ side: "sell", amount: "3000000", premium: "-2.5", fundingSource: "기재하지 않음", displayUnit: "sats" });
+  assert.deepEqual(parseTradeFragment(sellerFragment), { side: "sell", amount: 3_000_000, premium: -2.5, fundingSource: "기재하지 않음", displayUnit: "sats" });
   assert.equal(
     buildTradeFragment({ side: "buy", amount: Number("03000000"), premium: Number("2."), fundingSource: "기재하지 않음" }),
-    "#v=1&side=buy&krw=3000000&premium=2&fund=none",
+    "#v=1&side=buy&krw=3000000&premium=2&fund=none&unit=sats",
+  );
+  assert.deepEqual(
+    parseTradeFragment("#v=1&side=buy&krw=3000000&premium=2&fund=none"),
+    { side: "buy", amount: 3_000_000, premium: 2, fundingSource: "기재하지 않음", displayUnit: "sats" },
   );
   for (const malformed of [
     "#v=2&side=buy&krw=3000000&premium=2&fund=none",
@@ -145,6 +171,8 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
     "#v=1&side=buy&krw=3000000&premium=-100&fund=none",
     "#v=1&side=buy&krw=3000000&premium=2&fund=unknown",
     "#v=1&side=buy&krw=3000000&premium=2&premium=3&fund=none",
+    "#v=1&side=buy&krw=3000000&premium=2&fund=none&unit=bits",
+    "#v=1&side=buy&krw=3000000&premium=2&fund=none&unit=btc&unit=sats",
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
@@ -188,6 +216,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
   assert.match(html, /<b>확인용:<\/b><span>원화 입금·BTC 수령 증빙 아님<\/span>/);
   assert.match(html, /현재 온체인 수수료율/);
+  assert.match(html, /· 참고용/);
   assert.match(html, /다음 블록/);
   assert.match(html, /약 30분/);
   assert.match(html, /약 1시간/);
@@ -236,11 +265,35 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /buyerFundingSource: fundingSource/);
   assert.match(component, /구매자 자금 출처: \$\{fundingSource\}/);
   assert.match(component, /구매자 제공 정보 · 거래 전 상호 확인/);
+  assert.match(component, /계산 시각:/);
+  assert.match(component, /\[가격 계산\]/);
+  const shareTextBlock = component.slice(
+    component.indexOf("const shareText ="),
+    component.indexOf("].join(\"\\n\")", component.indexOf("const shareText =")),
+  );
+  const shareTextOrder = [
+    "tradeIntent,",
+    "`계산 시각:",
+    "`구매자 → 판매자:",
+    "`판매자 → 구매자:",
+    "`구매자 자금 출처:",
+    '"[가격 계산]"',
+    "`기준:",
+    "`판매자 프리미엄:",
+  ].map((token) => shareTextBlock.indexOf(token));
+  assert.ok(shareTextOrder.every((index) => index >= 0));
+  assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
+  assert.match(component, /buildTradeIntent/);
+  assert.match(component, /title: tradeIntent/);
+  assert.match(component, /BTC로 보기/);
+  assert.match(component, /sats로 보기/);
+  assert.match(component, /비트코인 표시 단위/);
   assert.match(shareTransport, /files: \[file\]/);
   assert.match(component, /현재 시세로 다시 계산하기:/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
   assert.match(component, /window\.history\.replaceState/);
   assert.match(component, /현재 업비트 시세로 다시 계산했습니다/);
+  assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
   assert.match(component, /거래 조건 준비 중/);
@@ -252,6 +305,10 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /referencePriceKrw/);
   assert.match(imageRenderer, /구매자 → 판매자/);
   assert.match(imageRenderer, /판매자 → 구매자/);
+  assert.match(imageRenderer, /bitcoinDisplayUnit/);
+  assert.match(imageRenderer, /recipientLabel/);
+  assert.match(imageRenderer, /getTradeRecipientLabel/);
+  assert.doesNotMatch(imageRenderer, /내가 받음/);
   assert.match(imageRenderer, /판매자 프리미엄/);
   assert.match(imageRenderer, /buyerFundingSource/);
   assert.match(imageRenderer, /구매자 자금 출처/);

@@ -1,0 +1,44 @@
+const SATS_PER_BTC = 100_000_000;
+
+function finitePositive(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * @param {{
+ *   tradeRole: "buyer" | "seller";
+ *   paymentKrw: number;
+ *   sats: number;
+ *   bitcoinDisplayUnit?: "btc" | "sats";
+ * }} input
+ */
+export function buildTradeIntent(input) {
+  const paymentKrw = finitePositive(input.paymentKrw);
+  const sats = finitePositive(input.sats);
+  if (paymentKrw === null || sats === null) return "";
+
+  if (input.tradeRole === "buyer") {
+    return `비트코인 ${Math.round(paymentKrw).toLocaleString("ko-KR")}원어치 삽니다.`;
+  }
+
+  if (input.tradeRole === "seller") {
+    if (input.bitcoinDisplayUnit !== "btc") {
+      return `${Math.round(sats).toLocaleString("ko-KR")} sats 팝니다.`;
+    }
+    const btc = (sats / SATS_PER_BTC).toLocaleString("ko-KR", {
+      maximumFractionDigits: 8,
+      useGrouping: false,
+    });
+    return `${btc} BTC 팝니다.`;
+  }
+
+  return "";
+}
+
+/** @param {"buyer" | "seller"} tradeRole */
+export function getTradeRecipientLabel(tradeRole) {
+  if (tradeRole === "buyer") return "구매자가 받음";
+  if (tradeRole === "seller") return "판매자가 받음";
+  return "";
+}
