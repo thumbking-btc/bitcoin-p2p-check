@@ -25,6 +25,9 @@ a { color: inherit; }
 
 .site-main { width: min(100% - 28px, 880px); margin-inline: auto; padding: 18px 0 96px; }
 .trade-tool { border: 1px solid var(--ink); background: var(--surface); box-shadow: 7px 7px 0 rgba(17, 24, 32, .12); }
+.trade-tool.is-draft-hydrating .role-fieldset,
+.trade-tool.is-draft-hydrating .trade-form,
+.trade-tool.is-draft-hydrating .trade-result { visibility: hidden; }
 .capture-card { padding: clamp(14px, 3vw, 22px); }
 .tool-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .brand-line { display: flex; min-width: 0; align-items: center; gap: 8px; }

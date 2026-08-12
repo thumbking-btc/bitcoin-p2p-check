@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { calculateP2PQuote, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
+import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 
 type TradeRole = "buyer" | "seller";
@@ -29,6 +30,46 @@ const FUNDING_SOURCE_OPTIONS = [
   "기타소득",
 ] as const;
 type FundingSource = (typeof FUNDING_SOURCE_OPTIONS)[number];
+
+type TradeDraftFields = {
+  tradeRole: TradeRole;
+  krwAmounts: Record<TradeRole, string>;
+  bitcoinAmountInputs: Record<TradeRole, string>;
+  amountBasisByRole: Record<TradeRole, AmountBasis>;
+  premiumInput: string;
+  fundingSources: Record<TradeRole, FundingSource>;
+  bitcoinDisplayUnit: BitcoinDisplayUnit;
+};
+
+const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
+  tradeRole: "buyer",
+  krwAmounts: { buyer: "3000000", seller: "3000000" },
+  bitcoinAmountInputs: { buyer: "3000000", seller: "3000000" },
+  amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
+  premiumInput: "2",
+  fundingSources: { buyer: "기재하지 않음", seller: "기재하지 않음" },
+  bitcoinDisplayUnit: "sats",
+};
+
+function getTradeDraftStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function convertDraftBitcoinInputs(
+  inputs: Record<TradeRole, string>,
+  fromUnit: BitcoinDisplayUnit,
+  toUnit: BitcoinDisplayUnit,
+) {
+  if (fromUnit === toUnit) return { ...inputs };
+  return Object.fromEntries((Object.keys(inputs) as TradeRole[]).map((role) => {
+    const parsed = parseBitcoinAmount(inputs[role], fromUnit);
+    return [role, parsed.sats === null ? "" : toUnit === "btc" ? satsToBtcInput(parsed.sats) : String(parsed.sats)];
+  })) as Record<TradeRole, string>;
+}
 
 type MarketSnapshot = {
   checkedAt: string;
@@ -160,17 +201,16 @@ function downloadTradeImage(file: File) {
 }
 
 export function P2PTradeTool() {
-  const [tradeRole, setTradeRole] = useState<TradeRole>("buyer");
-  const [krwAmounts, setKrwAmounts] = useState<Record<TradeRole, string>>({ buyer: "3000000", seller: "3000000" });
-  const [bitcoinAmountInputs, setBitcoinAmountInputs] = useState<Record<TradeRole, string>>({ buyer: "3000000", seller: "3000000" });
-  const [amountBasisByRole, setAmountBasisByRole] = useState<Record<TradeRole, AmountBasis>>({ buyer: "krw", seller: "bitcoin" });
-  const [premiumInput, setPremiumInput] = useState("2");
-  const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({
-    buyer: "기재하지 않음",
-    seller: "기재하지 않음",
-  });
+  const [tradeRole, setTradeRole] = useState<TradeRole>(DEFAULT_TRADE_DRAFT.tradeRole);
+  const [krwAmounts, setKrwAmounts] = useState<Record<TradeRole, string>>({ ...DEFAULT_TRADE_DRAFT.krwAmounts });
+  const [bitcoinAmountInputs, setBitcoinAmountInputs] = useState<Record<TradeRole, string>>({ ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs });
+  const [amountBasisByRole, setAmountBasisByRole] = useState<Record<TradeRole, AmountBasis>>({ ...DEFAULT_TRADE_DRAFT.amountBasisByRole });
+  const [premiumInput, setPremiumInput] = useState(DEFAULT_TRADE_DRAFT.premiumInput);
+  const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({ ...DEFAULT_TRADE_DRAFT.fundingSources });
   const [importedTradeLink, setImportedTradeLink] = useState(false);
-  const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>("sats");
+  const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const skipNextDraftPersistence = useRef(true);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [marketState, setMarketState] = useState<"loading" | "ready" | "error">("loading");
@@ -221,29 +261,80 @@ export function P2PTradeTool() {
   }, []);
 
   useEffect(() => {
-    const imported = parseTradeFragment(window.location.hash);
-    if (!imported) return;
     const timeout = window.setTimeout(() => {
-      const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
-      const importedBasis = imported.amountBasis as AmountBasis;
-      setTradeRole(importedRole);
-      setAmountBasisByRole((current) => ({ ...current, [importedRole]: importedBasis }));
-      if (importedBasis === "krw") {
-        setKrwAmounts((current) => ({ ...current, [importedRole]: String(imported.amount) }));
-      } else {
-        setBitcoinAmountInputs((current) => ({
-          ...current,
-          [importedRole]: imported.displayUnit === "btc" ? satsToBtcInput(imported.amount) : String(imported.amount),
-        }));
+      const imported = parseTradeFragment(window.location.hash);
+      const storage = getTradeDraftStorage();
+      const stored = readTradeDraft(storage);
+      const hydratedDraft: TradeDraftFields = stored ? {
+        tradeRole: stored.tradeRole as TradeRole,
+        krwAmounts: { ...stored.krwAmounts },
+        bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
+        amountBasisByRole: { ...stored.amountBasisByRole },
+        premiumInput: stored.premiumInput,
+        fundingSources: { ...stored.fundingSources },
+        bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
+      } : {
+        ...DEFAULT_TRADE_DRAFT,
+        krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
+        bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
+        amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
+        fundingSources: { ...DEFAULT_TRADE_DRAFT.fundingSources },
+      };
+
+      if (imported) {
+        const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
+        const importedBasis = imported.amountBasis as AmountBasis;
+        const importedDisplayUnit = imported.displayUnit as BitcoinDisplayUnit;
+        hydratedDraft.tradeRole = importedRole;
+        hydratedDraft.amountBasisByRole[importedRole] = importedBasis;
+        hydratedDraft.bitcoinAmountInputs = convertDraftBitcoinInputs(
+          hydratedDraft.bitcoinAmountInputs,
+          hydratedDraft.bitcoinDisplayUnit,
+          importedDisplayUnit,
+        );
+        if (importedBasis === "krw") {
+          hydratedDraft.krwAmounts[importedRole] = String(imported.amount);
+        } else {
+          hydratedDraft.bitcoinAmountInputs[importedRole] = importedDisplayUnit === "btc"
+            ? satsToBtcInput(imported.amount)
+            : String(imported.amount);
+        }
+        hydratedDraft.premiumInput = String(imported.premium);
+        hydratedDraft.fundingSources[importedRole] = imported.fundingSource as FundingSource;
+        hydratedDraft.bitcoinDisplayUnit = importedDisplayUnit;
+        setImportedTradeLink(true);
+        writeTradeDraft(storage, hydratedDraft);
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
-      setPremiumInput(String(imported.premium));
-      setFundingSources((current) => ({ ...current, [importedRole]: imported.fundingSource as FundingSource }));
-      setBitcoinDisplayUnit(imported.displayUnit as BitcoinDisplayUnit);
-      setImportedTradeLink(true);
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+
+      setTradeRole(hydratedDraft.tradeRole);
+      setKrwAmounts(hydratedDraft.krwAmounts);
+      setBitcoinAmountInputs(hydratedDraft.bitcoinAmountInputs);
+      setAmountBasisByRole(hydratedDraft.amountBasisByRole);
+      setPremiumInput(hydratedDraft.premiumInput);
+      setFundingSources(hydratedDraft.fundingSources);
+      setBitcoinDisplayUnit(hydratedDraft.bitcoinDisplayUnit);
+      setDraftHydrated(true);
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    if (skipNextDraftPersistence.current) {
+      skipNextDraftPersistence.current = false;
+      return;
+    }
+    writeTradeDraft(getTradeDraftStorage(), {
+      tradeRole,
+      krwAmounts,
+      bitcoinAmountInputs,
+      amountBasisByRole,
+      premiumInput,
+      fundingSources,
+      bitcoinDisplayUnit,
+    });
+  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSources, krwAmounts, premiumInput, tradeRole]);
 
   useEffect(() => {
     if (!market?.priceObservedAt) return;
@@ -374,6 +465,7 @@ export function P2PTradeTool() {
 
   const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
   const shareImageAllowed = Boolean(shareImageInput)
+    && draftHydrated
     && !stalePrice
     && marketState === "ready";
   const preparedShareFile = preparedShareImage?.key === shareImageKey ? preparedShareImage.file : null;
@@ -490,7 +582,11 @@ export function P2PTradeTool() {
   }
 
   return (
-    <section className="trade-tool" aria-labelledby="tool-title">
+    <section
+      className={`trade-tool ${draftHydrated ? "is-draft-hydrated" : "is-draft-hydrating"}`}
+      aria-labelledby="tool-title"
+      aria-busy={!draftHydrated}
+    >
       <article className="capture-card" data-capture-card>
         <header className="tool-heading">
           <div className="brand-line">
@@ -702,7 +798,7 @@ export function P2PTradeTool() {
           aria-live="polite"
           role={shareStatusIsError ? "alert" : undefined}
         >
-          {shareStatus || (!isSharing && !shareImagePreparing ? "입력값은 이 사이트에 저장되지 않습니다." : "")}
+          {shareStatus || (!isSharing && !shareImagePreparing ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
         </p>
       </div>
 

@@ -26,7 +26,8 @@ const ORANGE = "#f7931a";
 const DARK_PANEL_HEIGHT = 652;
 const INNER_PANEL_TOP = 204;
 const INNER_PANEL_HEIGHT = 604;
-const INNER_PANEL_VERTICAL_PADDING = 35;
+const INNER_PANEL_TOP_PADDING = 35;
+const FOOTER_BOTTOM_PADDING = 48;
 const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 // Canonical white mark from bitcoin.org/img/icons/logotop.svg.
 // The vector already contains Bitcoin's characteristic 13.88° clockwise tilt.
@@ -321,7 +322,7 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.textAlign = "left";
   context.textBaseline = "middle";
   setFont(context, 21, 600);
-  context.fillText("비트코인 기준 가격", 130, INNER_PANEL_TOP + INNER_PANEL_VERTICAL_PADDING);
+  context.fillText("비트코인 기준 가격", 130, INNER_PANEL_TOP + INNER_PANEL_TOP_PADDING);
   context.fillStyle = PAPER;
   fitText(context, input.referenceLabel, 410, 29, 21, 700);
   context.fillText(input.referenceLabel, 130, 276);
@@ -363,39 +364,39 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.textAlign = "left";
   context.textBaseline = "middle";
   setFont(context, 25, 700);
-  context.fillText("판매자 프리미엄", 145, 644);
+  context.fillText("판매자 프리미엄", 145, 636);
   context.fillStyle = ORANGE;
   fitText(context, formatPercent(input.sellerPremiumPercent), 190, 39, 24, 800);
-  context.fillText(formatPercent(input.sellerPremiumPercent), 385, 644);
+  context.fillText(formatPercent(input.sellerPremiumPercent), 385, 636);
 
   context.fillStyle = MUTED_PAPER;
   setFont(context, 21, 600);
-  context.fillText("적용 단가", 620, 644);
+  context.fillText("적용 단가", 620, 636);
   context.fillStyle = PAPER;
   setFont(context, 27, 700);
-  context.fillText(`${formatKrw(input.appliedPriceKrw)} / BTC`, 742, 644);
+  context.fillText(`${formatKrw(input.appliedPriceKrw)} / BTC`, 742, 636);
 
   context.fillStyle = MUTED_PAPER;
   const fundingSourceLine = `구매자 자금 출처 · ${input.buyerFundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
   fitText(context, fundingSourceLine, 1_080, 19, 15, 600);
-  context.fillText(fundingSourceLine, 145, 688);
+  context.fillText(fundingSourceLine, 145, 676);
 
   context.fillStyle = MUTED_PAPER;
   setFont(context, 18, 500);
   const premiumReference = `시장 참고 · 업비트 프리미엄 ${formatPercentFromRatio(input.koreaPremiumRatio)}`;
   fitText(context, premiumReference, 1_080, 18, 14, 500);
-  context.fillText(premiumReference, 145, 716);
+  context.fillText(premiumReference, 145, 704);
   const amountBasisLabel = input.amountBasis === "krw" ? "원화 금액" : "비트코인 수량";
   const calculationNote = `금액 기준 · ${amountBasisLabel} · 기준가 × (1 + 판매자 프리미엄) · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음`;
   fitText(context, calculationNote, 1_080, 18, 14, 500);
-  context.fillText(calculationNote, 145, 744);
+  context.fillText(calculationNote, 145, 732);
   context.fillStyle = ORANGE;
   const evidenceNote = "확인용 · 원화 입금·BTC 수령 증빙 아님";
   fitText(context, evidenceNote, 1_080, 17, 14, 700);
   context.fillText(
     evidenceNote,
     145,
-    INNER_PANEL_TOP + INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING,
+    INNER_PANEL_TOP + INNER_PANEL_HEIGHT - FOOTER_BOTTOM_PADDING,
   );
 
   context.save();

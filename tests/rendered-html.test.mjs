@@ -7,6 +7,15 @@ import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport
 import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import {
+  readTradeDraft,
+  TRADE_DRAFT_MAX_RAW_LENGTH,
+  TRADE_DRAFT_STORAGE_KEY,
+  TRADE_DRAFT_TTL_MS,
+  TRADE_DRAFT_VERSION,
+  validateTradeDraft,
+  writeTradeDraft,
+} from "../app/lib/trade-draft.mjs";
+import {
   getInstallInviteDismissedUntil,
   INSTALL_INVITE_DISMISS_MS,
   isInstallInviteSuppressed,
@@ -238,6 +247,95 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
+test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
+  const now = 1_800_000_000_000;
+  const values = new Map();
+  const removed = [];
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => {
+      removed.push(key);
+      values.delete(key);
+    },
+  };
+  const fields = {
+    tradeRole: "seller",
+    krwAmounts: { buyer: "500000", seller: "800000" },
+    bitcoinAmountInputs: { buyer: "0.005", seller: "0.008" },
+    amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
+    premiumInput: "-2.5",
+    fundingSources: { buyer: "근로소득", seller: "기재하지 않음" },
+    bitcoinDisplayUnit: "btc",
+    market: { priceKrw: 100_000_000 },
+    quote: { sats: 800_000 },
+    referenceTime: "2026-08-12T00:00:00.000Z",
+    png: "data:image/png;base64,not-saved",
+    shareStatus: "not-saved",
+  };
+
+  assert.equal(writeTradeDraft(storage, fields, now), true);
+  const storedJson = values.get(TRADE_DRAFT_STORAGE_KEY);
+  const storedObject = JSON.parse(storedJson);
+  assert.deepEqual(Object.keys(storedObject).sort(), [
+    "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "fundingSources",
+    "krwAmounts", "premiumInput", "savedAt", "tradeRole", "version",
+  ]);
+  assert.equal(storedObject.version, TRADE_DRAFT_VERSION);
+  assert.equal(storedObject.savedAt, now);
+  for (const forbidden of ["market", "quote", "referenceTime", "png", "shareStatus"]) {
+    assert.equal(Object.hasOwn(storedObject, forbidden), false);
+  }
+  assert.deepEqual(readTradeDraft(storage, now + TRADE_DRAFT_TTL_MS - 1), storedObject);
+
+  assert.equal(readTradeDraft(storage, now + TRADE_DRAFT_TTL_MS), null);
+  assert.deepEqual(removed, [TRADE_DRAFT_STORAGE_KEY]);
+
+  values.set(TRADE_DRAFT_STORAGE_KEY, JSON.stringify({ ...storedObject, savedAt: now, extra: true }));
+  assert.equal(validateTradeDraft(JSON.parse(values.get(TRADE_DRAFT_STORAGE_KEY)), now), null);
+  assert.equal(readTradeDraft(storage, now), null);
+  assert.equal(values.has(TRADE_DRAFT_STORAGE_KEY), false);
+
+  values.set(TRADE_DRAFT_STORAGE_KEY, "{bad json");
+  assert.equal(readTradeDraft(storage, now), null);
+  assert.equal(values.has(TRADE_DRAFT_STORAGE_KEY), false);
+
+  values.set(TRADE_DRAFT_STORAGE_KEY, "x".repeat(TRADE_DRAFT_MAX_RAW_LENGTH + 1));
+  assert.equal(readTradeDraft(storage, now), null);
+  assert.equal(values.has(TRADE_DRAFT_STORAGE_KEY), false);
+
+  const blockedStorage = {
+    getItem() { throw new Error("blocked"); },
+    setItem() { throw new Error("blocked"); },
+    removeItem() { throw new Error("blocked"); },
+  };
+  assert.equal(readTradeDraft(blockedStorage, now), null);
+  assert.equal(writeTradeDraft(blockedStorage, fields, now), false);
+});
+
+test("hydrates a local draft once and lets an imported share link win", async () => {
+  const [component, draftHelper, css] = await Promise.all([
+    readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-draft.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const hydrationBlock = component.slice(
+    component.indexOf("const imported = parseTradeFragment(window.location.hash)"),
+    component.indexOf("useEffect(() => {", component.indexOf("setDraftHydrated(true)")),
+  );
+
+  assert.ok(hydrationBlock.indexOf("parseTradeFragment(window.location.hash)") < hydrationBlock.indexOf("readTradeDraft(storage)"));
+  assert.ok(hydrationBlock.indexOf("if (imported)") < hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)"));
+  assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
+  assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
+  assert.match(component, /shareImageAllowed = Boolean\(shareImageInput\)[\s\S]*?&& draftHydrated/);
+  assert.match(component, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
+  assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
+  assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
+  assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
+  assert.match(draftHelper, /TRADE_DRAFT_MAX_RAW_LENGTH = 8 \* 1_024/);
+});
+
 test("renders a focused, capture-ready P2P calculator", async () => {
   const response = await render();
   assert.equal(response.status, 200);
@@ -264,7 +362,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
   assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
-  assert.match(html, /입력값은 이 사이트에 저장되지 않습니다/);
+  assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
   assert.match(html, /거래 조건 공유/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
@@ -398,10 +496,15 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /const DARK_PANEL_HEIGHT = 652;/);
   assert.match(imageRenderer, /const INNER_PANEL_TOP = 204;/);
   assert.match(imageRenderer, /const INNER_PANEL_HEIGHT = 604;/);
-  assert.match(imageRenderer, /const INNER_PANEL_VERTICAL_PADDING = 35;/);
+  assert.match(imageRenderer, /const INNER_PANEL_TOP_PADDING = 35;/);
+  assert.match(imageRenderer, /const FOOTER_BOTTOM_PADDING = 48;/);
   assert.match(imageRenderer, /roundedRect\(context, 72, 180, 1_456, DARK_PANEL_HEIGHT, 10\)/);
-  assert.match(imageRenderer, /"비트코인 기준 가격", 130, INNER_PANEL_TOP \+ INNER_PANEL_VERTICAL_PADDING/);
-  assert.match(imageRenderer, /INNER_PANEL_TOP \+ INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING/);
+  assert.match(imageRenderer, /"비트코인 기준 가격", 130, INNER_PANEL_TOP \+ INNER_PANEL_TOP_PADDING/);
+  assert.match(imageRenderer, /INNER_PANEL_TOP \+ INNER_PANEL_HEIGHT - FOOTER_BOTTOM_PADDING/);
+  assert.match(imageRenderer, /"판매자 프리미엄", 145, 636/);
+  assert.match(imageRenderer, /fundingSourceLine, 145, 676/);
+  assert.match(imageRenderer, /premiumReference, 145, 704/);
+  assert.match(imageRenderer, /calculationNote, 145, 732/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.match(component, /amount: amount \?\? ""/);
   assert.match(component, /premium: premiumPercent \?\? ""/);
