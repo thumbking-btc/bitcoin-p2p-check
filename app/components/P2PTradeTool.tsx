@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { calculateP2PQuote, MAX_SATS, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
+import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 
 type TradeRole = "buyer" | "seller";
-type ReferenceMode = "upbit" | "manual";
-type FocusedField = "krw" | "sats" | "manual" | null;
+type FocusedField = "krw" | "sats" | null;
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -31,6 +31,22 @@ type MarketSnapshot = {
   priceKrw: number | null;
   priceObservedAt: string | null;
   koreaPremium: number | null;
+  feeRates?: {
+    nextBlock: number;
+    halfHour: number;
+    hour: number;
+  } | null;
+  feeCheckedAt?: string | null;
+  sourceStatus?: {
+    price: "current" | "stale" | "unavailable";
+    premium: "current" | "stale" | "unavailable";
+    fees: "current" | "stale" | "unavailable";
+  };
+  staleAgeSeconds?: {
+    price: number | null;
+    premium: number | null;
+    fees: number | null;
+  };
 };
 
 async function requestMarketSnapshot() {
@@ -109,6 +125,23 @@ function formatTime(value: string | null | undefined) {
   }).format(date)} KST`;
 }
 
+function formatClock(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function formatFeeRate(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+}
+
 function downloadTradeImage(file: File) {
   const url = URL.createObjectURL(file);
   const link = document.createElement("a");
@@ -126,14 +159,11 @@ export function P2PTradeTool() {
   const [krwAmount, setKrwAmount] = useState("3000000");
   const [satsAmount, setSatsAmount] = useState("3000000");
   const [premiumInput, setPremiumInput] = useState("2");
-  const [referenceMode, setReferenceMode] = useState<ReferenceMode>("upbit");
-  const [manualPrice, setManualPrice] = useState("");
-  const [manualReferencePrice, setManualReferencePrice] = useState<number | null>(null);
-  const [manualAppliedAt, setManualAppliedAt] = useState<string | null>(null);
   const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({
     buyer: "기재하지 않음",
     seller: "기재하지 않음",
   });
+  const [importedTradeLink, setImportedTradeLink] = useState(false);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [marketState, setMarketState] = useState<"loading" | "ready" | "error">("loading");
@@ -159,7 +189,7 @@ export function P2PTradeTool() {
     } catch {
       setMarketState("error");
       setPriceExpired(true);
-      setMarketError("시세를 새로 불러오지 못했습니다. 마지막 조회값을 확인용으로만 표시합니다. 직접 시세를 입력해 계산할 수도 있습니다.");
+      setMarketError("시세를 새로 불러오지 못했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다.");
     }
   }, []);
 
@@ -175,12 +205,28 @@ export function P2PTradeTool() {
         if (!active) return;
         setMarket(null);
         setMarketState("error");
-        setMarketError("업비트 최근 체결가를 불러오지 못했습니다. 기준 시세를 직접 입력해 계산할 수 있습니다.");
+        setMarketError("업비트 최근 체결가를 불러오지 못했습니다. 잠시 후 시세 새로고침을 눌러 다시 확인하세요.");
       },
     );
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const imported = parseTradeFragment(window.location.hash);
+    if (!imported) return;
+    const timeout = window.setTimeout(() => {
+      const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
+      setTradeRole(importedRole);
+      if (importedRole === "buyer") setKrwAmount(String(imported.amount));
+      else setSatsAmount(String(imported.amount));
+      setPremiumInput(String(imported.premium));
+      setFundingSources((current) => ({ ...current, [importedRole]: imported.fundingSource as FundingSource }));
+      setImportedTradeLink(true);
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   useEffect(() => {
@@ -199,10 +245,9 @@ export function P2PTradeTool() {
       ? "판매자 프리미엄은 -100%보다 크게 입력하세요."
       : "";
   const premiumWarning = premiumPercent !== null && premiumPercent > -100 && Math.abs(premiumPercent) >= 10;
-  const manualPriceNumber = numeric(manualPrice);
-  const referencePrice = referenceMode === "upbit" ? market?.priceKrw ?? null : manualReferencePrice;
-  const referenceLabel = referenceMode === "upbit" ? "업비트 최근 체결가" : "직접 입력 시세";
-  const referenceTime = referenceMode === "upbit" ? market?.priceObservedAt ?? null : manualAppliedAt;
+  const referencePrice = market?.priceKrw ?? null;
+  const referenceLabel = "업비트 최근 체결가";
+  const referenceTime = market?.priceObservedAt ?? null;
   const fundingSource = fundingSources[tradeRole];
   const fundingSourceFieldLabel = "구매자 자금 출처";
   const amount = tradeRole === "buyer" ? numeric(krwAmount) : numeric(satsAmount);
@@ -225,14 +270,13 @@ export function P2PTradeTool() {
       : premiumPercent < 0
         ? `판매자가 기준 시세보다 ${Math.abs(premiumPercent).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}% 낮은 단가로 팝니다.`
         : "판매자가 기준 시세와 같은 단가로 팝니다.";
-  const stalePrice = referenceMode === "upbit"
-    && market !== null
+  const stalePrice = market !== null
     && (priceExpired || market.status === "stale" || marketState === "error");
   const inputOutOfRange = tradeRole === "seller" && amount !== null && amount > MAX_SATS;
   const resultUnavailable = premiumError || inputOutOfRange
     ? premiumError || "비트코인 수량이 지원 범위를 넘었습니다."
     : referencePrice === null
-      ? marketState === "loading" ? "업비트 시세를 불러오는 중입니다." : "기준 시세를 입력하세요."
+      ? marketState === "loading" ? "업비트 시세를 불러오는 중입니다." : "최신 업비트 시세를 불러오지 못했습니다. 잠시 후 새로고침하세요."
       : amount === null || amount <= 0
         ? "거래 금액을 입력하세요."
         : "입력값을 확인하세요.";
@@ -240,18 +284,30 @@ export function P2PTradeTool() {
   const effectiveKoreaPremium = marketState === "ready" && !stalePrice && market?.status === "current"
     ? market?.koreaPremium ?? null
     : null;
+  const feeRates = market?.feeRates ?? null;
+  const feeState = market?.sourceStatus?.fees ?? "unavailable";
+  const feeVisualState = marketState === "loading" ? "loading" : feeState;
+  const feeStatus = marketState === "loading"
+    ? market ? "mempool.space · 갱신 중" : "mempool.space · 조회 중"
+    : feeState === "current"
+      ? `mempool.space · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      : feeState === "stale"
+        ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
+        : "mempool.space · 조회 불가";
 
   const shareText = quote && multiplier !== null ? [
     "[비트코인 P2P 거래 조건]",
     `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
     `시각: ${formatTime(referenceTime)}`,
     `판매자 프리미엄: ${premiumPercent}%`,
-    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 상호 확인 필요)`,
+    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
     `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
     `판매자 → 구매자: ${formatSats(quote.sats)} (${formatBtc(quote.sats)})`,
     `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
     `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
-    "온체인 송금 수수료 별도 · 1 sat/1원 반올림",
+    "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
+    "반올림: 1 sat·1원",
+    "확인용: 원화 입금·BTC 수령 증빙 아님",
   ].join("\n") : "";
 
   const shareImageInput = useMemo<TradeShareImageInput | null>(() => {
@@ -274,7 +330,7 @@ export function P2PTradeTool() {
   const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
   const shareImageAllowed = Boolean(shareImageInput)
     && !stalePrice
-    && (referenceMode === "manual" || marketState === "ready");
+    && marketState === "ready";
   const preparedShareFile = preparedShareImage?.key === shareImageKey ? preparedShareImage.file : null;
   const shareImageFailed = preparedShareImage?.key === shareImageKey && preparedShareImage.failed;
   const shareImagePreparing = shareImageAllowed && !preparedShareFile && !shareImageFailed;
@@ -311,18 +367,28 @@ export function P2PTradeTool() {
       return;
     }
     if (!shareText || !preparedShareFile || isSharing) return;
-    if (stalePrice || !isReferenceShareable({ referenceMode, marketState, referenceTime }, Date.now())) {
+    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
       setPriceExpired(true);
       setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
       return;
     }
+    const tradeFragment = buildTradeFragment({
+      side: tradeRole === "buyer" ? "buy" : "sell",
+      amount: amount ?? "",
+      premium: premiumPercent ?? "",
+      fundingSource,
+    });
+    const tradeLink = tradeFragment ? `${window.location.origin}/${tradeFragment}` : "";
+    const textWithLink = tradeLink
+      ? `${shareText}\n\n현재 시세로 다시 계산하기: ${tradeLink}`
+      : shareText;
     setShareStatus("");
     setIsSharing(true);
     try {
       const outcome = await shareImageFile({
         file: preparedShareFile,
         title: "비트코인 P2P 거래 조건",
-        text: shareText,
+        text: textWithLink,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
         nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
         download: downloadTradeImage,
@@ -341,13 +407,6 @@ export function P2PTradeTool() {
     }
   }
 
-  function applyManualPrice() {
-    if (manualPriceNumber === null || manualPriceNumber <= 0) return;
-    setManualReferencePrice(manualPriceNumber);
-    setReferenceMode("manual");
-    setManualAppliedAt(new Date().toISOString());
-  }
-
   return (
     <section className="trade-tool" aria-labelledby="tool-title">
       <article className="capture-card" data-capture-card>
@@ -359,7 +418,7 @@ export function P2PTradeTool() {
           <button
             className="refresh-button"
             type="button"
-            aria-label={marketState === "loading" ? "업비트 시세 조회 중" : "업비트 시세 새로고침"}
+            aria-label={marketState === "loading" ? "업비트 시세와 온체인 수수료율 조회 중" : "업비트 시세와 온체인 수수료율 새로고침"}
             onClick={() => void loadMarket()}
             disabled={marketState === "loading"}
           >
@@ -386,6 +445,11 @@ export function P2PTradeTool() {
               : market?.status === "stale"
                 ? "최신 시세를 확인하지 못해 마지막 조회값을 표시합니다. 새로고침 후 거래 조건을 다시 확인하세요."
                 : "5분 이상 지난 시세입니다. 새로고침 후 거래 조건을 다시 확인하세요."}
+          </p>
+        ) : null}
+        {importedTradeLink ? (
+          <p className="imported-trade-notice" role="status">
+            공유된 입력값을 불러와 현재 업비트 시세로 다시 계산했습니다. 링크의 값은 수정될 수 있으니 거래 전에 다시 확인하세요.
           </p>
         ) : null}
 
@@ -448,6 +512,10 @@ export function P2PTradeTool() {
               <b>%</b>
             </span>
           </label>
+          <p className="premium-note" id="premium-note">{premiumSummary}</p>
+          {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
+          {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
+          {inputOutOfRange ? <p className="input-alert" id="sats-error" role="alert">비트코인 수량이 지원 범위를 넘었습니다.</p> : null}
           <label className="fund-source-field" htmlFor="buyer-funding-source">
             <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
             <select
@@ -462,11 +530,7 @@ export function P2PTradeTool() {
               {FUNDING_SOURCE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
           </label>
-          <p className="premium-note" id="premium-note">{premiumSummary}</p>
-          <p className="fund-source-note" id="fund-source-note">구매자가 제공한 정보이며, 거래 전에 서로 확인해 주세요.</p>
-          {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
-          {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
-          {inputOutOfRange ? <p className="input-alert" id="sats-error" role="alert">비트코인 수량이 지원 범위를 넘었습니다.</p> : null}
+          <p className="fund-source-note" id="fund-source-note">자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요.</p>
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -477,15 +541,17 @@ export function P2PTradeTool() {
           {quote && multiplier !== null ? (
             <>
               <output className="visually-hidden" aria-live="polite" aria-atomic="true">
-                구매자는 판매자에게 {formatKrw(quote.paymentKrw)}을 보내고, 판매자는 구매자에게 {formatSats(quote.sats)}를 보냅니다.
+                {tradeRole === "buyer"
+                  ? `구매 조건. 내가 보낼 원화 ${formatKrw(quote.paymentKrw)}, 내가 받을 비트코인 ${formatSats(quote.sats)}.`
+                  : `판매 조건. 내가 보낼 비트코인 ${formatSats(quote.sats)}, 내가 받을 원화 ${formatKrw(quote.paymentKrw)}.`}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
-                  <dt>구매자 → 판매자</dt>
+                  <dt>구매자 → 판매자{tradeRole === "seller" ? <small className="result-badge">내가 받음</small> : null}</dt>
                   <dd>{formatKrw(quote.paymentKrw)}<small className="result-spacer" aria-hidden="true">&nbsp;</small></dd>
                 </div>
                 <div className={`result-row transfer-row ${tradeRole === "buyer" ? "primary" : ""}`}>
-                  <dt>판매자 → 구매자</dt>
+                  <dt>판매자 → 구매자{tradeRole === "buyer" ? <small className="result-badge">내가 받음</small> : null}</dt>
                   <dd>{formatSats(quote.sats)}<small>{formatBtc(quote.sats)}</small></dd>
                 </div>
                 <div className="result-row">
@@ -494,14 +560,14 @@ export function P2PTradeTool() {
                 </div>
               </dl>
             </>
-          ) : <p className="result-empty">{resultUnavailable}</p>}
+          ) : <p className="result-empty" role="status">{resultUnavailable}</p>}
         </section>
 
-        <p className="capture-meta" id="trade-rounding">
-          <span>{referenceLabel} · {formatTime(referenceTime)}</span>
-          <span>온체인 송금 수수료 별도 · 1 sat·1원 반올림</span>
-          <span>거래 전 조건 확인용 · 입금 및 비트코인 수령 증빙이 아닙니다.</span>
-        </p>
+        <div className="capture-meta" id="trade-rounding" role="note" aria-label="거래 계산 참고사항">
+          <span className="capture-meta-fee" aria-label="온체인 수수료: 판매자 부담, 구매자 수령량 차감 없음"><b>온체인 수수료:</b><span>판매자 부담 · 구매자 수령량 차감 없음</span></span>
+          <span className="capture-meta-rounding" aria-label="반올림: 1 sat, 1원"><b>반올림:</b><span>1 sat·1원</span></span>
+          <span className="capture-meta-disclaimer" aria-label="확인용: 원화 입금과 비트코인 수령 증빙 아님"><b>확인용:</b><span>원화 입금·BTC 수령 증빙 아님</span></span>
+        </div>
       </article>
 
       <div className="tool-actions">
@@ -531,26 +597,29 @@ export function P2PTradeTool() {
         </p>
       </div>
 
-      {marketError && referenceMode === "upbit" ? <p className="market-error" role="alert">{marketError}</p> : null}
+      <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">
+        <header>
+          <h2 id="network-fees-title">현재 온체인 수수료율</h2>
+          <p>{feeStatus}</p>
+        </header>
+        <dl aria-live="polite" aria-label="mempool.space 권장 온체인 수수료율">
+          <div>
+            <dt>다음 블록</dt>
+            <dd><strong>{formatFeeRate(feeRates?.nextBlock)}</strong><small>sat/vB</small></dd>
+          </div>
+          <div>
+            <dt>약 30분</dt>
+            <dd><strong>{formatFeeRate(feeRates?.halfHour)}</strong><small>sat/vB</small></dd>
+          </div>
+          <div>
+            <dt>약 1시간</dt>
+            <dd><strong>{formatFeeRate(feeRates?.hour)}</strong><small>sat/vB</small></dd>
+          </div>
+        </dl>
+        <p className="network-fees-note"><b>판매자 부담</b><span>실제 총 수수료는 보내는 지갑에서 확인</span></p>
+      </section>
 
-      <details className="price-settings">
-        <summary>
-          <span>기준 시세 직접 입력</span>
-          <strong>{referenceMode === "manual" ? "직접 입력" : "업비트"} · {formatKrw(referencePrice)}</strong>
-        </summary>
-        <div className="settings-body">
-          <label className="field" htmlFor="manual-price">
-            <span>1 BTC 가격</span>
-            <span className="input-with-unit">
-              <input id="manual-price" inputMode="numeric" value={focusedField === "manual" ? manualPrice : grouped(manualPrice)} onFocus={() => setFocusedField("manual")} onBlur={() => setFocusedField(null)} onChange={(event) => setManualPrice(digitsOnly(event.target.value, 15))} placeholder="예: 100,000,000" aria-describedby="manual-price-note" />
-              <b>원/BTC</b>
-            </span>
-          </label>
-          <button className="secondary-button" type="button" onClick={applyManualPrice} disabled={manualPriceNumber === null || manualPriceNumber <= 0}>이 가격 사용</button>
-          {referenceMode === "manual" ? <button className="secondary-button" type="button" onClick={() => setReferenceMode("upbit")} disabled={!market?.priceKrw}>업비트 시세로 돌아가기</button> : null}
-          <p className="settings-note" id="manual-price-note">직접 입력한 가격을 사용하면 적용 시각도 거래 조건에 함께 기록됩니다.</p>
-        </div>
-      </details>
+      {marketError ? <p className="market-error" role="alert">{marketError}</p> : null}
     </section>
   );
 }

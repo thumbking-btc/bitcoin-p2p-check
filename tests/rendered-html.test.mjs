@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
+import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 
 async function readPngSize(url) {
   const buffer = await readFile(url);
@@ -102,13 +103,34 @@ test("shares a PNG file and downloads only when file sharing is unavailable", as
   assert.equal(downloaded.length, 2);
 });
 
-test("blocks stale or loading Upbit references but permits committed manual prices", () => {
+test("blocks stale or loading Upbit references", () => {
   const observedAt = "2026-08-11T00:00:00.000Z";
   const base = Date.parse(observedAt);
-  assert.equal(isReferenceShareable({ referenceMode: "upbit", marketState: "ready", referenceTime: observedAt }, base + 299_999), true);
-  assert.equal(isReferenceShareable({ referenceMode: "upbit", marketState: "ready", referenceTime: observedAt }, base + 300_000), false);
-  assert.equal(isReferenceShareable({ referenceMode: "upbit", marketState: "loading", referenceTime: observedAt }, base), false);
-  assert.equal(isReferenceShareable({ referenceMode: "manual", marketState: "loading", referenceTime: null }, base), true);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base + 299_999), true);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base + 300_000), false);
+  assert.equal(isReferenceShareable({ marketState: "loading", referenceTime: observedAt }, base), false);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: null }, base), false);
+});
+
+test("round-trips validated trade inputs in a server-private URL fragment", () => {
+  const buyerFragment = buildTradeFragment({ side: "buy", amount: "3000000", premium: "2", fundingSource: "근로소득" });
+  assert.equal(buyerFragment, "#v=1&side=buy&krw=3000000&premium=2&fund=salary");
+  assert.deepEqual(parseTradeFragment(buyerFragment), { side: "buy", amount: 3_000_000, premium: 2, fundingSource: "근로소득" });
+
+  const sellerFragment = buildTradeFragment({ side: "sell", amount: "3000000", premium: "-2.5", fundingSource: "기재하지 않음" });
+  assert.deepEqual(parseTradeFragment(sellerFragment), { side: "sell", amount: 3_000_000, premium: -2.5, fundingSource: "기재하지 않음" });
+  assert.equal(
+    buildTradeFragment({ side: "buy", amount: Number("03000000"), premium: Number("2."), fundingSource: "기재하지 않음" }),
+    "#v=1&side=buy&krw=3000000&premium=2&fund=none",
+  );
+  for (const malformed of [
+    "#v=2&side=buy&krw=3000000&premium=2&fund=none",
+    "#v=1&side=buy&sats=3000000&premium=2&fund=none",
+    "#v=1&side=sell&sats=2100000000000001&premium=2&fund=none",
+    "#v=1&side=buy&krw=3000000&premium=-100&fund=none",
+    "#v=1&side=buy&krw=3000000&premium=2&fund=unknown",
+    "#v=1&side=buy&krw=3000000&premium=2&premium=3&fund=none",
+  ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
 test("renders a focused, capture-ready P2P calculator", async () => {
@@ -136,10 +158,10 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   ]) {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
-  assert.match(html, /구매자가 제공한 정보이며, 거래 전에 서로 확인해 주세요/);
+  assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
   assert.match(html, /입력값은 이 사이트에 저장되지 않습니다/);
-  assert.match(html, /거래 전 조건 확인용 · 입금 및 비트코인 수령 증빙이 아닙니다/);
   assert.match(html, /거래 조건 공유/);
+  assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
   assert.match(html, /업비트 프리미엄/);
@@ -147,16 +169,25 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /시세 조회 중/);
   assert.match(html, /시세는 합의의 기준일 뿐입니다/);
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
-  assert.match(html, /온체인 송금 수수료 별도/);
+  assert.match(html, /<b>온체인 수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
+  assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
+  assert.match(html, /<b>확인용:<\/b><span>원화 입금·BTC 수령 증빙 아님<\/span>/);
+  assert.match(html, /현재 온체인 수수료율/);
+  assert.match(html, /다음 블록/);
+  assert.match(html, /약 30분/);
+  assert.match(html, /약 1시간/);
+  assert.match(html, /sat\/vB/);
+  assert.match(html, /실제 총 수수료는 보내는 지갑에서 확인/);
   assert.doesNotMatch(html, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
   assert.doesNotMatch(html, /계산 방향|원화 → sats|sats → 원화|회원가입|지갑 주소/);
 });
 
 test("keeps market data official and interaction failures recoverable", async () => {
-  const [component, imageRenderer, shareTransport, api, css, packageJson] = await Promise.all([
+  const [component, imageRenderer, shareTransport, tradeLink, api, css, packageJson] = await Promise.all([
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/share-transport.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-link.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/market.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -164,16 +195,24 @@ test("keeps market data official and interaction failures recoverable", async ()
 
   assert.match(api, /api\.upbit\.com\/v1\/ticker\?markets=KRW-BTC/);
   assert.match(api, /datalab-api\.upbit\.com\/api\/v1\/indicator\/premium\/assets\?symbols=BTC/);
+  assert.match(api, /mempool\.space\/api\/v1\/fees\/recommended/);
   assert.match(api, /disparityRate/);
+  assert.match(api, /fastestFee/);
+  assert.match(api, /halfHourFee/);
+  assert.match(api, /hourFee/);
+  assert.match(api, /FEE_FRESH_CACHE_SECONDS = 60/);
+  assert.match(api, /fees-backoff/);
   assert.doesNotMatch(api, /Coinbase|coinbaseKrwGap|frankfurter/i);
   assert.match(component, /fetch\("\/api\/market", \{ cache: "no-store" \}\)/);
   assert.match(component, /시세 새로고침/);
-  assert.match(component, /직접 시세를 입력해 계산할 수도 있습니다/);
+  assert.match(component, /현재 온체인 수수료율/);
+  assert.match(component, /feeRates\?\.nextBlock/);
+  assert.match(component, /feeRates\?\.halfHour/);
+  assert.match(component, /feeRates\?\.hour/);
+  assert.doesNotMatch(component, /manualReferencePrice|기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.match(component, /navigator\.share/);
   assert.match(component, /navigator\.canShare/);
   assert.match(component, /URL\.createObjectURL/);
-  assert.match(component, /manualReferencePrice/);
-  assert.match(component, /setManualReferencePrice\(manualPriceNumber\)/);
   assert.match(component, /effectiveKoreaPremium/);
   assert.match(component, /buyer: "기재하지 않음"/);
   assert.match(component, /seller: "기재하지 않음"/);
@@ -181,8 +220,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.doesNotMatch(component, /송금 계좌 명의|제3자|확인 전/);
   assert.match(component, /buyerFundingSource: fundingSource/);
   assert.match(component, /구매자 자금 출처: \$\{fundingSource\}/);
-  assert.match(component, /구매자 제공 정보 · 상호 확인 필요/);
+  assert.match(component, /구매자 제공 정보 · 거래 전 상호 확인/);
   assert.match(shareTransport, /files: \[file\]/);
+  assert.match(component, /현재 시세로 다시 계산하기:/);
+  assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
+  assert.match(component, /window\.history\.replaceState/);
+  assert.match(component, /현재 업비트 시세로 다시 계산했습니다/);
+  assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
+  assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
   assert.match(component, /거래 조건 준비 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
@@ -195,10 +240,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /판매자 프리미엄/);
   assert.match(imageRenderer, /buyerFundingSource/);
   assert.match(imageRenderer, /구매자 자금 출처/);
-  assert.match(imageRenderer, /구매자 제공 정보 · 상호 확인 필요/);
-  assert.match(imageRenderer, /입금 및 비트코인 수령 증빙이 아닙니다/);
+  assert.match(imageRenderer, /구매자 제공 정보 · 거래 전 상호 확인/);
   assert.match(imageRenderer, /시장 참고 · 업비트 프리미엄/);
-  assert.match(imageRenderer, /온체인 송금 수수료 별도/);
+  assert.match(imageRenderer, /온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음/);
+  assert.match(imageRenderer, /확인용 · 원화 입금·BTC 수령 증빙 아님/);
+  assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
+  assert.match(component, /amount: amount \?\? ""/);
+  assert.match(component, /premium: premiumPercent \?\? ""/);
+  assert.match(component, /tradeFragment \? `\$\{window\.location\.origin\}\/\$\{tradeFragment\}` : ""/);
   assert.match(component, /aria-live="polite"/);
   assert.match(component, /aria-invalid/);
   assert.doesNotMatch(component, /setInterval|feeSats/);
@@ -212,10 +261,22 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
   assert.match(component, /className=\{`result-row transfer-row/);
   assert.match(css, /\.transfer-row dd\s*\{[^}]*font-size:/s);
+  assert.match(css, /\.result-row\s*\{[^}]*min-height:\s*60px/s);
+  assert.match(css, /\.result-row\.primary\s*\{[^}]*box-shadow:\s*inset 4px 0 0 var\(--orange\)/s);
+  assert.match(css, /\.network-fees dl\s*\{[^}]*grid-template-columns:\s*repeat\(3/s);
+  assert.match(component, /className="result-badge">내가 받음/);
+  assert.match(component, /구매 조건\. 내가 보낼 원화/);
+  assert.match(component, /판매 조건\. 내가 보낼 비트코인/);
   assert.match(css, /\.creator-profile nav\s*\{[^}]*display:\s*grid/s);
+  assert.match(css, /\.creator-profile nav\s*\{[^}]*gap:\s*0/s);
   assert.match(css, /\.support-address-card button\s*\{[^}]*width:\s*44px/s);
   assert.match(css, /\.support-status:empty\s*\{[^}]*min-height:\s*0/s);
   assert.doesNotMatch(`${component}\n${imageRenderer}`, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
+  const premiumNotePosition = component.indexOf('<p className="premium-note" id="premium-note">');
+  const fundingFieldPosition = component.indexOf('<label className="fund-source-field"');
+  const fundingNotePosition = component.indexOf('<p className="fund-source-note" id="fund-source-note">');
+  assert.ok(premiumNotePosition > 0 && premiumNotePosition < fundingFieldPosition);
+  assert.ok(fundingFieldPosition < fundingNotePosition);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
 });
@@ -246,10 +307,11 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, appIconSource, maskableSource, shareRenderer] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, appIconSource, maskableSource, shareRenderer] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/InstallCta.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon.svg", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
@@ -288,6 +350,14 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.doesNotMatch(shareRenderer, /fillText\("[B₿]"|fillRect\(-25, -78|fillRect\(9, -78/);
 
   assert.match(registration, /serviceWorker\.register\("\/sw\.js", \{ scope: "\/" \}\)/);
+  assert.match(installCta, /beforeinstallprompt/);
+  assert.match(installCta, /event\.preventDefault\(\)/);
+  assert.match(installCta, /await prompt\.prompt\(\)/);
+  assert.match(installCta, /await prompt\.userChoice/);
+  assert.match(installCta, /appinstalled/);
+  assert.match(installCta, /window-controls-overlay/);
+  assert.match(installCta, /Safari에서 홈 화면에 추가/);
+  assert.match(installCta, /href="\/install\/#iphone"/);
   assert.match(serviceWorker, /bitcoin-p2p-check-v3/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);

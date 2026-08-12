@@ -308,7 +308,7 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.fillStyle = MUTED_PAPER;
   setFont(context, 20, 500);
   context.fillText(
-    `${input.referenceLabel.includes("직접 입력") ? "적용 시각" : "조회 시각"} ${formatReferenceTime(input.referenceTime)}`,
+    `조회 시각 ${formatReferenceTime(input.referenceTime)}`,
     1_425,
     292,
   );
@@ -347,7 +347,7 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   context.fillText(`${formatKrw(input.appliedPriceKrw)} / BTC`, 742, 644);
 
   context.fillStyle = MUTED_PAPER;
-  const fundingSourceLine = `구매자 자금 출처 · ${input.buyerFundingSource} · 구매자 제공 정보 · 상호 확인 필요`;
+  const fundingSourceLine = `구매자 자금 출처 · ${input.buyerFundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
   fitText(context, fundingSourceLine, 1_080, 19, 15, 600);
   context.fillText(fundingSourceLine, 145, 688);
 
@@ -356,11 +356,11 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   const premiumReference = `시장 참고 · 업비트 프리미엄 ${formatPercentFromRatio(input.koreaPremiumRatio)}`;
   fitText(context, premiumReference, 1_080, 18, 14, 500);
   context.fillText(premiumReference, 145, 716);
-  const calculationNote = "계산 기준 · 기준가 × (1 + 판매자 프리미엄) · 1원·1 sat 반올림 · 온체인 송금 수수료 별도";
+  const calculationNote = "계산 기준 · 기준가 × (1 + 판매자 프리미엄) · 반올림 1 sat·1원 · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
   fitText(context, calculationNote, 1_080, 18, 14, 500);
   context.fillText(calculationNote, 145, 744);
   context.fillStyle = ORANGE;
-  const evidenceNote = "거래 전 조건 확인용 · 입금 및 비트코인 수령 증빙이 아닙니다.";
+  const evidenceNote = "확인용 · 원화 입금·BTC 수령 증빙 아님";
   fitText(context, evidenceNote, 1_080, 17, 14, 700);
   context.fillText(evidenceNote, 145, 773);
 

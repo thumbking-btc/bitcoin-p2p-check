@@ -1,11 +1,10 @@
 const PRICE_MAX_AGE_MS = 5 * 60_000;
 
 export function isReferenceShareable(
-  { referenceMode, marketState, referenceTime },
+  { marketState, referenceTime },
   now = Date.now(),
 ) {
-  if (referenceMode === "manual") return true;
-  if (referenceMode !== "upbit" || marketState !== "ready" || !referenceTime) return false;
+  if (marketState !== "ready" || !referenceTime) return false;
   const observedAt = new Date(referenceTime).getTime();
   if (!Number.isFinite(observedAt) || !Number.isFinite(now)) return false;
   return now - observedAt < PRICE_MAX_AGE_MS;

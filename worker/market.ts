@@ -2,10 +2,14 @@ import type { WorkerExecutionContext } from "./index";
 
 const UPBIT_TICKER = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
+const MEMPOOL_FEES = "https://mempool.space/api/v1/fees/recommended";
 
 const PRICE_TIMEOUT_MS = 4_000;
 const PREMIUM_TIMEOUT_MS = 2_500;
+const FEE_TIMEOUT_MS = 2_500;
 const FRESH_CACHE_SECONDS = 15;
+const FEE_FRESH_CACHE_SECONDS = 60;
+const FEE_RETRY_BACKOFF_SECONDS = 30;
 const STALE_CACHE_SECONDS = 5 * 60;
 const MAX_PRICE_OBSERVATION_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
@@ -38,6 +42,21 @@ type PremiumValue = {
   retrievedAt: string;
 };
 
+type FeeRates = {
+  nextBlock: number;
+  halfHour: number;
+  hour: number;
+};
+
+type FeeValue = {
+  feeRates: FeeRates;
+  retrievedAt: string;
+};
+
+type FeeBackoff = {
+  failure: UpstreamFailure;
+};
+
 type SourceResult<T> =
   | { ok: true; value: T }
   | { ok: false; failure: UpstreamFailure };
@@ -50,21 +69,27 @@ type MarketSnapshot = {
   priceObservedAt: string | null;
   koreaPremium: number | null;
   premiumCheckedAt: string | null;
+  feeRates: FeeRates | null;
+  feeCheckedAt: string | null;
   sourceStatus: {
     price: SourceState;
     premium: SourceState;
+    fees: SourceState;
   };
   sourceFailure: {
     price: UpstreamFailure | null;
     premium: UpstreamFailure | null;
+    fees: UpstreamFailure | null;
   };
   staleAgeSeconds: {
     price: number | null;
     premium: number | null;
+    fees: number | null;
   };
   sources: {
     price: string;
     premium: string;
+    fees: string;
   };
 };
 
@@ -151,7 +176,51 @@ async function fetchPremium(retrievedAt: string): Promise<SourceResult<PremiumVa
   return { ok: true, value: { koreaPremium, retrievedAt } };
 }
 
-function cacheKey(request: Request, name: "fresh" | "last-price" | "last-premium"): Request {
+async function fetchFees(retrievedAt: string): Promise<SourceResult<FeeValue>> {
+  const result = await fetchJson(MEMPOOL_FEES, FEE_TIMEOUT_MS);
+  if (!result.ok) return result;
+
+  const data = result.value as {
+    fastestFee?: unknown;
+    halfHourFee?: unknown;
+    hourFee?: unknown;
+    economyFee?: unknown;
+    minimumFee?: unknown;
+  } | null;
+  const fastest = finite(data?.fastestFee);
+  const halfHour = finite(data?.halfHourFee);
+  const hour = finite(data?.hourFee);
+  const economy = finite(data?.economyFee);
+  const minimum = finite(data?.minimumFee);
+  const values = [fastest, halfHour, hour, economy, minimum];
+
+  if (
+    values.some((value) => value === null || value <= 0 || value > 10_000)
+    || fastest === null
+    || halfHour === null
+    || hour === null
+    || economy === null
+    || minimum === null
+    || fastest < halfHour
+    || halfHour < hour
+    || hour < economy
+    || economy < minimum
+  ) {
+    return { ok: false, failure: "invalid" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      feeRates: { nextBlock: fastest, halfHour, hour },
+      retrievedAt,
+    },
+  };
+}
+
+type CacheName = "fresh" | "last-price" | "last-premium" | "fresh-fees" | "last-fees" | "fees-backoff";
+
+function cacheKey(request: Request, name: CacheName): Request {
   const url = new URL(request.url);
   url.pathname = "/api/market";
   url.search = `?internal-cache=${name}`;
@@ -189,6 +258,65 @@ function isRecent(timestamp: string | null, nowMs: number): boolean {
   return age !== null && age <= STALE_CACHE_SECONDS;
 }
 
+async function resolveFees(
+  request: Request,
+  cache: Cache,
+  context: WorkerExecutionContext,
+  nowMs: number,
+  retrievedAt: string,
+): Promise<{
+  value: FeeValue | null;
+  state: SourceState;
+  failure: UpstreamFailure | null;
+  staleAgeSeconds: number | null;
+}> {
+  const [freshFees, lastFees, backoff] = await Promise.all([
+    readCachedJson<FeeValue>(cache, cacheKey(request, "fresh-fees")),
+    readCachedJson<FeeValue>(cache, cacheKey(request, "last-fees")),
+    readCachedJson<FeeBackoff>(cache, cacheKey(request, "fees-backoff")),
+  ]);
+
+  if (freshFees) {
+    return { value: freshFees, state: "current", failure: null, staleAgeSeconds: null };
+  }
+
+  const usableLastFees = lastFees && isRecent(lastFees.retrievedAt, nowMs) ? lastFees : null;
+  if (backoff) {
+    return {
+      value: usableLastFees,
+      state: usableLastFees ? "stale" : "unavailable",
+      failure: backoff.failure,
+      staleAgeSeconds: usableLastFees ? ageSeconds(usableLastFees.retrievedAt, nowMs) : null,
+    };
+  }
+
+  const result = await fetchFees(retrievedAt);
+  if (result.ok) {
+    context.waitUntil(Promise.all([
+      cache.put(
+        cacheKey(request, "fresh-fees"),
+        cacheResponse(result.value, FEE_FRESH_CACHE_SECONDS),
+      ),
+      cache.put(
+        cacheKey(request, "last-fees"),
+        cacheResponse(result.value, STALE_CACHE_SECONDS),
+      ),
+    ]).then(() => undefined));
+    return { value: result.value, state: "current", failure: null, staleAgeSeconds: null };
+  }
+
+  context.waitUntil(cache.put(
+    cacheKey(request, "fees-backoff"),
+    cacheResponse({ failure: result.failure }, FEE_RETRY_BACKOFF_SECONDS),
+  ));
+  return {
+    value: usableLastFees,
+    state: usableLastFees ? "stale" : "unavailable",
+    failure: result.failure,
+    staleAgeSeconds: usableLastFees ? ageSeconds(usableLastFees.retrievedAt, nowMs) : null,
+  };
+}
+
 function publicResponse(snapshot: MarketSnapshot, cacheState: "HIT" | "MISS", method: string): Response {
   const status = snapshot.status === "unavailable" ? 503 : 200;
   const headers = new Headers(API_HEADERS);
@@ -208,9 +336,10 @@ async function buildSnapshot(
   const now = new Date();
   const nowMs = now.getTime();
   const checkedAt = now.toISOString();
-  const [priceResult, premiumResult, cachedPrice, cachedPremium] = await Promise.all([
+  const [priceResult, premiumResult, feeResult, cachedPrice, cachedPremium] = await Promise.all([
     fetchPrice(nowMs, checkedAt),
     fetchPremium(checkedAt),
+    resolveFees(request, cache, context, nowMs, checkedAt),
     readCachedJson<PriceValue>(cache, cacheKey(request, "last-price")),
     readCachedJson<PremiumValue>(cache, cacheKey(request, "last-premium")),
   ]);
@@ -255,18 +384,23 @@ async function buildSnapshot(
     priceObservedAt: price?.priceObservedAt ?? null,
     koreaPremium: premium?.koreaPremium ?? null,
     premiumCheckedAt: premium?.retrievedAt ?? null,
-    sourceStatus: { price: priceState, premium: premiumState },
+    feeRates: feeResult.value?.feeRates ?? null,
+    feeCheckedAt: feeResult.value?.retrievedAt ?? null,
+    sourceStatus: { price: priceState, premium: premiumState, fees: feeResult.state },
     sourceFailure: {
       price: priceResult.ok ? null : priceResult.failure,
       premium: premiumResult.ok ? null : premiumResult.failure,
+      fees: feeResult.failure,
     },
     staleAgeSeconds: {
       price: priceState === "stale" ? ageSeconds(price?.retrievedAt ?? null, nowMs) : null,
       premium: premiumState === "stale" ? ageSeconds(premium?.retrievedAt ?? null, nowMs) : null,
+      fees: feeResult.staleAgeSeconds,
     },
     sources: {
       price: "https://global-docs.upbit.com/docs/upbit-quotation-restful-api",
       premium: "https://datalab.upbit.com/assets/BTC/upbit-premium",
+      fees: "https://mempool.space/api/v1/fees/recommended",
     },
   };
 }
