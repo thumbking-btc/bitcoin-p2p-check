@@ -461,11 +461,13 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, installCta, appIconSource, maskableSource, shareRenderer] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/InstallCta.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/SiteRouteNav.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon.svg", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
@@ -530,7 +532,12 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /href="\/install\/"/);
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
-  assert.match(html, /href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
+  assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
+  assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
+  assert.match(registration, /navigatorWithStandalone\.standalone === true/);
+  assert.match(registration, /"is-installed-pwa"/);
+  assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
+  assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png"/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og\.png/);
 });

@@ -4,6 +4,12 @@ import { useEffect } from "react";
 
 export function PwaRegistration() {
   useEffect(() => {
+    const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+    document.documentElement.classList.toggle(
+      "is-installed-pwa",
+      navigatorWithStandalone.standalone === true,
+    );
+
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
 
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {

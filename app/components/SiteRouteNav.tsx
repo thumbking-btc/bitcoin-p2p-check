@@ -15,7 +15,7 @@ export function SiteRouteNav({ current }: SiteRouteNavProps) {
       {current === "install" ? (
         <span aria-current="page">홈 화면에 추가하는 방법</span>
       ) : (
-        <a href="/install/">홈 화면에 추가하는 방법</a>
+        <a className="site-route-install" href="/install/">홈 화면에 추가하는 방법</a>
       )}
     </nav>
   );
