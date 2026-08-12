@@ -239,6 +239,7 @@ a { color: inherit; }
   .brand-mark { width: 25px; height: 25px; }
   .market-strip { grid-template-columns: minmax(0, 1.25fr) minmax(112px, .75fr); }
   .trade-form { grid-template-columns: minmax(0, 1.65fr) minmax(108px, .75fr); }
+  .input-with-unit input { padding-inline: 7px; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
   .network-fees { margin-inline: 12px; }
@@ -277,7 +278,8 @@ a { color: inherit; }
   .fund-source-field { grid-template-columns: minmax(98px, .7fr) minmax(0, 1.3fr); gap: 7px; }
   .fund-source-field small { display: block; margin-left: 0; }
   .fund-source-field select { padding-inline: 8px; }
-  .input-with-unit input { padding-inline: 6px; }
+  .input-with-unit input { padding-inline: 4px; }
+  .input-with-unit b { min-width: 36px; padding-inline: 4px; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
   .capture-meta { gap: 3px 4px; }

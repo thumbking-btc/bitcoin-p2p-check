@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { calculateP2PQuote, MAX_SATS, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
+import { calculateP2PQuote, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
+import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 
 type TradeRole = "buyer" | "seller";
-type FocusedField = "krw" | "sats" | null;
+type FocusedField = "krw" | "bitcoin" | null;
 type BitcoinDisplayUnit = "btc" | "sats";
 
 const FUNDING_SOURCE_OPTIONS = [
@@ -159,7 +160,7 @@ function downloadTradeImage(file: File) {
 export function P2PTradeTool() {
   const [tradeRole, setTradeRole] = useState<TradeRole>("buyer");
   const [krwAmount, setKrwAmount] = useState("3000000");
-  const [satsAmount, setSatsAmount] = useState("3000000");
+  const [bitcoinAmountInput, setBitcoinAmountInput] = useState("3000000");
   const [premiumInput, setPremiumInput] = useState("2");
   const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({
     buyer: "기재하지 않음",
@@ -222,8 +223,12 @@ export function P2PTradeTool() {
     const timeout = window.setTimeout(() => {
       const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
       setTradeRole(importedRole);
-      if (importedRole === "buyer") setKrwAmount(String(imported.amount));
-      else setSatsAmount(String(imported.amount));
+      if (importedRole === "buyer") {
+        setKrwAmount(String(imported.amount));
+        setBitcoinAmountInput(imported.displayUnit === "btc" ? satsToBtcInput(3_000_000) : "3000000");
+      } else {
+        setBitcoinAmountInput(imported.displayUnit === "btc" ? satsToBtcInput(imported.amount) : String(imported.amount));
+      }
       setPremiumInput(String(imported.premium));
       setFundingSources((current) => ({ ...current, [importedRole]: imported.fundingSource as FundingSource }));
       setBitcoinDisplayUnit(imported.displayUnit as BitcoinDisplayUnit);
@@ -254,7 +259,17 @@ export function P2PTradeTool() {
   const referenceTime = market?.priceObservedAt ?? null;
   const fundingSource = fundingSources[tradeRole];
   const fundingSourceFieldLabel = "구매자 자금 출처";
-  const amount = tradeRole === "buyer" ? numeric(krwAmount) : numeric(satsAmount);
+  const parsedBitcoinAmount = parseBitcoinAmount(bitcoinAmountInput, bitcoinDisplayUnit);
+  const amount = tradeRole === "buyer" ? numeric(krwAmount) : parsedBitcoinAmount.sats;
+  const bitcoinAmountError = tradeRole !== "seller" || !bitcoinAmountInput.trim()
+    ? ""
+    : parsedBitcoinAmount.error === "precision"
+      ? "BTC는 소수점 이하 8자리까지 입력하세요."
+      : parsedBitcoinAmount.error === "range"
+        ? "비트코인 수량이 지원 범위를 넘었습니다."
+        : parsedBitcoinAmount.error === "format"
+          ? "비트코인 수량을 확인하세요."
+          : "";
 
   const quote = useMemo(() => {
     if (amount === null || referencePrice === null || premiumPercent === null) return null;
@@ -276,9 +291,8 @@ export function P2PTradeTool() {
         : "판매자가 기준 시세와 같은 단가로 팝니다.";
   const stalePrice = market !== null
     && (priceExpired || market.status === "stale" || marketState === "error");
-  const inputOutOfRange = tradeRole === "seller" && amount !== null && amount > MAX_SATS;
-  const resultUnavailable = premiumError || inputOutOfRange
-    ? premiumError || "비트코인 수량이 지원 범위를 넘었습니다."
+  const resultUnavailable = premiumError || bitcoinAmountError
+    ? premiumError || bitcoinAmountError
     : referencePrice === null
       ? marketState === "loading" ? "업비트 시세를 불러오는 중입니다." : "최신 업비트 시세를 불러오지 못했습니다. 잠시 후 새로고침하세요."
       : amount === null || amount <= 0
@@ -421,6 +435,16 @@ export function P2PTradeTool() {
     }
   }
 
+  function changeBitcoinDisplayUnit(nextUnit: BitcoinDisplayUnit) {
+    if (nextUnit === bitcoinDisplayUnit) return;
+    const current = parseBitcoinAmount(bitcoinAmountInput, bitcoinDisplayUnit);
+    setBitcoinAmountInput(current.sats === null
+      ? ""
+      : nextUnit === "btc" ? satsToBtcInput(current.sats) : String(current.sats));
+    setBitcoinDisplayUnit(nextUnit);
+    setFocusedField(null);
+  }
+
   return (
     <section className="trade-tool" aria-labelledby="tool-title">
       <article className="capture-card" data-capture-card>
@@ -494,20 +518,29 @@ export function P2PTradeTool() {
               </span>
             </label>
           ) : (
-            <label className="field" htmlFor="trade-sats">
-              <span>보낼 사토시</span>
+            <label className="field" htmlFor="trade-bitcoin">
+              <span>{bitcoinDisplayUnit === "btc" ? "보낼 BTC" : "보낼 사토시"}</span>
               <span className="input-with-unit">
                 <input
-                  id="trade-sats"
-                  inputMode="numeric"
-                  value={focusedField === "sats" ? satsAmount : grouped(satsAmount)}
-                  onFocus={() => setFocusedField("sats")}
+                  id="trade-bitcoin"
+                  inputMode={bitcoinDisplayUnit === "btc" ? "decimal" : "numeric"}
+                  value={focusedField === "bitcoin"
+                    ? bitcoinAmountInput
+                    : bitcoinDisplayUnit === "btc" ? groupedBtcInput(bitcoinAmountInput) : grouped(bitcoinAmountInput)}
+                  onFocus={() => setFocusedField("bitcoin")}
                   onBlur={() => setFocusedField(null)}
-                  onChange={(event) => setSatsAmount(digitsOnly(event.target.value, 16))}
-                  aria-describedby={`trade-rounding premium-note${inputOutOfRange ? " sats-error" : ""}`}
-                  aria-invalid={inputOutOfRange || undefined}
+                  onChange={(event) => {
+                    if (bitcoinDisplayUnit === "sats") {
+                      setBitcoinAmountInput(digitsOnly(event.target.value, 16));
+                      return;
+                    }
+                    const normalized = normalizeBtcInput(event.target.value);
+                    if (normalized !== null) setBitcoinAmountInput(normalized);
+                  }}
+                  aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
+                  aria-invalid={Boolean(bitcoinAmountError) || undefined}
                 />
-                <b>sats</b>
+                <b>{bitcoinDisplayUnit === "btc" ? "BTC" : "sats"}</b>
               </span>
             </label>
           )}
@@ -529,7 +562,7 @@ export function P2PTradeTool() {
           <p className="premium-note" id="premium-note">{premiumSummary}</p>
           {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
-          {inputOutOfRange ? <p className="input-alert" id="sats-error" role="alert">비트코인 수량이 지원 범위를 넘었습니다.</p> : null}
+          {bitcoinAmountError ? <p className="input-alert" id="bitcoin-amount-error" role="alert">{bitcoinAmountError}</p> : null}
           <label className="fund-source-field" htmlFor="buyer-funding-source">
             <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
             <select
@@ -551,14 +584,14 @@ export function P2PTradeTool() {
           <header className="result-head">
             <h2 id="result-title">거래 조건</h2>
             <label className="result-unit-select">
-              <span className="visually-hidden">비트코인 표시 단위</span>
+              <span className="visually-hidden">비트코인 입력 및 표시 단위</span>
               <select
                 value={bitcoinDisplayUnit}
-                onChange={(event) => setBitcoinDisplayUnit(event.target.value as BitcoinDisplayUnit)}
-                aria-label="비트코인 표시 단위"
+                onChange={(event) => changeBitcoinDisplayUnit(event.target.value as BitcoinDisplayUnit)}
+                aria-label="비트코인 입력 및 표시 단위"
               >
-                <option value="sats">sats로 보기</option>
-                <option value="btc">BTC로 보기</option>
+                <option value="sats">sats 기준</option>
+                <option value="btc">BTC 기준</option>
               </select>
             </label>
           </header>

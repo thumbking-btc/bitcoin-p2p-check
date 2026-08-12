@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
+import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../app/lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
 import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
@@ -46,6 +47,35 @@ test("calculates buyer and seller quotes without hiding fees", () => {
   assert.equal(buyerDiscount?.sats, 3_061_224);
   const sellerDiscount = calculateP2PQuote({ mode: "sats", amount: 3_000_000, referencePrice: 100_000_000, premiumPercent: -2 });
   assert.equal(sellerDiscount?.paymentKrw, 2_940_000);
+});
+
+test("converts the seller input between sats and BTC without changing its value", () => {
+  for (const [sats, btc] of [
+    [1, "0.00000001"],
+    [3_000_000, "0.03"],
+    [10_000_000, "0.1"],
+    [123_456_789, "1.23456789"],
+    [MAX_SATS, "21000000"],
+  ]) {
+    assert.equal(satsToBtcInput(sats), btc);
+    assert.deepEqual(parseBitcoinAmount(btc, "btc"), { sats, error: null });
+    assert.deepEqual(parseBitcoinAmount(String(sats), "sats"), { sats, error: null });
+  }
+
+  assert.equal(groupedBtcInput("21000000.00000001"), "21,000,000.00000001");
+  assert.equal(normalizeBtcInput("0.10000000"), "0.10000000");
+  assert.equal(normalizeBtcInput("1e-8"), null);
+  assert.deepEqual(parseBitcoinAmount("0.000000001", "btc"), { sats: null, error: "precision" });
+  assert.deepEqual(parseBitcoinAmount("21000000.00000001", "btc"), { sats: null, error: "range" });
+  assert.deepEqual(parseBitcoinAmount("-0.1", "btc"), { sats: null, error: "format" });
+
+  const quote = calculateP2PQuote({
+    mode: "sats",
+    amount: parseBitcoinAmount("0.1", "btc").sats,
+    referencePrice: 100_000_000,
+    premiumPercent: 2,
+  });
+  assert.equal(quote?.paymentKrw, 10_200_000);
 });
 
 test("writes a natural buy or sell sentence at the start of a share", () => {
@@ -285,9 +315,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
-  assert.match(component, /BTC로 보기/);
-  assert.match(component, /sats로 보기/);
-  assert.match(component, /비트코인 표시 단위/);
+  assert.match(component, /BTC 기준/);
+  assert.match(component, /sats 기준/);
+  assert.match(component, /비트코인 입력 및 표시 단위/);
+  assert.match(component, /보낼 BTC/);
+  assert.match(component, /보낼 사토시/);
+  assert.match(component, /parseBitcoinAmount\(bitcoinAmountInput, bitcoinDisplayUnit\)/);
+  assert.match(component, /satsToBtcInput\(imported\.amount\)/);
+  assert.match(component, /inputMode=\{bitcoinDisplayUnit === "btc" \? "decimal" : "numeric"\}/);
   assert.match(shareTransport, /files: \[file\]/);
   assert.match(component, /현재 시세로 다시 계산하기:/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
