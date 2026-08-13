@@ -119,12 +119,13 @@ a { color: inherit; }
 .share-status.is-error { color: var(--red); font-weight: 720; }
 .network-fees { margin: 0 clamp(14px, 3vw, 22px) 14px; border: 1px solid var(--control-line); background: #f7f3ea; }
 .network-fees > header { display: flex; min-height: 25px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
-.network-fees h2, .network-fees > header p { margin: 0; }
+.network-fees h2, .network-fees-status p { margin: 0; }
 .network-fees h2 { display: flex; min-width: 0; align-items: baseline; gap: 4px; font-size: 11px; font-weight: 820; letter-spacing: -.01em; }
 .network-fees h2 small { color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
-.network-fees > header p { color: var(--muted); font-size: 10px; font-weight: 680; white-space: nowrap; }
-.network-fees.is-stale > header p { color: var(--orange-dark); }
-.network-fees.is-unavailable > header p { color: var(--red); }
+.network-fees-status { display: flex; min-width: 0; align-items: baseline; justify-content: flex-end; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 680; white-space: nowrap; }
+.network-fees-status span { font-weight: 760; }
+.network-fees.is-stale .network-fees-status { color: var(--orange-dark); }
+.network-fees.is-unavailable .network-fees-status { color: var(--red); }
 .network-fees dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
 .network-fees dl > div { display: grid; min-width: 0; gap: 1px; justify-items: center; padding: 5px 3px; border-right: 1px solid var(--line); text-align: center; }
 .network-fees dl > div:last-child { border-right: 0; }
@@ -269,6 +270,8 @@ a { color: inherit; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
   .network-fees { margin-inline: 12px; }
+  .network-fees > header { display: grid; grid-template-columns: 1fr; gap: 2px; }
+  .network-fees-status { justify-content: space-between; }
   .market-error { margin-inline: 12px; }
   .reference-details { margin-top: 40px; box-shadow: 4px 4px 0 rgba(17, 24, 32, .1); }
   .reference-details > summary { grid-template-columns: minmax(0, 1fr) 14px; }

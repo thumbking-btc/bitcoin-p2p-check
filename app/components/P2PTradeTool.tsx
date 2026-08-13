@@ -185,6 +185,7 @@ function formatClock(value: string | null | undefined) {
     timeZone: "Asia/Seoul",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   }).format(date);
 }
@@ -490,12 +491,12 @@ export function P2PTradeTool() {
   const feeState = market?.sourceStatus?.fees ?? "unavailable";
   const feeVisualState = marketState === "loading" ? "loading" : feeState;
   const feeStatus = marketState === "loading"
-    ? market ? "mempool.space · 갱신 중" : "mempool.space · 조회 중"
+    ? market ? "갱신 중" : "조회 중"
     : feeState === "current"
-      ? `mempool.space · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      ? `약 1분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
       : feeState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
-        : "mempool.space · 조회 불가";
+        : "조회 불가";
 
   const currentResultAnnouncement = quote && multiplier !== null
     ? tradeRole === "buyer"
@@ -912,7 +913,10 @@ export function P2PTradeTool() {
       <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">
         <header>
           <h2 id="network-fees-title">현재 온체인 수수료율<small>· 참고용</small></h2>
-          <p>{feeStatus}</p>
+          <div className="network-fees-status">
+            <span>mempool.space</span>
+            <p>{feeStatus}</p>
+          </div>
         </header>
         <dl aria-label="mempool.space 권장 온체인 수수료율">
           <div>

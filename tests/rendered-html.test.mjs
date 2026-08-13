@@ -423,6 +423,10 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /feeRates\?\.nextBlock/);
   assert.match(component, /feeRates\?\.halfHour/);
   assert.match(component, /feeRates\?\.hour/);
+  assert.match(component, /second:\s*"2-digit"/);
+  assert.match(component, /약 1분마다 자동 갱신 ·/);
+  assert.match(component, /className="network-fees-status"/);
+  assert.match(component, /<span>mempool\.space<\/span>/);
   assert.match(component, /getMarketRefreshDelay\(lastMarketRefreshAtRef\.current\)/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
@@ -548,6 +552,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.result-row\s*\{[^}]*min-height:\s*60px/s);
   assert.match(css, /\.result-row\.primary\s*\{[^}]*box-shadow:\s*inset 4px 0 0 var\(--orange\)/s);
   assert.match(css, /\.network-fees dl\s*\{[^}]*grid-template-columns:\s*repeat\(3/s);
+  assert.match(css, /\.network-fees-status\s*\{[^}]*display:\s*flex[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /@media \(max-width:\s*700px\)[\s\S]*?\.network-fees > header\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*1fr/s);
   assert.match(css, /\.share-button\.is-background-preparing:disabled\s*\{[^}]*background:\s*var\(--orange\)/s);
   assert.match(component, /className="result-badge">내가 받음/);
   assert.match(component, /구매 조건\. 내가 보낼 원화/);
