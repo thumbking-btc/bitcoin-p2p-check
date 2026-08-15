@@ -4,17 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { calculateP2PQuote, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
-import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
-import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
+import { parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { getMarketRefreshDelay } from "../lib/market-refresh.mjs";
-import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
-import { P2PReceiveRequest } from "./P2PReceiveRequest";
+import { buildTradePromotion } from "../lib/trade-promotion.mjs";
+import { createTradePromotionImage, type TradePromotionImageInput } from "../lib/trade-promotion-image";
+import { P2PPaymentRequest } from "./P2PPaymentRequest";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
 type BitcoinDisplayUnit = "btc" | "sats";
 type AmountBasis = "krw" | "bitcoin";
+type TransferSupport = "onchain" | "lightning" | "both";
 type AmountInputUnit = "krw" | BitcoinDisplayUnit;
 type MarketRefreshMode = "initial" | "manual" | "silent";
 type ActiveMarketRefresh = {
@@ -46,6 +47,7 @@ type TradeDraftFields = {
   premiumInput: string;
   fundingSources: Record<TradeRole, FundingSource>;
   bitcoinDisplayUnit: BitcoinDisplayUnit;
+  transferSupportByRole: Record<TradeRole, TransferSupport>;
 };
 
 const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
@@ -56,6 +58,7 @@ const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
   premiumInput: "2",
   fundingSources: { buyer: "기재하지 않음", seller: "기재하지 않음" },
   bitcoinDisplayUnit: "sats",
+  transferSupportByRole: { buyer: "onchain", seller: "onchain" },
 };
 
 function getTradeDraftStorage() {
@@ -217,6 +220,7 @@ export function P2PTradeTool() {
   const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({ ...DEFAULT_TRADE_DRAFT.fundingSources });
   const [importedTradeLink, setImportedTradeLink] = useState(false);
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
+  const [transferSupportByRole, setTransferSupportByRole] = useState<Record<TradeRole, TransferSupport>>({ ...DEFAULT_TRADE_DRAFT.transferSupportByRole });
   const [draftHydrated, setDraftHydrated] = useState(false);
   const skipNextDraftPersistence = useRef(true);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
@@ -343,7 +347,8 @@ export function P2PTradeTool() {
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      const imported = parseTradeFragment(window.location.hash);
+      const incomingHash = window.location.hash;
+      const imported = parseTradeFragment(incomingHash);
       const storage = getTradeDraftStorage();
       const stored = readTradeDraft(storage);
       const hydratedDraft: TradeDraftFields = stored ? {
@@ -354,12 +359,14 @@ export function P2PTradeTool() {
         premiumInput: stored.premiumInput,
         fundingSources: { ...stored.fundingSources },
         bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
+        transferSupportByRole: { ...stored.transferSupportByRole } as Record<TradeRole, TransferSupport>,
       } : {
         ...DEFAULT_TRADE_DRAFT,
         krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
         bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
         amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
         fundingSources: { ...DEFAULT_TRADE_DRAFT.fundingSources },
+        transferSupportByRole: { ...DEFAULT_TRADE_DRAFT.transferSupportByRole },
       };
 
       if (imported) {
@@ -385,8 +392,11 @@ export function P2PTradeTool() {
         hydratedDraft.bitcoinDisplayUnit = importedDisplayUnit;
         setImportedTradeLink(true);
         writeTradeDraft(storage, hydratedDraft);
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
+
+      // Fragments are never used as durable storage. Scrub valid legacy trade
+      // links and malformed/unknown fragments alike after the one-time import.
+      if (incomingHash) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
 
       setTradeRole(hydratedDraft.tradeRole);
       setKrwAmounts(hydratedDraft.krwAmounts);
@@ -395,6 +405,7 @@ export function P2PTradeTool() {
       setPremiumInput(hydratedDraft.premiumInput);
       setFundingSources(hydratedDraft.fundingSources);
       setBitcoinDisplayUnit(hydratedDraft.bitcoinDisplayUnit);
+      setTransferSupportByRole(hydratedDraft.transferSupportByRole);
       setDraftHydrated(true);
     }, 0);
     return () => window.clearTimeout(timeout);
@@ -414,8 +425,9 @@ export function P2PTradeTool() {
       premiumInput,
       fundingSources,
       bitcoinDisplayUnit,
+      transferSupportByRole,
     });
-  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSources, krwAmounts, premiumInput, tradeRole]);
+  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSources, krwAmounts, premiumInput, tradeRole, transferSupportByRole]);
 
   useEffect(() => {
     if (!market?.priceObservedAt) return;
@@ -437,6 +449,7 @@ export function P2PTradeTool() {
   const referenceLabel = "업비트 최근 체결가";
   const referenceTime = market?.priceObservedAt ?? null;
   const fundingSource = fundingSources[tradeRole];
+  const transferSupport = transferSupportByRole[tradeRole];
   const fundingSourceFieldLabel = "구매자 자금 출처";
   const amountBasis = amountBasisByRole[tradeRole];
   const krwAmount = krwAmounts[tradeRole];
@@ -515,48 +528,22 @@ export function P2PTradeTool() {
     setResultAnnouncement(currentResultAnnouncement);
   }, [currentResultAnnouncement, market]);
 
-  const tradeIntent = quote ? buildTradeIntent({
-    tradeRole,
-    amountBasis,
-    paymentKrw: quote.paymentKrw,
-    sats: quote.sats,
-    bitcoinDisplayUnit,
-  }) : "";
-  const shareText = quote && multiplier !== null && tradeIntent ? [
-    tradeIntent,
-    `계산 시각: ${formatTime(referenceTime)}`,
-    `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
-    `판매자 → 구매자: ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)} (${bitcoinDisplayUnit === "btc" ? formatSats(quote.sats) : formatBtc(quote.sats)})`,
-    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
-    "",
-    "[가격 계산]",
-    `금액 기준: ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"}`,
-    `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
-    `판매자 프리미엄: ${premiumPercent}%`,
-    `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
-    `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
-    "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
-    "확인용: 원화 입금·BTC 수령 증빙 아님",
-  ].join("\n") : "";
-
-  const shareImageInput = useMemo<TradeShareImageInput | null>(() => {
-    if (!quote || referencePrice === null || premiumPercent === null) return null;
+  const shareImageInput = useMemo<TradePromotionImageInput | null>(() => {
+    if (!quote || premiumPercent === null || premiumPercent <= -100) return null;
     return {
       tradeRole,
       amountBasis,
       bitcoinDisplayUnit,
-      referenceLabel,
-      referencePriceKrw: referencePrice,
-      referenceTime,
-      koreaPremiumRatio: effectiveKoreaPremium,
       sellerPremiumPercent: premiumPercent,
-      buyerFundingSource: fundingSource,
       paymentKrw: quote.paymentKrw,
       sats: quote.sats,
-      btcAmount: quote.sats / SATS_PER_BTC,
-      appliedPriceKrw: quote.appliedPrice,
+      transferSupport,
     };
-  }, [amountBasis, bitcoinDisplayUnit, effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
+  }, [amountBasis, bitcoinDisplayUnit, premiumPercent, quote, tradeRole, transferSupport]);
+
+  const publicPromotion = shareImageInput ? buildTradePromotion(shareImageInput) : null;
+  const shareText = publicPromotion?.text ?? "";
+  const tradeIntent = publicPromotion?.intent ?? "";
 
   const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
   const shareFormKey = JSON.stringify({
@@ -565,7 +552,7 @@ export function P2PTradeTool() {
     bitcoinDisplayUnit,
     amount,
     premiumPercent,
-    fundingSource,
+    transferSupport,
   });
   const receiveQuoteKey = JSON.stringify({
     tradeRole,
@@ -575,9 +562,11 @@ export function P2PTradeTool() {
     premiumInput,
     fundingSource,
     bitcoinDisplayUnit,
+    transferSupport,
     manualMarketGeneration,
   });
   const shareImageAllowed = Boolean(shareImageInput)
+    && Boolean(publicPromotion)
     && draftHydrated
     && !stalePrice
     && marketState === "ready";
@@ -591,7 +580,7 @@ export function P2PTradeTool() {
     if (!shareImageInput || !shareImageAllowed) return;
     let active = true;
     const timeout = window.setTimeout(() => {
-      void createTradeShareImage(shareImageInput).then(
+      void createTradePromotionImage(shareImageInput).then(
         (file) => {
           if (!active) return;
           const formChanged = preparedShareFormKeyRef.current !== shareFormKey;
@@ -619,38 +608,26 @@ export function P2PTradeTool() {
       setShareImageGeneration((value) => value + 1);
       return;
     }
-    if (!shareText || !preparedShareFile || isSharing) return;
-    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
+    if (!isReferenceShareable({ marketState, referenceTime }, Date.now())) {
       setPriceExpired(true);
-      setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
+      setShareStatus("시세가 5분 이상 지났습니다. 새 시세를 확인한 뒤 다시 공유해 주세요.");
       return;
     }
-    const tradeFragment = buildTradeFragment({
-      side: tradeRole === "buyer" ? "buy" : "sell",
-      amount: amount ?? "",
-      amountBasis,
-      premium: premiumPercent ?? "",
-      fundingSource,
-      displayUnit: bitcoinDisplayUnit,
-    });
-    const tradeLink = tradeFragment ? `${window.location.origin}/${tradeFragment}` : "";
-    const textWithLink = tradeLink
-      ? `${shareText}\n\n현재 시세로 다시 계산하기: ${tradeLink}`
-      : shareText;
+    if (!shareText || !preparedShareFile || isSharing) return;
     setShareStatus("");
     isSharingRef.current = true;
     setIsSharing(true);
     try {
       const outcome = await shareImageFile({
         file: preparedShareFile,
-        title: tradeIntent,
-        text: textWithLink,
+        title: publicPromotion?.title ?? tradeIntent,
+        text: shareText,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
         nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
         download: downloadTradeImage,
       });
       if (outcome === "shared") {
-        setShareStatus("현재 거래 조건을 공유했습니다.");
+        setShareStatus("공개용 거래 모집을 공유 창으로 전달했습니다.");
       } else if (outcome === "downloaded") {
         setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
       } else if (outcome === "downloaded-after-error") {
@@ -742,7 +719,7 @@ export function P2PTradeTool() {
         {stalePrice ? (
           <p className="stale-warning" role="status">
             {marketState === "error"
-              ? "시세 갱신에 실패했습니다. 마지막 조회값으로는 이미지를 공유할 수 없습니다."
+              ? "시세 갱신에 실패했습니다. 마지막 조회값은 참고용이며 공개 모집의 약식 환산과 실제 1:1 요청을 새로 만들 수 없습니다."
               : market?.status === "stale"
                 ? "최신 시세를 확인하지 못해 마지막 조회값을 표시합니다. 새로고침 후 거래 조건을 다시 확인하세요."
                 : "5분 이상 지난 시세입니다. 새로고침 후 거래 조건을 다시 확인하세요."}
@@ -832,7 +809,7 @@ export function P2PTradeTool() {
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
           {bitcoinAmountError ? <p className="input-alert" id="bitcoin-amount-error" role="alert">{bitcoinAmountError}</p> : null}
           <label className="fund-source-field" htmlFor="buyer-funding-source">
-            <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
+            <span>{fundingSourceFieldLabel}<small>선택 사항 · 1:1 요청용</small></span>
             <select
               id="buyer-funding-source"
               value={fundingSource}
@@ -845,7 +822,29 @@ export function P2PTradeTool() {
               {FUNDING_SOURCE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
           </label>
-          <p className="fund-source-note" id="fund-source-note">자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요.</p>
+          <p className="fund-source-note" id="fund-source-note">공개 모집에는 포함되지 않습니다. 구매자가 제공하는 정보이므로 1:1 거래 전에 서로 확인해 주세요.</p>
+          <fieldset className="transfer-support-fieldset">
+            <legend>{tradeRole === "buyer" ? "BTC 수령 가능 방식" : "BTC 전송 가능 방식"}</legend>
+            <div className="transfer-support-options">
+              {([
+                ["onchain", "온체인"],
+                ["lightning", "라이트닝"],
+                ["both", "둘 다 가능"],
+              ] as const).map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name={`transfer-support-${tradeRole}`}
+                    value={value}
+                    checked={transferSupport === value}
+                    onChange={() => setTransferSupportByRole((current) => ({ ...current, [tradeRole]: value }))}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <p>공개 거래 모집에는 가능한 방식만 표시합니다. 실제 주소나 인보이스는 1:1 요청에서 한 방식씩 다시 확인합니다.</p>
+          </fieldset>
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -890,7 +889,7 @@ export function P2PTradeTool() {
         </section>
 
         <div className="capture-meta" id="trade-rounding" role="note" aria-label="거래 계산 참고사항">
-          <span className="capture-meta-fee" aria-label="온체인 수수료: 판매자 부담, 구매자 수령량 차감 없음"><b>온체인 수수료:</b><span>판매자 부담 · 구매자 수령량 차감 없음</span></span>
+          <span className="capture-meta-fee" aria-label="비트코인 전송 수수료: 선택한 방식에 따라 판매자 부담, 구매자 수령량 차감 없음"><b>BTC 전송 수수료:</b><span>선택한 방식에 따라 판매자 별도 부담 · 구매자 수령량 차감 없음</span></span>
           <span className="capture-meta-rounding" aria-label="반올림: 1 sat, 1원"><b>반올림:</b><span>1 sat·1원</span></span>
           <span className="capture-meta-disclaimer" aria-label="확인용: 원화 입금과 비트코인 수령 증빙 아님"><b>확인용:</b><span>원화 입금·BTC 수령 증빙 아님</span></span>
         </div>
@@ -905,31 +904,34 @@ export function P2PTradeTool() {
           aria-busy={isSharing || shareImagePreparing}
         >
           {isSharing
-            ? "거래 조건 공유 중"
+            ? "거래 모집 공유 중"
             : shareImageFailed
-              ? "거래 조건 다시 준비"
+              ? "거래 모집 다시 준비"
               : shareImagePreparing && !backgroundShareImagePreparing
-                ? "거래 조건 준비 중"
+                ? "거래 모집 준비 중"
                 : stalePrice
                   ? "시세 새로고침 후 공유"
-                  : "거래 조건 공유"}
+                  : "거래 모집 공유"}
         </button>
         <p
           className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
           aria-live="polite"
           role={shareStatusIsError ? "alert" : undefined}
         >
-          {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
+          {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "공개 모집물에는 주소·인보이스·자금 출처·웹 링크가 들어가지 않습니다. 입력 초안은 마지막 수정 후 12시간 동안 이 브라우저에서 다시 불러옵니다. 만료된 초안은 다음 실행 시 삭제되며 서버에는 저장되지 않습니다." : "")}
         </p>
       </div>
 
-      <P2PReceiveRequest
+      <P2PPaymentRequest
         key={receiveQuoteKey}
         isBuyer={tradeRole === "buyer"}
-        quoteCurrent={Boolean(quote) && marketState === "ready" && !stalePrice}
-        quoteKey={receiveQuoteKey}
-        paymentKrw={quote?.paymentKrw ?? null}
+          quoteCurrent={Boolean(quote) && marketState === "ready" && !stalePrice}
+          quoteKey={receiveQuoteKey}
+          referenceTime={referenceTime}
+          paymentKrw={quote?.paymentKrw ?? null}
         sats={quote?.sats ?? null}
+        transferSupport={transferSupport}
+        fundingSource={fundingSource}
       />
 
       <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">

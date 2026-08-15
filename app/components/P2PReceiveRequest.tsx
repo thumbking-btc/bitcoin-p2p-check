@@ -8,13 +8,17 @@ import {
   createP2PReceiveRequest,
   createVerifiedP2PReceiveQr,
 } from "../lib/p2p-receive-request.mjs";
+import { createPrivateRequestImage } from "../lib/private-request-image";
+import { isReferenceShareable, shareSensitiveImageFile } from "../lib/share-transport.mjs";
 
 type Props = {
   isBuyer: boolean;
   quoteCurrent: boolean;
   quoteKey: string;
+  referenceTime: string | null;
   paymentKrw: number | null;
   sats: number | null;
+  fundingSource: string;
 };
 
 type Snapshot = {
@@ -25,6 +29,7 @@ type Snapshot = {
 };
 
 type Artifact = {
+  privateImage: File;
   qr: {
     data: Uint8ClampedArray;
     height: number;
@@ -41,6 +46,8 @@ type Artifact = {
   source: {
     address: string;
     expiresAt: number;
+    fundingSource: string;
+    paymentKrw: number;
     quoteKey: string;
     sats: number;
   };
@@ -63,12 +70,27 @@ function formatSats(value: number) {
   return value.toLocaleString("ko-KR") + " sats";
 }
 
+function formatExpiry(milliseconds: number) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(milliseconds));
+}
+
 export function P2PReceiveRequest({
   isBuyer,
   quoteCurrent,
   quoteKey,
+  referenceTime,
   paymentKrw,
   sats,
+  fundingSource,
 }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [addressInput, setAddressInput] = useState("");
@@ -77,6 +99,8 @@ export function P2PReceiveRequest({
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [feedback, setFeedback] = useState("");
   const [failure, setFailure] = useState("");
+  const [externalShareConfirmed, setExternalShareConfirmed] = useState(false);
+  const [sharingPrivateImage, setSharingPrivateImage] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const resultRef = useRef<HTMLDivElement | null>(null);
@@ -117,6 +141,8 @@ export function P2PReceiveRequest({
     setAddressInput("");
     setAddressConfirmed(false);
     setAmountConfirmed(false);
+    setExternalShareConfirmed(false);
+    setSharingPrivateImage(false);
     setFeedback("");
     setFailure("");
     if (!keepSnapshot) setSnapshot(null);
@@ -190,7 +216,11 @@ export function P2PReceiveRequest({
   );
 
   function startRequest() {
-    if (!canStart || sats === null || paymentKrw === null) return;
+    if (!canStart || !isReferenceShareable({ marketState: quoteCurrent ? "ready" : "error", referenceTime }, Date.now()) || sats === null || paymentKrw === null) {
+      clearSensitive(false);
+      setFailure("시세가 5분 이상 지났습니다. 새 시세를 확인한 뒤 다시 시작해 주세요.");
+      return;
+    }
     clearSensitive(false);
     setSnapshot({
       expiresAt: Date.now() + REQUEST_LIFETIME_MS,
@@ -217,7 +247,7 @@ export function P2PReceiveRequest({
     setFailure("");
   }
 
-  function buildRequest() {
+  async function buildRequest() {
     if (!snapshot || snapshot.quoteKey !== quoteKey || Date.now() >= snapshot.expiresAt) {
       clearSensitive(false);
       setFailure("거래 조건이 바뀌거나 만료되었습니다. 현재 조건을 다시 고정해 주세요.");
@@ -228,7 +258,10 @@ export function P2PReceiveRequest({
       return;
     }
 
+    let generatedQr: Artifact["qr"] | null = null;
     try {
+      clearArtifact();
+      const generation = generationRef.current;
       const request = createP2PReceiveRequest({
         address: addressInput,
         addressConfirmed: true,
@@ -236,13 +269,34 @@ export function P2PReceiveRequest({
         sats: BigInt(snapshot.sats),
       });
       const qr = createVerifiedP2PReceiveQr(request);
-      clearArtifact();
+      generatedQr = qr;
+      const privateImage = await createPrivateRequestImage({
+        rail: "onchain",
+        address: request.address,
+        uri: request.uri,
+        sats: snapshot.sats,
+        paymentKrw: snapshot.paymentKrw,
+        fundingSource,
+        validUntil: snapshot.expiresAt,
+      });
+      if (
+        !mountedRef.current
+        || generationRef.current !== generation
+        || snapshot.quoteKey !== quoteKey
+        || Date.now() >= snapshot.expiresAt
+      ) {
+        qr.data.fill(0);
+        return;
+      }
       const nextArtifact = {
+        privateImage,
         request,
         qr,
         source: {
           address: request.address,
           expiresAt: snapshot.expiresAt,
+          fundingSource,
+          paymentKrw: snapshot.paymentKrw,
           quoteKey: snapshot.quoteKey,
           sats: snapshot.sats,
         },
@@ -252,6 +306,7 @@ export function P2PReceiveRequest({
       setFailure("");
       setFeedback("주소·금액과 생성한 QR의 원문을 로컬에서 다시 확인했습니다.");
     } catch (error) {
+      generatedQr?.data.fill(0);
       clearArtifact();
       setFeedback("");
       if (error instanceof P2PReceiveRequestError && error.code === "ADDRESS_UNSAFE") {
@@ -270,9 +325,27 @@ export function P2PReceiveRequest({
       && artifactRef.current === candidate
       && candidate.source.quoteKey === quoteKey
       && candidate.source.address === candidate.request.address
+      && candidate.source.fundingSource === fundingSource
       && candidate.source.sats === Number(candidate.request.sats)
       && Date.now() < candidate.source.expiresAt,
     );
+  }
+
+  function buildPrivateText(candidate: Artifact) {
+    return [
+      "[1:1 BTC 송금 요청 · 온체인]",
+      "판매자가 보내고 구매자가 받습니다.",
+      `고정 원화 조건: ${formatKrw(candidate.source.paymentKrw)}`,
+      `받을 금액: ${formatSats(candidate.source.sats)} (${candidate.request.btcAmount} BTC)`,
+      `구매자 자금 출처: ${candidate.source.fundingSource} (구매자 제공 정보)`,
+      `상호 재확인 기한: ${formatExpiry(candidate.source.expiresAt)}`,
+      `받을 주소: ${candidate.request.address}`,
+      `주소·금액 URI: ${candidate.request.uri}`,
+      "채굴 수수료: 판매자 별도 부담 · 구매자 수령량 차감 없음",
+      "원화 선송금은 BTC 지급을 보장하지 않습니다.",
+      "미확정(0회)은 거래 완료가 아닙니다. 합의한 확인 수를 구매자 지갑에서 확인하세요.",
+      "확인용: 결제·입금·확정 증빙 아님",
+    ].join("\n");
   }
 
   async function copyUri() {
@@ -300,6 +373,65 @@ export function P2PReceiveRequest({
       if (!mountedRef.current) return;
       setFailure("요청 URI를 복사하지 못했습니다.");
     }
+  }
+
+  async function copyPrivateText() {
+    const candidate = artifact;
+    if (!externalShareConfirmed) {
+      setFailure("민감정보가 외부 앱이나 클립보드에 남을 수 있다는 내용을 먼저 확인해 주세요.");
+      return;
+    }
+    if (!artifactIsUsable(candidate)) {
+      setFailure("거래 조건이나 주소가 바뀌었습니다. 수취 요청을 다시 만드세요.");
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setFailure("이 브라우저에서 클립보드를 사용할 수 없습니다.");
+      return;
+    }
+    const generation = generationRef.current;
+    try {
+      await navigator.clipboard.writeText(buildPrivateText(candidate));
+      if (!mountedRef.current) return;
+      if (generationRef.current !== generation || !artifactIsUsable(candidate)) {
+        setFeedback("");
+        setFailure("요청이 바뀌는 동안 이전 내용이 복사되었을 수 있습니다. 복사한 내용은 사용하지 마세요.");
+        return;
+      }
+      setFeedback("주소·금액이 포함된 1:1 요청 텍스트를 복사했습니다. 공유 대상을 다시 확인하세요.");
+      setFailure("");
+    } catch {
+      if (mountedRef.current) setFailure("1:1 요청 텍스트를 복사하지 못했습니다.");
+    }
+  }
+
+  async function sharePrivateImage() {
+    const candidate = artifact;
+    if (!externalShareConfirmed) {
+      setFailure("민감정보가 외부 앱에 남을 수 있다는 내용을 먼저 확인해 주세요.");
+      return;
+    }
+    if (!artifactIsUsable(candidate) || sharingPrivateImage) {
+      setFailure("거래 조건이나 주소가 바뀌었습니다. 수취 요청을 다시 만드세요.");
+      return;
+    }
+    const generation = generationRef.current;
+    setSharingPrivateImage(true);
+    setFailure("");
+    const outcome = await shareSensitiveImageFile({
+      file: candidate.privateImage,
+      title: "1:1 BTC 송금 요청 · 온체인",
+      text: buildPrivateText(candidate),
+      nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
+      nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
+    });
+    if (!mountedRef.current) return;
+    setSharingPrivateImage(false);
+    if (generationRef.current !== generation || !artifactIsUsable(candidate)) return;
+    if (outcome === "shared") setFeedback("공유 창으로 전달했습니다. 상대방 수신 여부는 확인할 수 없습니다.");
+    else if (outcome === "cancelled") setFeedback("공유를 취소했습니다.");
+    else if (outcome === "unsupported") setFailure("이 브라우저는 민감 이미지 파일 공유를 지원하지 않습니다. 텍스트 복사나 QR 저장을 사용하세요.");
+    else setFailure("1:1 요청 이미지를 공유하지 못했습니다. 자동 저장은 하지 않았습니다.");
   }
 
   async function downloadQr() {
@@ -360,6 +492,7 @@ export function P2PReceiveRequest({
       ) : !snapshot ? (
         <div className="receive-request-start">
           <p>계산 결과를 고정한 뒤, 이번 거래에 쓸 새 메인넷 수취 주소와 정확한 금액의 QR을 만들 수 있습니다.</p>
+          <p className="receive-risk-warning"><b>원화를 먼저 보내더라도 BTC 지급이 보장되지는 않습니다.</b> 큰 금액은 회차별 새 주소로 나누고, 각 회차의 합의한 확인 수를 직접 확인한 뒤 다음 원화를 보내세요.</p>
           {sats && paymentKrw ? (
             <dl>
               <div><dt>고정할 수취량</dt><dd>{formatSats(sats)}</dd></div>
@@ -432,7 +565,7 @@ export function P2PReceiveRequest({
           <div className="receive-actions">
             <button
               type="button"
-              onClick={buildRequest}
+              onClick={() => void buildRequest()}
               disabled={!addressInput || !addressConfirmed || !amountConfirmed}
             >
               주소·금액 QR 만들기
@@ -469,8 +602,18 @@ export function P2PReceiveRequest({
                 aria-label={artifact.request.sats + " sats 비트코인 수취 요청 QR"}
               />
               <p>복사한 URI와 저장한 QR PNG에는 전체 주소·금액이 포함됩니다. 운영체제 클립보드·다운로드 폴더·클라우드 동기화 정책을 먼저 확인하세요.</p>
+              <label className="receive-external-confirmation">
+                <input
+                  type="checkbox"
+                  checked={externalShareConfirmed}
+                  onChange={(event) => setExternalShareConfirmed(event.target.checked)}
+                />
+                <span>1:1 이미지와 텍스트에는 전체 주소·금액·자금 출처가 포함되며, 공유 후 메신저·클립보드·클라우드에 남고 회수되지 않을 수 있음을 확인했습니다.</span>
+              </label>
               <div className="receive-export-actions">
-                <button type="button" onClick={() => void copyUri()}>요청 URI 복사</button>
+                <button type="button" onClick={() => void copyPrivateText()} disabled={!externalShareConfirmed}>1:1 요청 텍스트 복사</button>
+                <button type="button" onClick={() => void sharePrivateImage()} disabled={!externalShareConfirmed || sharingPrivateImage}>{sharingPrivateImage ? "공유 창 여는 중" : "1:1 요청 이미지 공유"}</button>
+                <button type="button" onClick={() => void copyUri()}>주소·금액 URI 복사</button>
                 <button type="button" onClick={() => void downloadQr()}>QR PNG 저장</button>
               </div>
               <p>이 사이트는 주소 소유·새 주소·미사용 여부·결제·확정·페이지 무결성을 증명하지 않습니다. 사용한 주소는 다시 쓰지 말고, 판매자는 지갑의 최종 송금 화면에서 전체 주소와 금액을 다시 확인하세요.</p>

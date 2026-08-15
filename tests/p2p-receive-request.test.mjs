@@ -174,20 +174,30 @@ test("QR verification rejects forged or internally inconsistent request objects"
   }
 });
 
-test("address flow is buyer-authorized, local-only, short-lived, and outside trade sharing", async () => {
-  const [component, tradeTool, core, draft, link, shareCopy, shareImage, worker, serviceWorker] = await Promise.all([
+test("payment request flows are buyer-authorized, local-only, short-lived, and outside public promotion sharing", async () => {
+  const [component, lightning, wrapper, tradeTool, core, draft, link, promotion, promotionImage, privateImage, shareTransport, worker, serviceWorker] = await Promise.all([
     readFile(new URL("../app/components/P2PReceiveRequest.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PLightningRequest.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PPaymentRequest.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/p2p-receive-request.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-draft.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-link.mjs", import.meta.url), "utf8"),
-    readFile(new URL("../app/lib/trade-share-copy.mjs", import.meta.url), "utf8"),
-    readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-promotion.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-promotion-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/private-request-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/share-transport.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
   ]);
 
-  assert.match(tradeTool, /isBuyer=\{tradeRole === "buyer"\}/);
+  assert.match(tradeTool, /<P2PPaymentRequest/);
+  assert.match(wrapper, /BTC 받을 방법 선택/);
+  assert.match(wrapper, /온체인/);
+  assert.match(wrapper, /라이트닝/);
+  assert.match(wrapper, /rail === "onchain"/);
+  assert.match(wrapper, /rail === "lightning"/);
+  assert.match(wrapper, /이번 모집에서 미지원/);
   assert.match(component, /전체 주소/);
   assert.match(component, /채굴 수수료를 별도로 부담/);
   assert.match(component, /REQUEST_LIFETIME_MS = 10 \* 60_000/);
@@ -199,18 +209,43 @@ test("address flow is buyer-authorized, local-only, short-lived, and outside tra
   assert.match(component, /useLayoutEffect\(\(\) => \{[\s\S]*?mountedRef\.current = false;[\s\S]*?clearArtifactSurface\(\)/);
   assert.match(component, /나는 BTC를 받을 구매자이며/);
   assert.match(component, /고정 원화 조건/);
+  assert.match(component, /상호 재확인 기한/);
   assert.match(component, /주소는 거래 조건 공유 링크·거래 조건 이미지·서버에는 넣지 않습니다/);
   assert.match(component, /저장한 QR PNG에는 전체 주소·금액이 포함됩니다/);
   assert.match(component, /주소 소유·새 주소·미사용 여부/);
   assert.match(component, /Script Hash \(P2SH\)/);
   assert.doesNotMatch(component, /Wrapped SegWit \(P2SH\)/);
   assert.match(tradeTool, /setManualMarketGeneration\(\(current\) => current \+ 1\);\s*await refreshMarket\("manual"\)/);
+  assert.match(tradeTool, /isReferenceShareable\(\{ marketState, referenceTime \}, Date\.now\(\)\)/);
   assert.match(tradeTool, /const receiveQuoteKey = JSON\.stringify\(\{[\s\S]*?fundingSource,[\s\S]*?bitcoinDisplayUnit,[\s\S]*?manualMarketGeneration/);
   assert.doesNotMatch(tradeTool.match(/const receiveQuoteKey = JSON\.stringify\(\{[\s\S]*?\}\);/)?.[0] ?? "", /referencePrice|referenceTime|market/);
-  assert.doesNotMatch(component, /\bfetch\s*\(|localStorage|sessionStorage|indexedDB|document\.cookie|location\.|history\.|console\.|navigator\.share/);
-  assert.equal((component.match(/navigator\.clipboard\.writeText/g) ?? []).length, 1);
+  assert.match(lightning, /validateBolt11Invoice/);
+  assert.match(lightning, /createVerifiedTextQr/);
+  assert.match(lightning, /resultRef\.current\.hidden = true/);
+  assert.match(lightning, /resultRef\.current\.hidden = false/);
+  assert.match(lightning, /상호 재확인 기한/);
+  assert.match(lightning, /useLayoutEffect\(\(\) => \{[\s\S]*?mountedRef\.current = false;[\s\S]*?clearArtifactSurface\(\)/);
+  assert.match(lightning, /원화를 먼저 보내더라도 BTC 지급이 보장되지는 않습니다/);
+  assert.match(lightning, /인보이스는 서버·URL·저장소·공개 모집물에 넣지 않습니다/);
+  for (const sensitiveComponent of [component, lightning]) {
+    assert.match(sensitiveComponent, /isReferenceShareable\(\{ marketState: quoteCurrent \? "ready" : "error", referenceTime \}, Date\.now\(\)\)/);
+  }
+  for (const sensitiveComponent of [component, lightning]) {
+    assert.doesNotMatch(sensitiveComponent, /\bfetch\s*\(|localStorage|sessionStorage|indexedDB|document\.cookie|location\.|history\.|console\./);
+    assert.match(sensitiveComponent, /shareSensitiveImageFile/);
+    assert.doesNotMatch(sensitiveComponent, /shareImageFile\s*\(/);
+  }
+  assert.match(shareTransport, /Sensitive address\/invoice images never fall back/);
+  const sensitiveShareBlock = shareTransport.slice(shareTransport.indexOf("export async function shareSensitiveImageFile"));
+  assert.doesNotMatch(sensitiveShareBlock, /download\(/);
+  assert.match(privateImage, /verifyQrRasterPayload\(fullImage, verified\.payload\)/);
+  assert.match(privateImage, /rail: "onchain"/);
+  assert.match(privateImage, /rail: "lightning"/);
 
-  for (const source of [core, draft, link, shareCopy, shareImage, worker, serviceWorker]) {
+  assert.doesNotMatch(promotion, /fundingSource|address|invoice|https?:|bitcoin:/i);
+  assert.doesNotMatch(promotionImage, /fundingSource|address|invoice|https?:|bitcoin:/i);
+  assert.doesNotMatch(tradeTool, /buildTradeFragment|현재 시세로 다시 계산하기:/);
+  for (const source of [core, draft, link, promotion, promotionImage, worker, serviceWorker]) {
     assert.doesNotMatch(source, /receiveAddress|recipientAddress|paymentRequestUri|p2p-receive-address/);
   }
 });

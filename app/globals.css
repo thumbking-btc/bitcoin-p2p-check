@@ -19,7 +19,7 @@
 * { box-sizing: border-box; }
 html { background: var(--paper); color: var(--ink); scroll-behavior: smooth; }
 body { min-width: 0; margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, summary, label { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
@@ -35,7 +35,7 @@ a { color: inherit; }
 .tool-heading h1 { margin: 0; font-size: clamp(24px, 5vw, 38px); line-height: 1; letter-spacing: -.03em; white-space: nowrap; }
 .refresh-button { min-height: 44px; padding: 7px 10px; border: 1px solid var(--control-line); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 760; white-space: nowrap; }
 .refresh-button:hover { border-color: var(--ink); color: var(--ink); }
-.refresh-button:focus-visible, .share-button:focus-visible, .receive-request button:focus-visible, .receive-address-field input:focus-visible, .receive-confirmations label:has(input:focus-visible), .role-options label:has(input:focus-visible), select:focus-visible { outline: 3px solid var(--surface); outline-offset: 2px; box-shadow: 0 0 0 5px var(--ink); }
+.refresh-button:focus-visible, .share-button:focus-visible, .receive-request button:focus-visible, .receive-address-field input:focus-visible, .lightning-invoice-field textarea:focus-visible, .receive-confirmations label:has(input:focus-visible), .receive-external-confirmation:has(input:focus-visible), .role-options label:has(input:focus-visible), .transfer-support-options label:has(input:focus-visible), .payment-rail-options label:has(input:focus-visible), select:focus-visible, .lightning-invoice-details > summary:focus-visible { outline: 3px solid var(--surface); outline-offset: 2px; box-shadow: 0 0 0 5px var(--ink); }
 .input-with-unit:has(input:focus-visible) { outline: 3px solid var(--surface); outline-offset: 2px; box-shadow: 0 0 0 5px var(--ink); }
 .reference-details:has(> summary:focus-visible) { outline: 3px solid var(--surface); outline-offset: 2px; box-shadow: 0 0 0 5px var(--ink); }
 .refresh-button:disabled { background: #ece7dd; color: #59636c; cursor: wait; }
@@ -77,6 +77,15 @@ a { color: inherit; }
 .premium-note { color: var(--muted); }
 .fund-source-note { color: var(--muted); }
 .input-alert { padding: 6px 8px; border-left: 3px solid var(--red); background: #f8e5e2; color: var(--red); font-weight: 720; }
+.transfer-support-fieldset { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 0; border: 0; }
+.transfer-support-fieldset legend { margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 780; }
+.transfer-support-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--control-line); background: #fff; }
+.transfer-support-options label { position: relative; min-width: 0; cursor: pointer; }
+.transfer-support-options label + label { border-left: 1px solid var(--control-line); }
+.transfer-support-options input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); }
+.transfer-support-options span { display: grid; min-height: 44px; place-items: center; padding: 7px 5px; color: var(--muted); font-size: 11px; font-weight: 780; text-align: center; }
+.transfer-support-options label:has(input:checked) span { background: var(--ink); color: #fff; }
+.transfer-support-fieldset > p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 
 .trade-result { margin-top: 10px; overflow: hidden; border: 1px solid var(--ink); background: var(--ink); color: #fff; }
 .result-head { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 8px 2px 10px; border-bottom: 1px solid #3b4650; }
@@ -160,6 +169,34 @@ a { color: inherit; }
 .receive-artifact > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .receive-feedback { min-height: 16px; margin: 0; padding: 0 12px 10px; color: var(--green); font-size: 11px; font-weight: 720; line-height: 1.4; }
 .receive-feedback[role="alert"] { color: var(--red); }
+.payment-request-shell:not(.receive-request) { margin: 0 clamp(14px, 3vw, 22px) 12px; border: 1px solid var(--ink); background: #fff; }
+.payment-method-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--ink); background: #f7f3ea; }
+.payment-method-header div { display: grid; gap: 2px; }
+.payment-method-header h2 { margin: 0; font-size: 16px; line-height: 1.2; }
+.payment-method-header > span { padding: 3px 6px; border: 1px solid var(--orange-dark); color: var(--orange-dark); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.payment-rail-fieldset { min-width: 0; margin: 0; padding: 12px; border: 0; }
+.payment-rail-fieldset legend { padding: 0; color: var(--muted); font-size: 11px; font-weight: 760; }
+.payment-rail-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 7px; border: 1px solid var(--control-line); }
+.payment-rail-options label { position: relative; min-width: 0; cursor: pointer; }
+.payment-rail-options label + label { border-left: 1px solid var(--control-line); }
+.payment-rail-options input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); }
+.payment-rail-options span { display: flex; min-height: 56px; align-items: center; justify-content: center; flex-direction: column; gap: 2px; padding: 7px; color: var(--muted); text-align: center; }
+.payment-rail-options b { font-size: 13px; }
+.payment-rail-options small { font-size: 11px; }
+.payment-rail-options label:has(input:checked) span { background: var(--ink); color: #fff; }
+.payment-rail-options label:has(input:disabled) { cursor: not-allowed; }
+.payment-rail-options label:has(input:disabled) span { background: #ece7dd; color: #737b83; }
+.payment-rail-fieldset > p, .payment-rail-empty { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.payment-rail-empty { margin: 0; padding: 0 12px 14px; }
+.payment-request-shell:not(.receive-request) > .receive-request { margin: 0; border-width: 1px 0 0; }
+.receive-risk-warning { padding: 8px 9px; border-left: 3px solid var(--orange-dark); background: #fff0db; color: var(--ink) !important; }
+.lightning-invoice-field { display: grid; gap: 5px; padding: 12px 12px 0; color: var(--muted); font-size: 11px; font-weight: 780; }
+.lightning-invoice-field textarea { width: 100%; min-width: 0; min-height: 112px; resize: vertical; padding: 9px 10px; border: 1px solid var(--control-line); border-radius: 0; background: #fff; color: var(--ink); font: 650 14px/1.4 var(--mono); overflow-wrap: anywhere; word-break: break-all; }
+.receive-external-confirmation { grid-column: 1 / -1; display: grid; min-height: 44px; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px; border: 1px solid var(--orange-dark); background: #fff0db; cursor: pointer; font-size: 11px; line-height: 1.45; }
+.receive-external-confirmation input { width: 20px; height: 20px; margin: 0; accent-color: var(--orange-dark); }
+.lightning-invoice-details { margin-top: 10px; border: 1px solid var(--line); background: #fff; }
+.lightning-invoice-details > summary { display: flex; min-height: 44px; align-items: center; padding: 8px; cursor: pointer; color: var(--orange-dark); font-size: 10px; font-weight: 800; }
+.lightning-invoice-details > code { display: block; max-height: 128px; overflow: auto; padding: 8px; border-top: 1px solid var(--line); font-size: 9px; line-height: 1.45; word-break: break-all; }
 .network-fees { margin: 0 clamp(14px, 3vw, 22px) 14px; border: 1px solid var(--control-line); background: #f7f3ea; }
 .network-fees > header { display: flex; min-height: 25px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
 .network-fees h2, .network-fees-status p { margin: 0; }
@@ -313,6 +350,7 @@ a { color: inherit; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
   .receive-request { margin-inline: 12px; }
+  .payment-request-shell:not(.receive-request) { margin-inline: 12px; }
   .receive-artifact { grid-template-columns: 1fr; }
   .receive-export-actions, .receive-artifact > p { grid-column: auto; }
   .network-fees { margin-inline: 12px; }
@@ -355,7 +393,7 @@ a { color: inherit; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
   .capture-meta { gap: 3px 4px; }
-  .capture-meta > span { gap: 3px; white-space: nowrap; }
+  .capture-meta > span { gap: 3px; white-space: normal; }
   .capture-meta-disclaimer { justify-self: stretch; }
   .network-fees > header { gap: 4px; padding-inline: 7px; }
   .network-fees h2 { font-size: 10.5px; }
@@ -366,7 +404,11 @@ a { color: inherit; }
 }
 
 @media (max-width: 700px) {
-  .input-with-unit input, .fund-source-field select, .receive-address-field input { font-size: 16px; }
+  .input-with-unit input, .fund-source-field select, .receive-address-field input, .lightning-invoice-field textarea { font-size: 16px; }
+}
+
+@media (max-width: 560px) {
+  .receive-export-actions { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {

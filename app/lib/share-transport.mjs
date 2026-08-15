@@ -45,3 +45,25 @@ export async function shareImageFile({
     return "downloaded-after-error";
   }
 }
+
+/** Sensitive address/invoice images never fall back to an implicit download. */
+export async function shareSensitiveImageFile({
+  file,
+  title,
+  text,
+  nativeShare,
+  nativeCanShare,
+}) {
+  if (typeof nativeShare !== "function" || typeof nativeCanShare !== "function") return "unsupported";
+  try {
+    if (!nativeCanShare({ files: [file] })) return "unsupported";
+  } catch {
+    return "unsupported";
+  }
+  try {
+    await nativeShare({ title, text, files: [file] });
+    return "shared";
+  } catch (error) {
+    return isAbortError(error) ? "cancelled" : "failed";
+  }
+}

@@ -1,11 +1,13 @@
-export const TRADE_DRAFT_VERSION = 1;
+export const TRADE_DRAFT_VERSION = 2;
 export const TRADE_DRAFT_TTL_MS = 12 * 60 * 60 * 1_000;
 export const TRADE_DRAFT_STORAGE_KEY = "bitcoin-p2p-check:trade-draft";
 export const TRADE_DRAFT_MAX_RAW_LENGTH = 8 * 1_024;
 
+const LEGACY_TRADE_DRAFT_VERSION = 1;
 const TRADE_ROLES = new Set(["buyer", "seller"]);
 const AMOUNT_BASES = new Set(["krw", "bitcoin"]);
 const BITCOIN_DISPLAY_UNITS = new Set(["btc", "sats"]);
+const TRANSFER_SUPPORT_OPTIONS = new Set(["onchain", "lightning", "both"]);
 const FUNDING_SOURCES = new Set([
   "기재하지 않음",
   "근로소득",
@@ -21,7 +23,7 @@ const FUNDING_SOURCES = new Set([
   "기타소득",
 ]);
 
-const DRAFT_KEYS = [
+const LEGACY_DRAFT_KEYS = [
   "version",
   "savedAt",
   "tradeRole",
@@ -32,6 +34,7 @@ const DRAFT_KEYS = [
   "fundingSources",
   "bitcoinDisplayUnit",
 ];
+const DRAFT_KEYS = [...LEGACY_DRAFT_KEYS, "transferSupportByRole"];
 const ROLE_KEYS = ["buyer", "seller"];
 
 function isRecord(value) {
@@ -76,8 +79,9 @@ function removeInvalidDraft(storage) {
  */
 export function validateTradeDraft(value, now = Date.now()) {
   if (!Number.isSafeInteger(now) || now <= 0) return null;
-  if (!hasExactKeys(value, DRAFT_KEYS)) return null;
-  if (value.version !== TRADE_DRAFT_VERSION) return null;
+  const isLegacyDraft = value?.version === LEGACY_TRADE_DRAFT_VERSION;
+  if (!hasExactKeys(value, isLegacyDraft ? LEGACY_DRAFT_KEYS : DRAFT_KEYS)) return null;
+  if (!isLegacyDraft && value.version !== TRADE_DRAFT_VERSION) return null;
   if (!Number.isSafeInteger(value.savedAt) || value.savedAt <= 0 || value.savedAt > now) return null;
   if (now - value.savedAt >= TRADE_DRAFT_TTL_MS) return null;
   if (!TRADE_ROLES.has(value.tradeRole)) return null;
@@ -91,6 +95,15 @@ export function validateTradeDraft(value, now = Date.now()) {
   if (!isPremiumInput(value.premiumInput)) return null;
   if (!hasExactKeys(value.fundingSources, ROLE_KEYS)
     || !ROLE_KEYS.every((role) => FUNDING_SOURCES.has(value.fundingSources[role]))) return null;
+  if (!isLegacyDraft && (!hasExactKeys(value.transferSupportByRole, ROLE_KEYS)
+    || !ROLE_KEYS.every((role) => TRANSFER_SUPPORT_OPTIONS.has(value.transferSupportByRole[role])))) return null;
+
+  const transferSupportByRole = isLegacyDraft
+    ? { buyer: "onchain", seller: "onchain" }
+    : {
+        buyer: value.transferSupportByRole.buyer,
+        seller: value.transferSupportByRole.seller,
+      };
 
   return {
     version: TRADE_DRAFT_VERSION,
@@ -111,6 +124,7 @@ export function validateTradeDraft(value, now = Date.now()) {
       seller: value.fundingSources.seller,
     },
     bitcoinDisplayUnit: value.bitcoinDisplayUnit,
+    transferSupportByRole,
   };
 }
 
@@ -128,8 +142,18 @@ export function readTradeDraft(storage, now = Date.now()) {
   }
 
   try {
-    const draft = validateTradeDraft(JSON.parse(raw), now);
-    if (draft) return draft;
+    const parsed = JSON.parse(raw);
+    const draft = validateTradeDraft(parsed, now);
+    if (draft) {
+      if (parsed.version === LEGACY_TRADE_DRAFT_VERSION) {
+        try {
+          storage?.setItem?.(TRADE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+        } catch {
+          // A readable draft remains usable even when storage cannot be updated.
+        }
+      }
+      return draft;
+    }
   } catch {
     // Malformed JSON is handled like every other invalid draft.
   }
@@ -148,6 +172,7 @@ export function writeTradeDraft(storage, fields, now = Date.now()) {
     premiumInput: fields?.premiumInput,
     fundingSources: fields?.fundingSources,
     bitcoinDisplayUnit: fields?.bitcoinDisplayUnit,
+    transferSupportByRole: fields?.transferSupportByRole,
   }, now);
   if (!draft) return false;
 

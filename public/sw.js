@@ -1,4 +1,4 @@
-const CACHE_NAME = "bitcoin-p2p-check-v3";
+const CACHE_NAME = "bitcoin-p2p-check-v4";
 const APP_SHELL = [
   "/",
   "/install/",
@@ -43,6 +43,14 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
+    // Never persist personalized or otherwise user-controlled query strings.
+    if (url.search) {
+      event.respondWith(
+        fetch(request, { cache: "no-store" })
+          .catch(async () => (await caches.match(url.pathname)) ?? caches.match("/")),
+      );
+      return;
+    }
     event.respondWith(
       fetch(request)
         .then((response) => {
