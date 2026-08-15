@@ -11,10 +11,15 @@
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
-    "test": "vinext build && node --test tests/rendered-html.test.mjs",
+    "test": "vinext build && node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "2.3.0",
+    "@nuintun/qrcode": "5.0.3",
+    "@scure/base": "2.3.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

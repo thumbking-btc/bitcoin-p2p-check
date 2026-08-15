@@ -9,6 +9,7 @@ import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { getMarketRefreshDelay } from "../lib/market-refresh.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
+import { P2PReceiveRequest } from "./P2PReceiveRequest";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
@@ -222,6 +223,7 @@ export function P2PTradeTool() {
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [marketState, setMarketState] = useState<"loading" | "ready" | "error">("loading");
   const [marketError, setMarketError] = useState("");
+  const [manualMarketGeneration, setManualMarketGeneration] = useState(0);
   const [priceExpired, setPriceExpired] = useState(false);
   const [resultAnnouncement, setResultAnnouncement] = useState("");
   const [shareStatus, setShareStatus] = useState("");
@@ -289,6 +291,7 @@ export function P2PTradeTool() {
   }, [applyMarketSnapshot]);
 
   const loadMarket = useCallback(async () => {
+    setManualMarketGeneration((current) => current + 1);
     await refreshMarket("manual");
   }, [refreshMarket]);
 
@@ -563,6 +566,16 @@ export function P2PTradeTool() {
     amount,
     premiumPercent,
     fundingSource,
+  });
+  const receiveQuoteKey = JSON.stringify({
+    tradeRole,
+    amountBasis,
+    krwAmount,
+    bitcoinAmountInput,
+    premiumInput,
+    fundingSource,
+    bitcoinDisplayUnit,
+    manualMarketGeneration,
   });
   const shareImageAllowed = Boolean(shareImageInput)
     && draftHydrated
@@ -909,6 +922,15 @@ export function P2PTradeTool() {
           {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
         </p>
       </div>
+
+      <P2PReceiveRequest
+        key={receiveQuoteKey}
+        isBuyer={tradeRole === "buyer"}
+        quoteCurrent={Boolean(quote) && marketState === "ready" && !stalePrice}
+        quoteKey={receiveQuoteKey}
+        paymentKrw={quote?.paymentKrw ?? null}
+        sats={quote?.sats ?? null}
+      />
 
       <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">
         <header>
