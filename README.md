@@ -50,4 +50,9 @@ Cloudflare 로그인 후 아래 명령으로 정적 PWA와 시세 전용 Worker�
 npm run deploy
 ```
 
+### Git 브랜치
+
+- `main`: Production
+- `staging`: Preview
+
 컴퓨터나 개발 도구를 켜 두지 않아도 배포된 서비스는 계속 동작합니다. 초기 규모에서는 Cloudflare Workers 무료 한도 안에서 운영할 수 있으며, 사용량이 커지면 계정의 사용량과 과금 설정을 확인해야 합니다.
