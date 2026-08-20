@@ -7,7 +7,6 @@ import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs
 import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
-import { getMarketRefreshDelay } from "../lib/market-refresh.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 
 type TradeRole = "buyer" | "seller";
@@ -20,6 +19,19 @@ type ActiveMarketRefresh = {
   mode: MarketRefreshMode;
   promise: Promise<void>;
 };
+
+type LivePrice = {
+  priceKrw: number;
+  observedAtMs: number;
+};
+
+const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
+const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
+const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
+const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;
+const MARKET_REFRESH_FALLBACK_MS = 16_000;
+const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
+const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -109,6 +121,58 @@ async function requestMarketSnapshot() {
     throw new Error("price unavailable");
   }
   return data;
+}
+
+function withLivePrice(snapshot: MarketSnapshot, price: LivePrice): MarketSnapshot {
+  const priceObservedAt = new Date(price.observedAtMs).toISOString();
+  return {
+    ...snapshot,
+    status: snapshot.sourceStatus?.premium === "current" ? "current" : "partial",
+    priceKrw: price.priceKrw,
+    priceObservedAt,
+    sourceStatus: snapshot.sourceStatus
+      ? { ...snapshot.sourceStatus, price: "current" }
+      : snapshot.sourceStatus,
+    staleAgeSeconds: snapshot.staleAgeSeconds
+      ? { ...snapshot.staleAgeSeconds, price: null }
+      : snapshot.staleAgeSeconds,
+  };
+}
+
+async function parseUpbitTickerMessage(data: unknown): Promise<LivePrice | null> {
+  let text: string;
+  if (typeof data === "string") {
+    text = data;
+  } else if (data instanceof ArrayBuffer) {
+    text = new TextDecoder().decode(data);
+  } else if (data instanceof Blob) {
+    text = await data.text();
+  } else {
+    return null;
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  if (!value || typeof value !== "object") return null;
+  const ticker = value as {
+    code?: unknown;
+    trade_price?: unknown;
+    trade_timestamp?: unknown;
+  };
+  if (ticker.code !== "KRW-BTC") return null;
+
+  const priceKrw = Number(ticker.trade_price);
+  const observedAtMs = Number(ticker.trade_timestamp);
+  if (!Number.isFinite(priceKrw) || priceKrw <= 0 || !Number.isFinite(observedAtMs)) return null;
+
+  const ageMs = Date.now() - observedAtMs;
+  if (ageMs > MAX_LIVE_PRICE_AGE_MS || ageMs < -MAX_FUTURE_CLOCK_SKEW_MS) return null;
+  return { priceKrw, observedAtMs };
 }
 
 function digitsOnly(value: string, maximumDigits: number) {
@@ -223,6 +287,7 @@ export function P2PTradeTool() {
   const [marketState, setMarketState] = useState<"loading" | "ready" | "error">("loading");
   const [marketError, setMarketError] = useState("");
   const [priceExpired, setPriceExpired] = useState(false);
+  const [livePriceActive, setLivePriceActive] = useState(false);
   const [resultAnnouncement, setResultAnnouncement] = useState("");
   const [shareStatus, setShareStatus] = useState("");
   const [isSharing, setIsSharing] = useState(false);
@@ -235,22 +300,53 @@ export function P2PTradeTool() {
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
   const lastMarketRefreshAtRef = useRef(0);
+  const attemptedInitialMarketLoadRef = useRef(false);
+  const livePriceActiveRef = useRef(false);
   const isSharingRef = useRef(false);
   const pendingMarketSnapshotRef = useRef<MarketSnapshot | null>(null);
   const suppressNextResultAnnouncementRef = useRef(false);
   const preparedShareFormKeyRef = useRef("");
 
   const applyMarketSnapshot = useCallback((data: MarketSnapshot, silent: boolean) => {
+    const current = marketRef.current;
+    const nextData = livePriceActiveRef.current && current?.priceKrw && current.priceObservedAt
+      ? withLivePrice(data, {
+          priceKrw: current.priceKrw,
+          observedAtMs: new Date(current.priceObservedAt).getTime(),
+        })
+      : data;
     if (isSharingRef.current) {
-      pendingMarketSnapshotRef.current = data;
+      pendingMarketSnapshotRef.current = nextData;
       return;
     }
     suppressNextResultAnnouncementRef.current = silent;
-    marketRef.current = data;
-    setMarket(data);
+    marketRef.current = nextData;
+    setMarket(nextData);
     setMarketState("ready");
     setMarketError("");
     setPriceExpired(false);
+  }, []);
+
+  const applyLivePrice = useCallback((price: LivePrice) => {
+    const current = marketRef.current;
+    if (!current) return false;
+
+    const currentObservedAt = current.priceObservedAt ? new Date(current.priceObservedAt).getTime() : 0;
+    if (Number.isFinite(currentObservedAt) && currentObservedAt > price.observedAtMs) return true;
+
+    const nextData = withLivePrice(current, price);
+    if (isSharingRef.current) {
+      pendingMarketSnapshotRef.current = nextData;
+      return true;
+    }
+
+    suppressNextResultAnnouncementRef.current = true;
+    marketRef.current = nextData;
+    setMarket(nextData);
+    setMarketState("ready");
+    setMarketError("");
+    setPriceExpired(false);
+    return true;
   }, []);
 
   const refreshMarket = useCallback((mode: MarketRefreshMode) => {
@@ -292,10 +388,13 @@ export function P2PTradeTool() {
     await refreshMarket("manual");
   }, [refreshMarket]);
 
+  const marketRefreshIntervalMs = livePriceActive
+    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS
+    : MARKET_REFRESH_FALLBACK_MS;
+
   useEffect(() => {
     let disposed = false;
     let timer: number | null = null;
-    let attemptedInitialLoad = false;
 
     const clearTimer = () => {
       if (timer === null) return;
@@ -303,23 +402,29 @@ export function P2PTradeTool() {
       timer = null;
     };
 
+    const getRefreshDelay = () => {
+      const lastRequestAt = lastMarketRefreshAtRef.current;
+      if (!Number.isFinite(lastRequestAt) || lastRequestAt <= 0) return 0;
+      const elapsed = Math.max(0, Date.now() - lastRequestAt);
+      return Math.max(0, marketRefreshIntervalMs - elapsed);
+    };
+
     const schedule = () => {
       clearTimer();
       if (disposed || document.visibilityState !== "visible") return;
-      const delay = getMarketRefreshDelay(lastMarketRefreshAtRef.current);
-      timer = window.setTimeout(() => void runWhenDue(), Math.max(1, delay));
+      timer = window.setTimeout(() => void runWhenDue(), Math.max(1, getRefreshDelay()));
     };
 
     const runWhenDue = async () => {
       clearTimer();
       if (disposed || document.visibilityState !== "visible") return;
-      const delay = getMarketRefreshDelay(lastMarketRefreshAtRef.current);
+      const delay = getRefreshDelay();
       if (delay > 0) {
         timer = window.setTimeout(() => void runWhenDue(), delay);
         return;
       }
-      const mode: MarketRefreshMode = attemptedInitialLoad ? "silent" : "initial";
-      attemptedInitialLoad = true;
+      const mode: MarketRefreshMode = attemptedInitialMarketLoadRef.current ? "silent" : "initial";
+      attemptedInitialMarketLoadRef.current = true;
       await refreshMarket(mode);
       if (!disposed) schedule();
     };
@@ -336,7 +441,106 @@ export function P2PTradeTool() {
       clearTimer();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshMarket]);
+  }, [marketRefreshIntervalMs, refreshMarket]);
+
+  useEffect(() => {
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let renderTimer: number | null = null;
+    let lastRenderedAt = 0;
+    let queuedPrice: LivePrice | null = null;
+
+    const setStreamActive = (active: boolean) => {
+      livePriceActiveRef.current = active;
+      setLivePriceActive(active);
+    };
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === null) return;
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+
+    const clearRenderTimer = () => {
+      if (renderTimer === null) return;
+      window.clearTimeout(renderTimer);
+      renderTimer = null;
+    };
+
+    const flushQueuedPrice = () => {
+      clearRenderTimer();
+      const price = queuedPrice;
+      queuedPrice = null;
+      if (!price || disposed) return;
+      lastRenderedAt = Date.now();
+      if (applyLivePrice(price)) setStreamActive(true);
+    };
+
+    const queuePrice = (price: LivePrice) => {
+      if (queuedPrice && queuedPrice.observedAtMs > price.observedAtMs) return;
+      queuedPrice = price;
+      const elapsed = Date.now() - lastRenderedAt;
+      if (elapsed >= LIVE_PRICE_RENDER_INTERVAL_MS) {
+        flushQueuedPrice();
+        return;
+      }
+      if (renderTimer === null) {
+        renderTimer = window.setTimeout(flushQueuedPrice, LIVE_PRICE_RENDER_INTERVAL_MS - elapsed);
+      }
+    };
+
+    const scheduleReconnect = () => {
+      clearReconnectTimer();
+      if (disposed) return;
+      reconnectTimer = window.setTimeout(connect, LIVE_PRICE_RECONNECT_DELAY_MS);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      clearReconnectTimer();
+      const nextSocket = new WebSocket(UPBIT_TICKER_WEBSOCKET_URL);
+      nextSocket.binaryType = "arraybuffer";
+      socket = nextSocket;
+
+      nextSocket.onopen = () => {
+        if (disposed || socket !== nextSocket) return;
+        nextSocket.send(JSON.stringify([
+          { ticket: `bitcoin-p2p-check-${Date.now()}` },
+          { type: "ticker", codes: ["KRW-BTC"] },
+        ]));
+      };
+
+      nextSocket.onmessage = (event) => {
+        void parseUpbitTickerMessage(event.data).then((price) => {
+          if (!price || disposed || socket !== nextSocket) return;
+          queuePrice(price);
+        });
+      };
+
+      nextSocket.onerror = () => {
+        if (socket === nextSocket) nextSocket.close();
+      };
+
+      nextSocket.onclose = () => {
+        if (socket !== nextSocket) return;
+        socket = null;
+        setStreamActive(false);
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      clearReconnectTimer();
+      clearRenderTimer();
+      setStreamActive(false);
+      const activeSocket = socket;
+      socket = null;
+      activeSocket?.close();
+    };
+  }, [applyLivePrice]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -718,7 +922,7 @@ export function P2PTradeTool() {
           <div className="market-cell">
             <span>{referenceLabel}</span>
             <strong>{formatKrw(referencePrice)} <small>/ BTC</small></strong>
-            <small>{formatTime(referenceTime)}</small>
+            <small>{livePriceActive ? "실시간 · " : ""}{formatTime(referenceTime)}</small>
           </div>
           <div className="market-cell">
             <span>업비트 프리미엄</span>
