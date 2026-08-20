@@ -95,7 +95,8 @@ type MarketSnapshot = {
 
 type CloudflareCacheStorage = CacheStorage & { default: Cache };
 
-let pendingSnapshot: Promise<MarketSnapshot> | null = null;
+let pendingSnapshotWithPrice: Promise<MarketSnapshot> | null = null;
+let pendingReferenceSnapshot: Promise<MarketSnapshot> | null = null;
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -218,7 +219,14 @@ async function fetchFees(retrievedAt: string): Promise<SourceResult<FeeValue>> {
   };
 }
 
-type CacheName = "fresh" | "last-price" | "last-premium" | "fresh-fees" | "last-fees" | "fees-backoff";
+type CacheName =
+  | "fresh-with-price"
+  | "fresh-reference"
+  | "last-price"
+  | "last-premium"
+  | "fresh-fees"
+  | "last-fees"
+  | "fees-backoff";
 
 function cacheKey(request: Request, name: CacheName): Request {
   const url = new URL(request.url);
@@ -332,15 +340,17 @@ async function buildSnapshot(
   request: Request,
   cache: Cache,
   context: WorkerExecutionContext,
+  includePrice: boolean,
 ): Promise<MarketSnapshot> {
   const now = new Date();
   const nowMs = now.getTime();
   const checkedAt = now.toISOString();
+
   const [priceResult, premiumResult, feeResult, cachedPrice, cachedPremium] = await Promise.all([
-    fetchPrice(nowMs, checkedAt),
+    includePrice ? fetchPrice(nowMs, checkedAt) : Promise.resolve(null),
     fetchPremium(checkedAt),
     resolveFees(request, cache, context, nowMs, checkedAt),
-    readCachedJson<PriceValue>(cache, cacheKey(request, "last-price")),
+    includePrice ? readCachedJson<PriceValue>(cache, cacheKey(request, "last-price")) : Promise.resolve(null),
     readCachedJson<PremiumValue>(cache, cacheKey(request, "last-premium")),
   ]);
 
@@ -350,12 +360,18 @@ async function buildSnapshot(
   const usableCachedPremium = cachedPremium && isRecent(cachedPremium.retrievedAt, nowMs)
     ? cachedPremium
     : null;
-  const price = priceResult.ok ? priceResult.value : usableCachedPrice;
+  const price = priceResult?.ok ? priceResult.value : usableCachedPrice;
   const premium = premiumResult.ok ? premiumResult.value : usableCachedPremium;
-  const priceState: SourceState = priceResult.ok ? "current" : price ? "stale" : "unavailable";
+  const priceState: SourceState = !includePrice
+    ? "unavailable"
+    : priceResult?.ok
+      ? "current"
+      : price
+        ? "stale"
+        : "unavailable";
   const premiumState: SourceState = premiumResult.ok ? "current" : premium ? "stale" : "unavailable";
 
-  if (priceResult.ok) {
+  if (priceResult?.ok) {
     context.waitUntil(cache.put(
       cacheKey(request, "last-price"),
       cacheResponse(priceResult.value, STALE_CACHE_SECONDS),
@@ -368,13 +384,17 @@ async function buildSnapshot(
     ));
   }
 
-  const status: MarketSnapshot["status"] = priceState === "unavailable"
-    ? "unavailable"
-    : priceState === "stale"
+  const status: MarketSnapshot["status"] = includePrice
+    ? priceState === "unavailable"
+      ? "unavailable"
+      : priceState === "stale"
+        ? "stale"
+        : premiumState === "current"
+          ? "current"
+          : "partial"
+    : premiumState === "stale"
       ? "stale"
-      : premiumState === "current"
-        ? "current"
-        : "partial";
+      : "partial";
 
   return {
     checkedAt,
@@ -388,7 +408,7 @@ async function buildSnapshot(
     feeCheckedAt: feeResult.value?.retrievedAt ?? null,
     sourceStatus: { price: priceState, premium: premiumState, fees: feeResult.state },
     sourceFailure: {
-      price: priceResult.ok ? null : priceResult.failure,
+      price: includePrice && priceResult && !priceResult.ok ? priceResult.failure : null,
       premium: premiumResult.ok ? null : premiumResult.failure,
       fees: feeResult.failure,
     },
@@ -418,15 +438,20 @@ export async function handleMarketRequest(
     });
   }
 
+  const includePrice = new URL(request.url).searchParams.get("price") !== "0";
   const cache = (caches as CloudflareCacheStorage).default;
-  const freshKey = cacheKey(request, "fresh");
+  const freshKey = cacheKey(request, includePrice ? "fresh-with-price" : "fresh-reference");
   const cached = await readCachedJson<MarketSnapshot>(cache, freshKey);
   if (cached) return publicResponse(cached, "HIT", request.method);
 
+  let pendingSnapshot = includePrice ? pendingSnapshotWithPrice : pendingReferenceSnapshot;
   if (!pendingSnapshot) {
-    pendingSnapshot = buildSnapshot(request, cache, context).finally(() => {
-      pendingSnapshot = null;
+    pendingSnapshot = buildSnapshot(request, cache, context, includePrice).finally(() => {
+      if (includePrice) pendingSnapshotWithPrice = null;
+      else pendingReferenceSnapshot = null;
     });
+    if (includePrice) pendingSnapshotWithPrice = pendingSnapshot;
+    else pendingReferenceSnapshot = pendingSnapshot;
   }
 
   const snapshot = await pendingSnapshot;
