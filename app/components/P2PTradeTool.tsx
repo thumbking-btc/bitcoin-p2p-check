@@ -113,11 +113,11 @@ type MarketSnapshot = {
   };
 };
 
-async function requestMarketSnapshot() {
-  const response = await fetch("/api/market", { cache: "no-store" });
+async function requestMarketSnapshot(includePrice: boolean) {
+  const response = await fetch(`/api/market?price=${includePrice ? "1" : "0"}`, { cache: "no-store" });
   if (!response.ok) throw new Error("market request failed");
   const data = await response.json() as MarketSnapshot;
-  if (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0) {
+  if (includePrice && (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0)) {
     throw new Error("price unavailable");
   }
   return data;
@@ -366,7 +366,8 @@ export function P2PTradeTool() {
       mode,
       promise: Promise.resolve(),
     };
-    refresh.promise = requestMarketSnapshot().then(
+    const includePrice = !livePriceActiveRef.current;
+    refresh.promise = requestMarketSnapshot(includePrice).then(
       (data) => applyMarketSnapshot(data, refresh.mode === "silent"),
       () => {
         if (refresh.mode === "silent" && marketRef.current) return;
