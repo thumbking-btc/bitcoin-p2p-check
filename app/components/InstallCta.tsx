@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getInstallInviteDismissedUntil,
   INSTALL_INVITE_DISMISS_KEY,
@@ -13,6 +13,8 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
+
+const INSTALL_INVITE_TRIGGER_SELECTOR = ".share-button";
 
 function isInstalledDisplayMode() {
   const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
@@ -60,8 +62,23 @@ function rememberInviteDismissal() {
 export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
   const [mode, setMode] = useState<InstallMode>("guide");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [inviteEligible, setInviteEligible] = useState(false);
   const [inviteVisible, setInviteVisible] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const inviteOpenedRef = useRef(false);
+
+  useEffect(() => {
+    const handleTradeShare = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const shareButton = target.closest<HTMLButtonElement>(INSTALL_INVITE_TRIGGER_SELECTOR);
+      if (!shareButton || shareButton.disabled) return;
+      setInviteEligible(true);
+    };
+
+    document.addEventListener("click", handleTradeShare);
+    return () => document.removeEventListener("click", handleTradeShare);
+  }, []);
 
   useEffect(() => {
     let promptReceived = false;
@@ -81,7 +98,6 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
       setMode("ready");
-      if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
     };
     const handleAppInstalled = () => {
       setDeferredPrompt(null);
@@ -99,7 +115,6 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
         setInviteVisible(false);
       } else {
         setMode(manualInstallMode());
-        setInviteVisible(isMobileBrowser() && !isInviteDismissed());
       }
     }, 0);
 
@@ -110,6 +125,13 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
       displayQueries.forEach((query) => query.removeEventListener("change", updateInstalledState));
     };
   }, []);
+
+  useEffect(() => {
+    if (!inviteEligible || inviteOpenedRef.current || mode === "installed") return;
+    if (!isMobileBrowser() || isInviteDismissed()) return;
+    inviteOpenedRef.current = true;
+    setInviteVisible(true);
+  }, [inviteEligible, mode]);
 
   async function install() {
     const prompt = deferredPrompt;
