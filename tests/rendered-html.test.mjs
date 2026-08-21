@@ -587,6 +587,9 @@ test("keeps market data official and separates public promotion from private req
   assert.match(component, /className="result-badge">내가 받음/);
   assert.match(component, /구매 조건\. 내가 보낼 원화/);
   assert.match(component, /판매 조건\. 내가 보낼 비트코인/);
+  assert.match(component, /suppressNextResultAnnouncementRef\.current = false;\s*setResultAnnouncement\(""\);/);
+  assert.match(component, /<output[\s\S]*?\{resultAnnouncement\}[\s\S]*?<\/output>/);
+  assert.doesNotMatch(component, /resultAnnouncement \|\| currentResultAnnouncement/);
   assert.match(css, /\.creator-profile nav\s*\{[^}]*display:\s*grid/s);
   assert.match(css, /\.creator-profile nav\s*\{[^}]*gap:\s*8px/s);
   assert.match(css, /\.creator-profile a\s*\{[^}]*min-height:\s*48px/s);

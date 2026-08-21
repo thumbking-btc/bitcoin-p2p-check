@@ -780,6 +780,7 @@ export function P2PTradeTool() {
   useEffect(() => {
     if (suppressNextResultAnnouncementRef.current) {
       suppressNextResultAnnouncementRef.current = false;
+      setResultAnnouncement("");
       return;
     }
     setResultAnnouncement(currentResultAnnouncement);
@@ -1125,7 +1126,7 @@ export function P2PTradeTool() {
           {quote && multiplier !== null ? (
             <>
               <output className="visually-hidden" aria-live="polite" aria-atomic="true">
-                {resultAnnouncement || currentResultAnnouncement}
+                {resultAnnouncement}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
