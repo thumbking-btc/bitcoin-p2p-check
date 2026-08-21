@@ -330,6 +330,7 @@ export function P2PTradeTool() {
       return;
     }
     suppressNextResultAnnouncementRef.current = silent;
+    if (silent) setResultAnnouncement("");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
@@ -351,6 +352,7 @@ export function P2PTradeTool() {
     }
 
     suppressNextResultAnnouncementRef.current = true;
+    setResultAnnouncement("");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
