@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { calculateP2PQuote, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
+import { calculateP2PQuote, MAX_PREMIUM_PERCENT, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { INSTALL_INVITE_TRIGGER_EVENT } from "../lib/install-invite.mjs";
@@ -698,8 +698,10 @@ export function P2PTradeTool() {
     ? "판매자 프리미엄을 입력하세요."
     : premiumPercent <= -100
       ? "판매자 프리미엄은 -100%보다 크게 입력하세요."
+      : premiumPercent > MAX_PREMIUM_PERCENT
+        ? `판매자 프리미엄은 ${MAX_PREMIUM_PERCENT}% 이하로 입력하세요.`
       : "";
-  const premiumWarning = premiumPercent !== null && premiumPercent > -100 && Math.abs(premiumPercent) >= 10;
+  const premiumWarning = premiumPercent !== null && !premiumError && Math.abs(premiumPercent) >= 10;
   const referencePrice = market?.priceKrw ?? null;
   const referenceLabel = "업비트 최근 체결가";
   const referenceTime = market?.priceObservedAt ?? null;
@@ -737,7 +739,7 @@ export function P2PTradeTool() {
     });
   }, [amount, amountBasis, premiumPercent, referencePrice]);
 
-  const multiplier = premiumPercent === null ? null : 1 + premiumPercent / 100;
+  const multiplier = premiumPercent === null || premiumError ? null : 1 + premiumPercent / 100;
   const premiumSummary = premiumPercent === null
     ? "판매자 프리미엄을 입력하세요."
     : premiumPercent > 0
@@ -784,7 +786,7 @@ export function P2PTradeTool() {
   }, [currentResultAnnouncement, market]);
 
   const shareImageInput = useMemo<TradePromotionImageInput | null>(() => {
-    if (!quote || premiumPercent === null || premiumPercent <= -100) return null;
+    if (!quote || premiumPercent === null) return null;
     return {
       tradeRole,
       amountBasis,

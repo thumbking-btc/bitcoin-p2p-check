@@ -1,3 +1,5 @@
+import { isSupportedPremiumPercent } from "./p2p-quote.mjs";
+
 export const TRANSFER_SUPPORT_OPTIONS = Object.freeze(["onchain", "lightning", "both"]);
 
 export function getTransferSupportLabel(tradeRole, transferSupport) {
@@ -13,7 +15,7 @@ export function getTransferSupportLabel(tradeRole, transferSupport) {
 }
 
 export function formatPromotionPremium(value) {
-  if (!Number.isFinite(value) || value <= -100) return "";
+  if (!isSupportedPremiumPercent(value)) return "";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
 }

@@ -65,5 +65,7 @@ test("rejects incomplete or invalid public promotion inputs", () => {
   assert.equal(buildTradePromotion({ ...base, sats: 0 }), null);
   assert.equal(buildTradePromotion({ ...base, paymentKrw: Number.NaN }), null);
   assert.equal(buildTradePromotion({ ...base, sellerPremiumPercent: -100 }), null);
+  assert.equal(buildTradePromotion({ ...base, sellerPremiumPercent: 1_000 }), null);
+  assert.equal(buildTradePromotion({ ...base, sellerPremiumPercent: 2.001 }), null);
   assert.equal(buildTradePromotion({ ...base, transferSupport: "automatic" }), null);
 });

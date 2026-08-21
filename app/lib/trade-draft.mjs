@@ -1,3 +1,5 @@
+import { isSupportedPremiumPercent } from "./p2p-quote.mjs";
+
 export const TRADE_DRAFT_VERSION = 2;
 export const TRADE_DRAFT_TTL_MS = 12 * 60 * 60 * 1_000;
 export const TRADE_DRAFT_STORAGE_KEY = "bitcoin-p2p-check:trade-draft";
@@ -60,9 +62,10 @@ function isBitcoinInput(value, displayUnit) {
 }
 
 function isPremiumInput(value) {
-  return typeof value === "string"
-    && value.length <= 16
-    && (value === "" || value === "-" || /^-?\d+(?:\.\d{0,2})?$/.test(value));
+  if (typeof value !== "string" || value.length > 16) return false;
+  if (value === "" || value === "-") return true;
+  if (!/^-?\d+(?:\.\d{0,2})?$/.test(value)) return false;
+  return isSupportedPremiumPercent(Number(value));
 }
 
 function removeInvalidDraft(storage) {

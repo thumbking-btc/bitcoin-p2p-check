@@ -1,7 +1,6 @@
-import { MAX_SATS } from "./p2p-quote.mjs";
+import { isSupportedPremiumPercent, MAX_SATS } from "./p2p-quote.mjs";
 
 const MAX_FRAGMENT_LENGTH = 512;
-const MAX_PREMIUM = 999.99;
 
 const FUNDING_SOURCE_ENTRIES = [
   ["none", "기재하지 않음"],
@@ -30,8 +29,7 @@ function validAmount(value, maximumDigits) {
 function validPremium(value) {
   if (!/^-?\d+(?:\.\d{1,2})?$/.test(value ?? "")) return null;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= -100 || parsed > MAX_PREMIUM) return null;
-  return parsed;
+  return isSupportedPremiumPercent(parsed) ? parsed : null;
 }
 
 export function buildTradeFragment({ side, amount, premium, fundingSource, displayUnit = "sats", amountBasis }) {

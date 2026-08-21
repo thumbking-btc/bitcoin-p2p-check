@@ -120,3 +120,19 @@ test("rejects altered legacy shapes and invalid v2 transfer support", () => {
   assert.equal(validateTradeDraft({ ...validV2, transferSupportByRole: { buyer: "onchain", seller: "both", extra: "lightning" } }, NOW), null);
   assert.equal(validateTradeDraft({ ...validV2, version: 3 }, NOW), null);
 });
+
+test("keeps editable premium placeholders but rejects unsupported stored values", () => {
+  const validV2 = {
+    ...createFields(),
+    version: TRADE_DRAFT_VERSION,
+    savedAt: NOW,
+  };
+
+  assert.ok(validateTradeDraft({ ...validV2, premiumInput: "" }, NOW));
+  assert.ok(validateTradeDraft({ ...validV2, premiumInput: "-" }, NOW));
+  assert.ok(validateTradeDraft({ ...validV2, premiumInput: "-99.99" }, NOW));
+  assert.ok(validateTradeDraft({ ...validV2, premiumInput: "999.99" }, NOW));
+  assert.equal(validateTradeDraft({ ...validV2, premiumInput: "-100" }, NOW), null);
+  assert.equal(validateTradeDraft({ ...validV2, premiumInput: "1000" }, NOW), null);
+  assert.equal(validateTradeDraft({ ...validV2, premiumInput: "2.001" }, NOW), null);
+});

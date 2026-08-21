@@ -1,19 +1,44 @@
 export const SATS_PER_BTC = 100_000_000;
 export const MAX_SATS = 2_100_000_000_000_000;
+export const MIN_PREMIUM_PERCENT = -99.99;
+export const MAX_PREMIUM_PERCENT = 999.99;
 
-function finite(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+const PREMIUM_SCALE = 10_000n;
+const MIN_PREMIUM_BPS = -9_999;
+const MAX_PREMIUM_BPS = 99_999;
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+function premiumBasisPoints(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const basisPoints = Math.round(value * 100);
+  if (!Number.isSafeInteger(basisPoints) || basisPoints / 100 !== value) return null;
+  if (basisPoints < MIN_PREMIUM_BPS || basisPoints > MAX_PREMIUM_BPS) return null;
+  return basisPoints;
 }
 
-function roundedInteger(value, maximum) {
-  if (!Number.isFinite(value)) return null;
-  const rounded = Math.round(value);
-  if (rounded <= 0 || rounded > maximum) return null;
-  return rounded;
+export function isSupportedPremiumPercent(value) {
+  return premiumBasisPoints(value) !== null;
+}
+
+function positiveSafeInteger(value, maximum = Number.MAX_SAFE_INTEGER) {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value > 0
+    && value <= maximum;
+}
+
+function roundPositiveRational(numerator, denominator, maximum) {
+  if (numerator <= 0n || denominator <= 0n) return null;
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  const rounded = remainder * 2n >= denominator ? quotient + 1n : quotient;
+  if (rounded <= 0n || rounded > BigInt(maximum)) return null;
+  return Number(rounded);
 }
 
 /**
+ * Calculates a P2P quote with exact integer arithmetic and positive half-up rounding.
+ *
  * @param {{
  *   mode: "krw" | "sats";
  *   amount: number;
@@ -22,31 +47,44 @@ function roundedInteger(value, maximum) {
  * }} input
  */
 export function calculateP2PQuote(input) {
-  const amount = finite(input.amount);
-  const referencePrice = finite(input.referencePrice);
-  const premiumPercent = finite(input.premiumPercent);
-
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
   if (input.mode !== "krw" && input.mode !== "sats") return null;
-  if (amount === null || referencePrice === null || premiumPercent === null) return null;
-  if (amount <= 0 || referencePrice <= 0 || premiumPercent <= -100) return null;
+  if (!positiveSafeInteger(input.amount)) return null;
+  if (!positiveSafeInteger(input.referencePrice)) return null;
 
-  const appliedPrice = referencePrice * (1 + premiumPercent / 100);
-  if (!Number.isFinite(appliedPrice) || appliedPrice <= 0) return null;
+  const premiumBps = premiumBasisPoints(input.premiumPercent);
+  if (premiumBps === null) return null;
+  if (input.mode === "sats" && input.amount > MAX_SATS) return null;
+
+  const referencePrice = BigInt(input.referencePrice);
+  const appliedPriceNumerator = referencePrice * BigInt(10_000 + premiumBps);
+  if (appliedPriceNumerator > MAX_SAFE_INTEGER_BIGINT * PREMIUM_SCALE) return null;
 
   const sats = input.mode === "krw"
-    ? roundedInteger((amount / appliedPrice) * SATS_PER_BTC, MAX_SATS)
-    : roundedInteger(amount, MAX_SATS);
+    ? roundPositiveRational(
+        BigInt(input.amount) * BigInt(SATS_PER_BTC) * PREMIUM_SCALE,
+        appliedPriceNumerator,
+        MAX_SATS,
+      )
+    : input.amount;
   if (sats === null) return null;
 
   const paymentKrw = input.mode === "krw"
-    ? roundedInteger(amount, Number.MAX_SAFE_INTEGER)
-    : roundedInteger((sats / SATS_PER_BTC) * appliedPrice, Number.MAX_SAFE_INTEGER);
+    ? input.amount
+    : roundPositiveRational(
+        BigInt(sats) * appliedPriceNumerator,
+        BigInt(SATS_PER_BTC) * PREMIUM_SCALE,
+        Number.MAX_SAFE_INTEGER,
+      );
   if (paymentKrw === null) return null;
 
+  const appliedPrice = Number(appliedPriceNumerator) / Number(PREMIUM_SCALE);
+  if (!Number.isFinite(appliedPrice) || appliedPrice <= 0) return null;
+
   return {
-    referencePrice,
+    referencePrice: input.referencePrice,
     appliedPrice,
-    premiumPercent,
+    premiumPercent: input.premiumPercent,
     paymentKrw,
     sats,
   };
