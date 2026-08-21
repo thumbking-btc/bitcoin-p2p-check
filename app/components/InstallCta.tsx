@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getInstallInviteDismissedUntil,
   INSTALL_INVITE_DISMISS_KEY,
+  INSTALL_INVITE_TRIGGER_EVENT,
   isInstallInviteSuppressed,
 } from "../lib/install-invite.mjs";
 
@@ -62,6 +63,19 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [inviteVisible, setInviteVisible] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const inviteOpenedRef = useRef(false);
+
+  useEffect(() => {
+    const handleTradeShareCompleted = () => {
+      if (inviteOpenedRef.current || isInstalledDisplayMode()) return;
+      if (!isMobileBrowser() || isInviteDismissed()) return;
+      inviteOpenedRef.current = true;
+      setInviteVisible(true);
+    };
+
+    window.addEventListener(INSTALL_INVITE_TRIGGER_EVENT, handleTradeShareCompleted);
+    return () => window.removeEventListener(INSTALL_INVITE_TRIGGER_EVENT, handleTradeShareCompleted);
+  }, []);
 
   useEffect(() => {
     let promptReceived = false;
@@ -81,7 +95,6 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
       setMode("ready");
-      if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
     };
     const handleAppInstalled = () => {
       setDeferredPrompt(null);
@@ -99,7 +112,6 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
         setInviteVisible(false);
       } else {
         setMode(manualInstallMode());
-        setInviteVisible(isMobileBrowser() && !isInviteDismissed());
       }
     }, 0);
 
@@ -180,7 +192,7 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
       ) : null}
 
       {inviteVisible ? (
-        <aside className="install-invite" aria-labelledby="install-invite-title">
+        <aside className="install-invite" aria-labelledby="install-invite-title" aria-live="polite" role="region">
           <div className="install-invite-heading">
             <span className="install-invite-icon" aria-hidden="true">₿</span>
             <div>

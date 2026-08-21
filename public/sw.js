@@ -1,4 +1,5 @@
-const CACHE_NAME = "bitcoin-p2p-check-v4";
+const CACHE_PREFIX = "bitcoin-p2p-check-";
+const CACHE_NAME = "bitcoin-p2p-check-v5";
 const APP_SHELL = [
   "/",
   "/install/",
@@ -13,18 +14,21 @@ const APP_SHELL = [
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    await Promise.allSettled(APP_SHELL.map(async (path) => {
+    await Promise.all(APP_SHELL.map(async (path) => {
       const response = await fetch(path, { cache: "reload" });
-      if (response.ok) await cache.put(path, response);
+      if (!response.ok) throw new Error(`app shell request failed: ${path}`);
+      await cache.put(path, response);
     }));
+    await self.skipWaiting();
   })());
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys
+        .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+        .map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
@@ -43,32 +47,39 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
+    const cachePromise = caches.open(CACHE_NAME);
+    // Never persist personalized or otherwise user-controlled query strings.
+    if (url.search) {
+      event.respondWith(
+        fetch(request, { cache: "no-store" })
+          .catch(async () => {
+            const cache = await cachePromise;
+            return (await cache.match(url.pathname)) ?? cache.match("/");
+          }),
+      );
+      return;
+    }
+    const network = fetch(request);
+    event.waitUntil(network.then(async (response) => {
+      if (response.ok) await (await cachePromise).put(request, response.clone());
+    }).catch(() => {}));
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(async () => (await caches.match(request)) ?? caches.match("/")),
+      network.catch(async () => {
+        const cache = await cachePromise;
+        return (await cache.match(request)) ?? cache.match("/");
+      }),
     );
     return;
   }
 
   if (["script", "style", "image", "font"].includes(request.destination)) {
+    const cachePromise = caches.open(CACHE_NAME);
+    const network = fetch(request);
+    event.waitUntil(network.then(async (response) => {
+      if (response.ok) await (await cachePromise).put(request, response.clone());
+    }).catch(() => {}));
     event.respondWith(
-      caches.match(request).then((cached) => {
-        const network = fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        });
-        return cached ?? network;
-      }),
+      cachePromise.then((cache) => cache.match(request)).then((cached) => cached ?? network),
     );
   }
 });

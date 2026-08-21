@@ -1,14 +1,10 @@
 import { handleMarketRequest } from "./market";
 
-export interface WorkerExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-}
-
 export default {
   async fetch(
     request: Request,
-    _environment: unknown,
-    context: WorkerExecutionContext,
+    _environment: Env,
+    context: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
 
@@ -26,4 +22,4 @@ export default {
       },
     });
   },
-};
+} satisfies ExportedHandler<Env>;

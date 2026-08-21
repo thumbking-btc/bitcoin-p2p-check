@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../app/lib/bitcoin-amount.mjs";
-import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
+import {
+  PRIVATE_REQUEST_EXPORT_MARGIN_MS,
+  hasPrivateRequestExportWindow,
+  isReferenceShareable,
+  shareImageFile,
+  shareSensitiveImageFile,
+} from "../app/lib/share-transport.mjs";
 import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
-import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
 import {
   readTradeDraft,
   TRADE_DRAFT_MAX_RAW_LENGTH,
@@ -19,6 +25,7 @@ import {
 import {
   getInstallInviteDismissedUntil,
   INSTALL_INVITE_DISMISS_MS,
+  INSTALL_INVITE_TRIGGER_EVENT,
   isInstallInviteSuppressed,
 } from "../app/lib/install-invite.mjs";
 
@@ -201,13 +208,39 @@ test("shares a PNG file and downloads only when file sharing is unavailable", as
   assert.equal(downloaded.length, 2);
 });
 
+test("never downloads a sensitive request as an implicit share fallback", async () => {
+  const file = { name: "bitcoin-p2p-private-request.png", type: "image/png" };
+  assert.equal(await shareSensitiveImageFile({ file, title: "private", text: "sensitive", nativeCanShare: null, nativeShare: null }), "unsupported");
+  assert.equal(await shareSensitiveImageFile({ file, title: "private", text: "sensitive", nativeCanShare: () => false, nativeShare: async () => {} }), "unsupported");
+  const abortError = new Error("cancelled");
+  abortError.name = "AbortError";
+  assert.equal(await shareSensitiveImageFile({ file, title: "private", text: "sensitive", nativeCanShare: () => true, nativeShare: async () => { throw abortError; } }), "cancelled");
+  assert.equal(await shareSensitiveImageFile({ file, title: "private", text: "sensitive", nativeCanShare: () => true, nativeShare: async () => { throw new Error("failed"); } }), "failed");
+  let payload;
+  assert.equal(await shareSensitiveImageFile({ file, title: "private", text: "sensitive", nativeCanShare: () => true, nativeShare: async (value) => { payload = value; } }), "shared");
+  assert.deepEqual(payload, { title: "private", text: "sensitive", files: [file] });
+  assert.equal(Object.hasOwn(payload, "url"), false);
+});
+
 test("blocks stale or loading Upbit references", () => {
   const observedAt = "2026-08-11T00:00:00.000Z";
   const base = Date.parse(observedAt);
   assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base + 299_999), true);
   assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base + 300_000), false);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base - 30_000), true);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: observedAt }, base - 30_001), false);
+  assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: "2099-01-01T00:00:00.000Z" }, base), false);
   assert.equal(isReferenceShareable({ marketState: "loading", referenceTime: observedAt }, base), false);
   assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: null }, base), false);
+});
+
+test("keeps a full minute for private-request delivery", () => {
+  const now = 1_800_000_000_000;
+  assert.equal(PRIVATE_REQUEST_EXPORT_MARGIN_MS, 60_000);
+  assert.equal(hasPrivateRequestExportWindow(now + 60_000, now), true);
+  assert.equal(hasPrivateRequestExportWindow(now + 59_999, now), false);
+  assert.equal(hasPrivateRequestExportWindow(Number.POSITIVE_INFINITY, now), false);
+  assert.equal(hasPrivateRequestExportWindow(now + 60_000, Number.NaN), false);
 });
 
 test("round-trips validated trade inputs in a server-private URL fragment", () => {
@@ -248,13 +281,27 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
-test("schedules visible market refreshes just beyond the 15-second server cache", () => {
-  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);
-  assert.equal(getMarketRefreshDelay(0, 100_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);
-  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);
+test("rejects unknown URL fragment keys, including payment credentials", () => {
+  const base = "#v=2&side=buy&basis=krw&krw=3000000&premium=2&fund=none&unit=sats";
+  for (const suffix of [
+    "&address=bc1qprivate",
+    "&bolt11=lnbc1private",
+    "&invoice=lnbc1private",
+    "&payment_hash=private",
+    "&unknown=value",
+    "&=value",
+  ]) {
+    assert.equal(parseTradeFragment(base + suffix), null);
+  }
+
+  assert.deepEqual(parseTradeFragment(base), {
+    side: "buy",
+    amount: 3_000_000,
+    amountBasis: "krw",
+    premium: 2,
+    fundingSource: "기재하지 않음",
+    displayUnit: "sats",
+  });
 });
 
 test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
@@ -277,6 +324,7 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
     premiumInput: "-2.5",
     fundingSources: { buyer: "근로소득", seller: "기재하지 않음" },
     bitcoinDisplayUnit: "btc",
+    transferSupportByRole: { buyer: "both", seller: "lightning" },
     market: { priceKrw: 100_000_000 },
     quote: { sats: 800_000 },
     referenceTime: "2026-08-12T00:00:00.000Z",
@@ -289,7 +337,7 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   const storedObject = JSON.parse(storedJson);
   assert.deepEqual(Object.keys(storedObject).sort(), [
     "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "fundingSources",
-    "krwAmounts", "premiumInput", "savedAt", "tradeRole", "version",
+    "krwAmounts", "premiumInput", "savedAt", "tradeRole", "transferSupportByRole", "version",
   ]);
   assert.equal(storedObject.version, TRADE_DRAFT_VERSION);
   assert.equal(storedObject.savedAt, now);
@@ -330,16 +378,18 @@ test("hydrates a local draft once and lets an imported share link win", async ()
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   const hydrationBlock = component.slice(
-    component.indexOf("const imported = parseTradeFragment(window.location.hash)"),
+    component.indexOf("const incomingHash = window.location.hash"),
     component.indexOf("useEffect(() => {", component.indexOf("setDraftHydrated(true)")),
   );
 
-  assert.ok(hydrationBlock.indexOf("parseTradeFragment(window.location.hash)") < hydrationBlock.indexOf("readTradeDraft(storage)"));
+  assert.ok(hydrationBlock.indexOf("parseTradeFragment(incomingHash)") < hydrationBlock.indexOf("readTradeDraft(storage)"));
+  assert.match(hydrationBlock, /if \(incomingHash\) window\.history\.replaceState/);
   assert.ok(hydrationBlock.indexOf("if (imported)") < hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)"));
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
   assert.match(component, /shareImageAllowed = Boolean\(shareImageInput\)[\s\S]*?&& draftHydrated/);
-  assert.match(component, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
+  assert.match(component, /입력 초안은 마지막 수정 후 12시간 동안 이 브라우저에서 다시 불러옵니다/);
+  assert.match(component, /만료된 초안은 다음 실행 시 삭제되며 서버에는 저장되지 않습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
   assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
@@ -371,9 +421,14 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   ]) {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
-  assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
-  assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
-  assert.match(html, /거래 조건 공유/);
+  assert.match(html, /공개 모집에는 포함되지 않습니다. 구매자가 제공하는 정보이므로 1:1 거래 전에 서로 확인해 주세요/);
+  assert.match(html, /입력 초안은 마지막 수정 후 12시간 동안 이 브라우저에서 다시 불러옵니다/);
+  assert.match(html, /거래 모집 공유/);
+  assert.match(html, /BTC 수령 가능 방식/);
+  assert.match(html, />온체인</);
+  assert.match(html, />라이트닝</);
+  assert.match(html, />둘 다 가능</);
+  assert.match(html, /BTC 받을 방법 선택/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
@@ -382,7 +437,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /시세 조회 중/);
   assert.match(html, /시세는 합의의 기준일 뿐입니다/);
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
-  assert.match(html, /<b>온체인 수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
+  assert.match(html, /<b>BTC 전송 수수료:<\/b><span>선택한 방식에 따라 판매자 별도 부담 · 구매자 수령량 차감 없음<\/span>/);
   assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
   assert.match(html, /<b>확인용:<\/b><span>원화 입금·BTC 수령 증빙 아님<\/span>/);
   assert.match(html, /현재 온체인 수수료율/);
@@ -396,10 +451,14 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.doesNotMatch(html, /계산 방향|원화 → sats|sats → 원화|회원가입|지갑 주소/);
 });
 
-test("keeps market data official and interaction failures recoverable", async () => {
-  const [component, imageRenderer, shareTransport, tradeLink, api, css, packageJson] = await Promise.all([
+test("keeps market data official and separates public promotion from private requests", async () => {
+  const [component, imageRenderer, promotionCopy, privateRenderer, paymentWrapper, lightningRequest, shareTransport, tradeLink, api, css, packageJson] = await Promise.all([
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-promotion-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-promotion.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/private-request-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PPaymentRequest.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PLightningRequest.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/share-transport.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-link.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/market.ts", import.meta.url), "utf8"),
@@ -417,7 +476,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(api, /FEE_FRESH_CACHE_SECONDS = 60/);
   assert.match(api, /fees-backoff/);
   assert.doesNotMatch(api, /Coinbase|coinbaseKrwGap|frankfurter/i);
-  assert.match(component, /fetch\("\/api\/market", \{ cache: "no-store" \}\)/);
+  assert.match(component, /fetch\(`\/api\/market\?price=\$\{includePrice \? "1" : "0"\}`,[\s\S]*cache: "no-store"/);
   assert.match(component, /시세 새로고침/);
   assert.match(component, /현재 온체인 수수료율/);
   assert.match(component, /feeRates\?\.nextBlock/);
@@ -427,14 +486,18 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /약 1분마다 자동 갱신 ·/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
-  assert.match(component, /getMarketRefreshDelay\(lastMarketRefreshAtRef\.current\)/);
+  assert.match(component, /MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000/);
+  assert.match(component, /MARKET_REFRESH_FALLBACK_MS = 16_000/);
+  assert.match(component, /LIVE_PRICE_SILENCE_TIMEOUT_MS = 45_000/);
+  assert.match(component, /activeSocket\.send\("PING"\)/);
+  assert.match(component, /refreshRestFallback\(\)/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /if \(activeRefresh\) \{[\s\S]*return activeRefresh\.promise/);
   assert.match(component, /marketRequestRef\.current === refresh/);
   assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
-  assert.match(component, /pendingMarketSnapshotRef\.current = data/);
+  assert.match(component, /pendingMarketSnapshotRef\.current = nextData/);
   assert.match(component, /applyMarketSnapshot\(pendingSnapshot, true\)/);
   assert.match(component, /preparedShareFormKeyRef\.current !== shareFormKey/);
   assert.match(component, /setShareStatus\(\(current\) => formChanged/);
@@ -448,31 +511,26 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /seller: "기재하지 않음"/);
   assert.match(component, /fundingSourceFieldLabel = "구매자 자금 출처"/);
   assert.doesNotMatch(component, /송금 계좌 명의|제3자|확인 전/);
-  assert.match(component, /buyerFundingSource: fundingSource/);
-  assert.match(component, /구매자 자금 출처: \$\{fundingSource\}/);
-  assert.match(component, /구매자 제공 정보 · 거래 전 상호 확인/);
-  assert.match(component, /계산 시각:/);
-  assert.match(component, /\[가격 계산\]/);
-  const shareTextBlock = component.slice(
-    component.indexOf("const shareText ="),
-    component.indexOf("].join(\"\\n\")", component.indexOf("const shareText =")),
-  );
-  const shareTextOrder = [
-    "tradeIntent,",
-    "`계산 시각:",
-    "`구매자 → 판매자:",
-    "`판매자 → 구매자:",
-    "`구매자 자금 출처:",
-    '"[가격 계산]"',
-    "`금액 기준:",
-    "`기준:",
-    "`판매자 프리미엄:",
-  ].map((token) => shareTextBlock.indexOf(token));
-  assert.ok(shareTextOrder.every((index) => index >= 0));
-  assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
-  assert.doesNotMatch(shareTextBlock, /반올림/);
-  assert.match(component, /buildTradeIntent/);
-  assert.match(component, /title: tradeIntent/);
+  assert.match(component, /buildTradePromotion/);
+  assert.match(component, /title: publicPromotion\?\.title \?\? tradeIntent/);
+  assert.match(component, /paymentKrw: quote\.paymentKrw/);
+  assert.match(component, /sats: quote\.sats/);
+  assert.match(component, /transferSupport/);
+  assert.match(component, /공개 모집물에는 주소·인보이스·자금 출처·웹 링크가 들어가지 않습니다/);
+  assert.doesNotMatch(component, /buildTradeFragment|현재 시세로 다시 계산하기:/);
+  assert.doesNotMatch(promotionCopy, /fundingSource|address|invoice|https?:|bitcoin:/i);
+  assert.match(promotionCopy, /작성 당시 시세·프리미엄 반영: \$\{approximate\}/);
+  assert.match(promotionCopy, /실제 송금은 DM에서 한 방식으로 확정/);
+  assert.doesNotMatch(imageRenderer, /fundingSource|buyerFundingSource|address|invoice|https?:|bitcoin:/i);
+  assert.match(imageRenderer, /promotion\.approximate/);
+  assert.match(imageRenderer, /비트코인 P2P 거래 모집/);
+  assert.match(imageRenderer, /주소·인보이스·웹 링크 없음/);
+  assert.match(privateRenderer, /verifyQrRasterPayload\(fullImage, verified\.payload\)/);
+  assert.match(paymentWrapper, /BTC 받을 방법 선택/);
+  assert.match(paymentWrapper, /rail === "onchain"/);
+  assert.match(paymentWrapper, /rail === "lightning"/);
+  assert.match(lightningRequest, /validateBolt11Invoice/);
+  assert.match(lightningRequest, /shareSensitiveImageFile/);
   assert.match(component, /BTC로 보기/);
   assert.match(component, /sats로 보기/);
   assert.match(component, /비트코인 표시 단위/);
@@ -489,51 +547,22 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /satsToBtcInput\(imported\.amount\)/);
   assert.match(component, /inputMode=\{amountBasis === "krw" \|\| bitcoinDisplayUnit === "sats" \? "numeric" : "decimal"\}/);
   assert.match(shareTransport, /files: \[file\]/);
-  assert.match(component, /현재 시세로 다시 계산하기:/);
-  assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
+  assert.match(shareTransport, /export async function shareSensitiveImageFile/);
+  assert.match(component, /parseTradeFragment\(incomingHash\)/);
   assert.match(component, /window\.history\.replaceState/);
   assert.match(component, /현재 업비트 시세로 다시 계산했습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
-  assert.match(component, /거래 조건 준비 중/);
+  assert.match(component, /거래 모집 준비 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
-  assert.match(imageRenderer, /비트코인 기준 가격/);
-  assert.match(imageRenderer, /조회 시각/);
-  assert.match(imageRenderer, /referencePriceKrw/);
-  assert.match(imageRenderer, /구매자 → 판매자/);
-  assert.match(imageRenderer, /판매자 → 구매자/);
   assert.match(imageRenderer, /bitcoinDisplayUnit/);
   assert.match(imageRenderer, /amountBasis/);
-  assert.match(imageRenderer, /금액 기준/);
-  assert.match(imageRenderer, /recipientLabel/);
-  assert.match(imageRenderer, /getTradeRecipientLabel/);
-  assert.doesNotMatch(imageRenderer, /내가 받음/);
   assert.match(imageRenderer, /판매자 프리미엄/);
-  assert.match(imageRenderer, /buyerFundingSource/);
-  assert.match(imageRenderer, /구매자 자금 출처/);
-  assert.match(imageRenderer, /구매자 제공 정보 · 거래 전 상호 확인/);
-  assert.match(imageRenderer, /시장 참고 · 업비트 프리미엄/);
-  assert.match(imageRenderer, /온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음/);
   assert.doesNotMatch(imageRenderer, /반올림/);
-  assert.match(imageRenderer, /확인용 · 원화 입금·BTC 수령 증빙 아님/);
-  assert.match(imageRenderer, /const DARK_PANEL_HEIGHT = 652;/);
-  assert.match(imageRenderer, /const INNER_PANEL_TOP = 204;/);
-  assert.match(imageRenderer, /const INNER_PANEL_HEIGHT = 604;/);
-  assert.match(imageRenderer, /const INNER_PANEL_VERTICAL_PADDING = 35;/);
-  assert.match(imageRenderer, /roundedRect\(context, 72, 180, 1_456, DARK_PANEL_HEIGHT, 10\)/);
-  assert.match(imageRenderer, /"비트코인 기준 가격", 130, INNER_PANEL_TOP \+ INNER_PANEL_VERTICAL_PADDING/);
-  assert.match(imageRenderer, /INNER_PANEL_TOP \+ INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING/);
-  assert.match(imageRenderer, /"판매자 프리미엄", 145, 644/);
-  assert.match(imageRenderer, /fundingSourceLine, 145, 688/);
-  assert.match(imageRenderer, /premiumReference, 145, 716/);
-  assert.match(imageRenderer, /calculationNote, 145, 744/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
-  assert.match(component, /amount: amount \?\? ""/);
-  assert.match(component, /premium: premiumPercent \?\? ""/);
-  assert.match(component, /tradeFragment \? `\$\{window\.location\.origin\}\/\$\{tradeFragment\}` : ""/);
   assert.match(component, /aria-live="polite"/);
   assert.match(component, /aria-invalid/);
   assert.doesNotMatch(component, /setInterval|feeSats/);
@@ -602,7 +631,7 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, tradeTool, ogImage] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
@@ -612,6 +641,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
     readFile(new URL("../public/icons/app-icon.svg", import.meta.url), "utf8"),
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/og-v2.png", import.meta.url)),
   ]);
   const manifest = JSON.parse(manifestText);
@@ -664,10 +694,17 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /설치하기/);
   assert.match(installCta, /나중에/);
   assert.match(installCta, /INSTALL_INVITE_DISMISS_KEY/);
+  assert.match(installCta, /addEventListener\(INSTALL_INVITE_TRIGGER_EVENT/);
+  assert.doesNotMatch(installCta, /document\.addEventListener\("click"/);
+  assert.match(tradeTool, /if \(outcome !== "cancelled"\) \{\s*window\.dispatchEvent\(new Event\(INSTALL_INVITE_TRIGGER_EVENT\)\);/);
+  assert.ok(tradeTool.indexOf("await shareImageFile") < tradeTool.indexOf("dispatchEvent(new Event(INSTALL_INVITE_TRIGGER_EVENT))"));
+  assert.equal(INSTALL_INVITE_TRIGGER_EVENT, "bitcoin-p2p-share-complete");
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-v3/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-v5/);
+  assert.match(serviceWorker, /key\.startsWith\(CACHE_PREFIX\)/);
+  assert.match(serviceWorker, /event\.waitUntil\(network\.then/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
@@ -694,6 +731,57 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /name="twitter:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
   assert.doesNotMatch(html, /https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og\.png/);
   assert.doesNotMatch(html, /http:\/\/localhost:3000\/og-v2\.png/);
+});
+
+test("does not cache same-origin navigations with query strings", async () => {
+  const serviceWorker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  const handlers = new Map();
+  const cacheWrites = [];
+  const fetchCalls = [];
+  const cache = {
+    put: async (...args) => { cacheWrites.push(args); },
+  };
+  const cacheStorage = {
+    open: async () => cache,
+    keys: async () => [],
+    delete: async () => true,
+    match: async () => null,
+  };
+  const serviceWorkerGlobal = {
+    location: { origin: "https://example.test" },
+    clients: { claim: async () => undefined },
+    skipWaiting: () => undefined,
+    addEventListener: (type, handler) => handlers.set(type, handler),
+  };
+  const fetchMock = async (request, init) => {
+    fetchCalls.push({ request, init });
+    return new Response("network", { status: 200 });
+  };
+
+  runInNewContext(serviceWorker, {
+    URL,
+    Promise,
+    caches: cacheStorage,
+    fetch: fetchMock,
+    self: serviceWorkerGlobal,
+  });
+
+  let responsePromise = null;
+  handlers.get("fetch")({
+    request: {
+      destination: "document",
+      method: "GET",
+      mode: "navigate",
+      url: "https://example.test/?invoice=lnbc1private",
+    },
+    respondWith: (promise) => { responsePromise = Promise.resolve(promise); },
+  });
+
+  const response = await responsePromise;
+  assert.equal(await response.text(), "network");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].init?.cache, "no-store");
+  assert.equal(cacheWrites.length, 0);
 });
 
 test("renders BIP39-style home-screen installation guides for mobile and PC", async () => {

@@ -1,4 +1,6 @@
 const PRICE_MAX_AGE_MS = 5 * 60_000;
+const PRICE_MAX_FUTURE_SKEW_MS = 30_000;
+export const PRIVATE_REQUEST_EXPORT_MARGIN_MS = 60_000;
 
 export function isReferenceShareable(
   { marketState, referenceTime },
@@ -7,7 +9,14 @@ export function isReferenceShareable(
   if (marketState !== "ready" || !referenceTime) return false;
   const observedAt = new Date(referenceTime).getTime();
   if (!Number.isFinite(observedAt) || !Number.isFinite(now)) return false;
-  return now - observedAt < PRICE_MAX_AGE_MS;
+  const age = now - observedAt;
+  return age >= -PRICE_MAX_FUTURE_SKEW_MS && age < PRICE_MAX_AGE_MS;
+}
+
+export function hasPrivateRequestExportWindow(expiresAt, now = Date.now()) {
+  return Number.isFinite(expiresAt)
+    && Number.isFinite(now)
+    && expiresAt - now >= PRIVATE_REQUEST_EXPORT_MARGIN_MS;
 }
 
 function isAbortError(error) {
@@ -43,5 +52,27 @@ export async function shareImageFile({
     if (isAbortError(error)) return "cancelled";
     download(file);
     return "downloaded-after-error";
+  }
+}
+
+/** Sensitive address/invoice images never fall back to an implicit download. */
+export async function shareSensitiveImageFile({
+  file,
+  title,
+  text,
+  nativeShare,
+  nativeCanShare,
+}) {
+  if (typeof nativeShare !== "function" || typeof nativeCanShare !== "function") return "unsupported";
+  try {
+    if (!nativeCanShare({ files: [file] })) return "unsupported";
+  } catch {
+    return "unsupported";
+  }
+  try {
+    await nativeShare({ title, text, files: [file] });
+    return "shared";
+  } catch (error) {
+    return isAbortError(error) ? "cancelled" : "failed";
   }
 }

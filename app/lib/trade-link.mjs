@@ -81,6 +81,16 @@ export function parseTradeFragment(fragment) {
   const amountKey = amountBasis === "krw" ? "krw" : "sats";
   if (params.getAll(amountKey).length !== 1) return null;
   if (params.has(amountKey === "krw" ? "sats" : "krw")) return null;
+  const allowedKeys = new Set([
+    "v",
+    "side",
+    "premium",
+    "fund",
+    "unit",
+    amountKey,
+    ...(version === "2" ? ["basis"] : []),
+  ]);
+  if ([...params.keys()].some((key) => !allowedKeys.has(key))) return null;
 
   const amount = validAmount(params.get(amountKey), amountBasis === "krw" ? 15 : 16);
   if (amount === null || (amountBasis === "bitcoin" && amount > MAX_SATS)) return null;

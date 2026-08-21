@@ -1,5 +1,3 @@
-import type { WorkerExecutionContext } from "./index";
-
 const UPBIT_TICKER = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
 const MEMPOOL_FEES = "https://mempool.space/api/v1/fees/recommended";
@@ -94,9 +92,6 @@ type MarketSnapshot = {
 };
 
 type CloudflareCacheStorage = CacheStorage & { default: Cache };
-
-let pendingSnapshotWithPrice: Promise<MarketSnapshot> | null = null;
-let pendingReferenceSnapshot: Promise<MarketSnapshot> | null = null;
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -269,7 +264,7 @@ function isRecent(timestamp: string | null, nowMs: number): boolean {
 async function resolveFees(
   request: Request,
   cache: Cache,
-  context: WorkerExecutionContext,
+  context: ExecutionContext,
   nowMs: number,
   retrievedAt: string,
 ): Promise<{
@@ -339,7 +334,7 @@ function publicResponse(snapshot: MarketSnapshot, cacheState: "HIT" | "MISS", me
 async function buildSnapshot(
   request: Request,
   cache: Cache,
-  context: WorkerExecutionContext,
+  context: ExecutionContext,
   includePrice: boolean,
 ): Promise<MarketSnapshot> {
   const now = new Date();
@@ -427,7 +422,7 @@ async function buildSnapshot(
 
 export async function handleMarketRequest(
   request: Request,
-  context: WorkerExecutionContext,
+  context: ExecutionContext,
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     const headers = new Headers(API_HEADERS);
@@ -444,17 +439,9 @@ export async function handleMarketRequest(
   const cached = await readCachedJson<MarketSnapshot>(cache, freshKey);
   if (cached) return publicResponse(cached, "HIT", request.method);
 
-  let pendingSnapshot = includePrice ? pendingSnapshotWithPrice : pendingReferenceSnapshot;
-  if (!pendingSnapshot) {
-    pendingSnapshot = buildSnapshot(request, cache, context, includePrice).finally(() => {
-      if (includePrice) pendingSnapshotWithPrice = null;
-      else pendingReferenceSnapshot = null;
-    });
-    if (includePrice) pendingSnapshotWithPrice = pendingSnapshot;
-    else pendingReferenceSnapshot = pendingSnapshot;
-  }
-
-  const snapshot = await pendingSnapshot;
+  // Request-bound I/O must not be kept in module scope or awaited by another
+  // request in the same isolate. The Cache API remains the shared fast path.
+  const snapshot = await buildSnapshot(request, cache, context, includePrice);
   if (snapshot.status !== "unavailable") {
     context.waitUntil(cache.put(
       freshKey,
