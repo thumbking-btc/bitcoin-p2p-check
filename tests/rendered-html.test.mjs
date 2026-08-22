@@ -145,17 +145,18 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   assert.equal(getTradeRecipientLabel("seller"), "판매자가 받음");
 });
 
-test("builds compact Discord recruitment posts from KRW, sats, or BTC intent", () => {
+test("builds compact public recruitment posts with exact intent and rounded equivalents", () => {
   assert.deepEqual(buildTradeRecruitmentPost({
     tradeRole: "buyer",
     amountUnit: "krw",
     amountInput: "1000000",
     sellerPremiumInput: "3",
+    approximateSats: 917_345,
     network: "both",
     canShareKrwSource: true,
     canVerifyIdentity: true,
   }), {
-    text: "구매 / 100만원 / 3% / 온체인·라이트닝\n원화 출처 공유 및 신원확인 가능합니다.\nDM 부탁드립니다.",
+    text: "구매 / 100만원 (현재 약 917,000 sats · 0.00917 BTC) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
     error: "",
   });
 
@@ -164,12 +165,13 @@ test("builds compact Discord recruitment posts from KRW, sats, or BTC intent", (
     amountUnit: "sats",
     amountInput: "3000000",
     sellerPremiumInput: "3",
+    approximateKrw: 3_271_234,
     network: "lightning",
     returningTraderEnabled: true,
     returningTraderPremiumInput: "2.5",
     memo: "첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.",
   }), {
-    text: "판매 / 3,000,000 sats / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
+    text: "판매 / 3,000,000 sats (0.03 BTC · 현재 약 327만원) / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
     error: "",
   });
 
@@ -178,15 +180,16 @@ test("builds compact Discord recruitment posts from KRW, sats, or BTC intent", (
     amountUnit: "btc",
     amountInput: "0.10000000",
     sellerPremiumInput: "2",
+    approximateKrw: 10_923_456,
     network: "onchain",
-  }).text, "구매 / 0.1 BTC / 2% / 온체인\nDM 부탁드립니다.");
+  }).text, "구매 / 0.1 BTC (10,000,000 sats · 현재 약 1,090만원) / 2% / 온체인\nDM 부탁드립니다.");
   assert.equal(buildTradeRecruitmentPost({
     tradeRole: "buyer",
     amountUnit: "btc",
     amountInput: "0.00000001",
     sellerPremiumInput: "2",
     network: "onchain",
-  }).text, "구매 / 0.00000001 BTC / 2% / 온체인\nDM 부탁드립니다.");
+  }).text, "구매 / 0.00000001 BTC (1 sats) / 2% / 온체인\nDM 부탁드립니다.");
 });
 
 test("validates recruitment discounts and excludes settlement-only details", () => {
@@ -226,7 +229,7 @@ test("validates recruitment discounts and excludes settlement-only details", () 
     canShareKrwSource: true,
     canVerifyIdentity: true,
   }).text;
-  assert.equal(sellerPost, "판매 / 1,234,567원 / 3% / 온체인\n신원확인 가능합니다.\nDM 부탁드립니다.");
+  assert.equal(sellerPost, "판매 / 1,234,567원 / 3% / 온체인\n상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.");
   assert.doesNotMatch(sellerPost, /원화 출처/);
 });
 
@@ -237,24 +240,23 @@ test("preserves edited recruitment previews and copies the exact visible text", 
     preview: previousGenerated,
     previousGenerated,
     nextGenerated,
-  }), { preview: nextGenerated, dirty: false, outdated: false });
+  }), { preview: nextGenerated, dirty: false });
   assert.deepEqual(syncTradeRecruitmentPreview({
     preview: "직접 편집한 모집글",
     previousGenerated,
     nextGenerated: previousGenerated,
-  }), { preview: "직접 편집한 모집글", dirty: true, outdated: false });
+  }), { preview: "직접 편집한 모집글", dirty: true });
   assert.deepEqual(syncTradeRecruitmentPreview({
     preview: "직접 편집한 모집글",
     previousGenerated,
     nextGenerated,
-  }), { preview: "직접 편집한 모집글", dirty: true, outdated: true });
+  }), { preview: "직접 편집한 모집글", dirty: true });
   assert.deepEqual(syncTradeRecruitmentPreview({
     preview: "직접 편집한 모집글",
     previousGenerated,
     nextGenerated,
-    outdated: true,
     force: true,
-  }), { preview: nextGenerated, dirty: false, outdated: false });
+  }), { preview: nextGenerated, dirty: false });
 
   const edited = "  편집한 모집글\n그대로  ";
   let clipboardValue = "";
@@ -514,7 +516,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   }
   assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
   assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
-  assert.match(html, /거래 조건 공유/);
+  assert.match(html, /현재 계산 결과 이미지 공유/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
@@ -645,7 +647,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
-  assert.match(component, /거래 조건 준비 중/);
+  assert.match(component, /계산 결과 이미지 준비 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
@@ -747,15 +749,18 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, />온체인<\/span>/);
   assert.match(html, />라이트닝<\/span>/);
   assert.match(html, />둘 다<\/span>/);
+  assert.match(html, /<details class="recruitment-options">/);
+  assert.match(html, /선택 문구 추가/);
+  assert.match(html, /여러 개 선택 가능/);
   assert.match(html, /기존 거래자 우대 프리미엄/);
-  assert.match(html, /원화 출처 공유 가능/);
-  assert.match(html, /신원확인 가능/);
+  assert.match(html, /원화 출처 설명 가능/);
+  assert.match(html, /상호 신원확인 협의 가능/);
   assert.match(html, /추가 조건·메모/);
   assert.match(html, /편집 가능한 모집글 미리보기/);
   assert.match(html, /<textarea id="recruitment-preview"[^>]*>/);
   assert.doesNotMatch(html.match(/<textarea id="recruitment-preview"[^>]*>/)?.[0] ?? "", /readonly|disabled/);
-  assert.match(html, /입력값으로 다시 만들기/);
-  assert.match(html, /모집글 복사/);
+  assert.match(html, /자동 문구로 되돌리기/);
+  assert.match(html, /모집글 텍스트 복사/);
   assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
   assert.match(html, /구매 \/ 300만원 \/ 2% \/ 온체인/);
 
@@ -763,16 +768,19 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /tradeRole=\{tradeRole\}/);
   assert.match(integration, /amountUnit=\{amountInputUnit\}/);
   assert.match(integration, /sellerPremiumInput=\{premiumInput\}/);
-  assert.doesNotMatch(integration, /fundingSource|quote|market|address|invoice|qr|payment/i);
+  assert.match(integration, /approximateKrw=\{quote\?\.paymentKrw \?\? null\}/);
+  assert.match(integration, /approximateSats=\{quote\?\.sats \?\? null\}/);
+  assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /copyTradeRecruitmentText\(previewText/);
   assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);
-  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| copying \|\| previewOutdated\}/);
-  assert.match(recruitmentComponent, /거래 조건이 바뀌어 다시 만들기 필요/);
+  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| copying\}/);
+  assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
   assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
   const recruitmentImports = recruitmentBuilder.match(/^(?:import[^\n]+\n)+/)?.[0] ?? "";
   assert.doesNotMatch(recruitmentImports, /trade-link|trade-share-image|p2p-quote|market/i);
   assert.match(recruitmentBuilder, /input\.tradeRole === "buyer" && input\.canShareKrwSource/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating \.trade-recruitment \{ visibility: hidden; \}/);
+  assert.match(css, /\.recruitment-option-list\s*\{[^}]*grid-template-columns:\s*repeat\(2/s);
   assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
   assert.match(calculator, /wss:\/\/api\.upbit\.com\/websocket\/v1/);
   assert.match(calculator, /requestMarketSnapshot\(includePrice\)/);

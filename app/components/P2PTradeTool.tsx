@@ -1165,14 +1165,14 @@ export function P2PTradeTool() {
           aria-busy={isSharing || shareImagePreparing}
         >
           {isSharing
-            ? "거래 조건 공유 중"
+            ? "계산 결과 이미지 공유 중"
             : shareImageFailed
-              ? "거래 조건 다시 준비"
+              ? "계산 결과 이미지 다시 준비"
               : shareImagePreparing && !backgroundShareImagePreparing
-                ? "거래 조건 준비 중"
+                ? "계산 결과 이미지 준비 중"
                 : stalePrice
                   ? "시세 새로고침 후 공유"
-                  : "거래 조건 공유"}
+                  : "현재 계산 결과 이미지 공유"}
         </button>
         <p
           className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
@@ -1215,6 +1215,8 @@ export function P2PTradeTool() {
         amountUnit={amountInputUnit}
         amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
         sellerPremiumInput={premiumInput}
+        approximateKrw={quote?.paymentKrw ?? null}
+        approximateSats={quote?.sats ?? null}
       />
     </section>
   );

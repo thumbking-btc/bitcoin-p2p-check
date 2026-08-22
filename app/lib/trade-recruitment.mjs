@@ -21,7 +21,27 @@ function formatPremium(value) {
   });
 }
 
-function formatAmount(value, unit) {
+function roundToThreeSignificantDigits(value) {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const step = 10 ** Math.max(0, Math.floor(Math.log10(value)) - 2);
+  return Math.round(value / step) * step;
+}
+
+function formatApproximateKrw(value) {
+  const rounded = roundToThreeSignificantDigits(Number(value));
+  if (rounded === null) return "";
+  return rounded >= 10_000 && rounded % 10_000 === 0
+    ? `${(rounded / 10_000).toLocaleString("ko-KR")}만원`
+    : `${rounded.toLocaleString("ko-KR")}원`;
+}
+
+function formatApproximateBitcoin(value) {
+  const roundedSats = roundToThreeSignificantDigits(Number(value));
+  if (roundedSats === null) return "";
+  return `${roundedSats.toLocaleString("ko-KR")} sats · ${satsToBtcInput(roundedSats)} BTC`;
+}
+
+function formatAmount(value, unit, approximateKrw, approximateSats) {
   const raw = String(value ?? "").replaceAll(",", "").trim();
   if (!raw) return { text: "", error: "위 계산기에서 거래 금액을 입력하세요." };
 
@@ -31,10 +51,14 @@ function formatAmount(value, unit) {
     }
     const amount = BigInt(raw);
     if (amount <= 0n) return { text: "", error: "거래 금액은 0보다 커야 합니다." };
-    return {
-      text: amount % 10_000n === 0n
+    const exactKrw = amount % 10_000n === 0n
         ? `${(amount / 10_000n).toLocaleString("ko-KR")}만원`
-        : `${amount.toLocaleString("ko-KR")}원`,
+        : `${amount.toLocaleString("ko-KR")}원`;
+    const approximateBitcoin = formatApproximateBitcoin(approximateSats);
+    return {
+      text: approximateBitcoin
+        ? `${exactKrw} (현재 약 ${approximateBitcoin})`
+        : exactKrw,
       error: "",
     };
   }
@@ -52,10 +76,14 @@ function formatAmount(value, unit) {
   }
   if (parsed.sats <= 0) return { text: "", error: "거래 금액은 0보다 커야 합니다." };
 
+  const exactSats = `${parsed.sats.toLocaleString("ko-KR")} sats`;
+  const exactBtc = `${satsToBtcInput(parsed.sats)} BTC`;
+  const approximateFiat = formatApproximateKrw(approximateKrw);
+  const counterpart = [unit === "sats" ? exactBtc : exactSats, approximateFiat ? `현재 약 ${approximateFiat}` : ""]
+    .filter(Boolean)
+    .join(" · ");
   return {
-    text: unit === "sats"
-      ? `${parsed.sats.toLocaleString("ko-KR")} sats`
-      : `${satsToBtcInput(parsed.sats)} BTC`,
+    text: `${unit === "sats" ? exactSats : exactBtc}${counterpart ? ` (${counterpart})` : ""}`,
     error: "",
   };
 }
@@ -70,13 +98,16 @@ function normalizeMemo(value) {
 
 /**
  * Builds a public recruitment post from standing trade intent only.
- * No market quote, funding-source category or settlement destination is accepted.
+ * Only rounded quote equivalents are accepted; funding-source categories and
+ * settlement destinations are deliberately excluded.
  *
  * @param {{
  *   tradeRole: "buyer" | "seller";
  *   amountUnit: "krw" | "sats" | "btc";
  *   amountInput: string;
  *   sellerPremiumInput: string;
+ *   approximateKrw?: number | null;
+ *   approximateSats?: number | null;
  *   network: "onchain" | "lightning" | "both";
  *   returningTraderEnabled?: boolean;
  *   returningTraderPremiumInput?: string;
@@ -91,7 +122,12 @@ export function buildTradeRecruitmentPost(input) {
     return { text: "", error: "구매 또는 판매를 선택하세요." };
   }
 
-  const amount = formatAmount(input.amountInput, input.amountUnit);
+  const amount = formatAmount(
+    input.amountInput,
+    input.amountUnit,
+    input.approximateKrw,
+    input.approximateSats,
+  );
   if (amount.error) return amount;
 
   const sellerPremium = parsePremium(input.sellerPremiumInput);
@@ -120,11 +156,11 @@ export function buildTradeRecruitmentPost(input) {
 
   const canShareKrwSource = input.tradeRole === "buyer" && input.canShareKrwSource;
   if (canShareKrwSource && input.canVerifyIdentity) {
-    lines.push("원화 출처 공유 및 신원확인 가능합니다.");
+    lines.push("원화 출처 설명과 상호 신원확인 협의 가능합니다.");
   } else if (canShareKrwSource) {
-    lines.push("원화 출처 공유 가능합니다.");
+    lines.push("원화 출처 설명 가능합니다.");
   } else if (input.canVerifyIdentity) {
-    lines.push("신원확인 가능합니다.");
+    lines.push("상호 신원확인 협의 가능합니다.");
   }
 
   const memo = normalizeMemo(input.memo);
@@ -134,18 +170,16 @@ export function buildTradeRecruitmentPost(input) {
 }
 
 /**
- * Keeps manual preview edits intact as recruitment fields change.
+ * Keeps manual preview edits intact when only a live quote changes. Structured
+ * recruitment-field changes can opt into replacing the preview immediately.
  *
- * @param {{ preview: string; previousGenerated: string; nextGenerated: string; outdated?: boolean; force?: boolean }} input
+ * @param {{ preview: string; previousGenerated: string; nextGenerated: string; force?: boolean }} input
  */
 export function syncTradeRecruitmentPreview(input) {
   const replace = Boolean(input.force) || input.preview === input.previousGenerated;
   const preview = replace ? input.nextGenerated : input.preview;
   const dirty = preview !== input.nextGenerated;
-  const generatedChanged = input.previousGenerated !== input.nextGenerated;
-  const wasManuallyEdited = input.preview !== input.previousGenerated;
-  const outdated = dirty && (Boolean(input.outdated) || (generatedChanged && wasManuallyEdited));
-  return { preview, dirty, outdated };
+  return { preview, dirty };
 }
 
 /**
