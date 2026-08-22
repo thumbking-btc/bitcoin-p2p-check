@@ -59,7 +59,7 @@ function formatAmount(value, unit, approximateKrw, approximateSats, bitcoinDispl
     const approximateBitcoin = formatApproximateBitcoin(approximateSats, bitcoinDisplayUnit);
     return {
       text: approximateBitcoin
-        ? `${exactKrw} (현재 약 ${approximateBitcoin})`
+        ? `${exactKrw} (약 ${approximateBitcoin})`
         : exactKrw,
       error: "",
     };
@@ -81,7 +81,7 @@ function formatAmount(value, unit, approximateKrw, approximateSats, bitcoinDispl
   const exactSats = `${parsed.sats.toLocaleString("ko-KR")} sats`;
   const exactBtc = `${satsToBtcInput(parsed.sats)} BTC`;
   const approximateFiat = formatApproximateKrw(approximateKrw);
-  const counterpart = [unit === "sats" ? exactBtc : exactSats, approximateFiat ? `현재 약 ${approximateFiat}` : ""]
+  const counterpart = [unit === "sats" ? exactBtc : exactSats, approximateFiat ? `약 ${approximateFiat}` : ""]
     .filter(Boolean)
     .join(" · ");
   return {

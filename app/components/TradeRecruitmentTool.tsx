@@ -195,7 +195,7 @@ export function TradeRecruitmentTool({
         <a href="#trade-amount">거래 조건 수정 ↑</a>
       </header>
       <p className="recruitment-intro">
-        입력한 금액은 확정 기준으로, 다른 단위는 현재 시세의 약값으로 표시합니다.
+        입력한 금액은 확정 기준으로, 다른 단위는 시세 기준 약값으로 표시합니다.
       </p>
 
       <form className="recruitment-form" onSubmit={(event) => event.preventDefault()}>
