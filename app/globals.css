@@ -132,6 +132,19 @@ a { color: inherit; }
 .share-status.is-idle { color: var(--muted); font-weight: 620; }
 .share-status.is-feedback { color: var(--green); font-weight: 720; }
 .share-status.is-error { color: var(--red); font-weight: 720; }
+.output-picker { margin: 8px clamp(14px, 3vw, 22px) 0; padding: 12px; border: 1px solid var(--ink); background: #f7f3ea; }
+.output-picker fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.output-picker legend { margin-bottom: 8px; color: var(--ink); font-size: 15px; font-weight: 850; }
+.output-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--control-line); background: #fff; }
+.output-options label { position: relative; min-width: 0; cursor: pointer; }
+.output-options label + label { border-left: 1px solid var(--control-line); }
+.output-options input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.output-options span { display: grid; min-height: 58px; align-content: center; gap: 3px; padding: 8px 10px; color: var(--muted); text-align: center; }
+.output-options strong { font-size: 13px; }
+.output-options small { font-size: 10px; font-weight: 680; }
+.output-options label:has(input:checked) span { background: var(--ink); color: #fff; }
+.output-options label:has(input:focus-visible) { position: relative; z-index: 1; outline: 3px solid var(--orange-dark); outline-offset: 2px; }
+.output-panel[hidden] { display: none; }
 .trade-recruitment { margin: 8px clamp(14px, 3vw, 22px) 14px; padding: clamp(14px, 3vw, 20px); border: 1px solid var(--ink); background: #fff; }
 .recruitment-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
 .recruitment-heading h2 { margin: 3px 0 0; font-size: clamp(21px, 4.5vw, 29px); line-height: 1.05; letter-spacing: -.03em; }
@@ -337,6 +350,7 @@ a { color: inherit; }
   .input-with-unit input { padding-inline: 7px; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
+  .output-picker { margin-inline: 12px; }
   .trade-recruitment { margin-inline: 12px; }
   .recruitment-option-list { grid-template-columns: 1fr; }
   .network-fees { margin-inline: 12px; }

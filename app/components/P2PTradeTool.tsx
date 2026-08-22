@@ -15,6 +15,7 @@ type FocusedField = "krw" | "bitcoin" | null;
 type BitcoinDisplayUnit = "btc" | "sats";
 type AmountBasis = "krw" | "bitcoin";
 type AmountInputUnit = "krw" | BitcoinDisplayUnit;
+type OutputMode = "recruitment" | "trade-image";
 type MarketRefreshMode = "initial" | "manual" | "silent";
 type ActiveMarketRefresh = {
   mode: MarketRefreshMode;
@@ -318,6 +319,7 @@ export function P2PTradeTool() {
   const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({ ...DEFAULT_TRADE_DRAFT.fundingSources });
   const [importedTradeLink, setImportedTradeLink] = useState(false);
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
+  const [outputMode, setOutputMode] = useState<OutputMode>("recruitment");
   const [draftHydrated, setDraftHydrated] = useState(false);
   const skipNextDraftPersistence = useRef(true);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
@@ -1156,33 +1158,6 @@ export function P2PTradeTool() {
         </div>
       </article>
 
-      <div className="tool-actions">
-        <button
-          className={`share-button ${backgroundShareImagePreparing ? "is-background-preparing" : ""}`}
-          type="button"
-          onClick={() => void shareTrade()}
-          disabled={!shareImageAllowed || isSharing || (shareImagePreparing && !shareImageFailed)}
-          aria-busy={isSharing || shareImagePreparing}
-        >
-          {isSharing
-            ? "계산 결과 이미지 공유 중"
-            : shareImageFailed
-              ? "계산 결과 이미지 다시 준비"
-              : shareImagePreparing && !backgroundShareImagePreparing
-                ? "계산 결과 이미지 준비 중"
-                : stalePrice
-                  ? "시세 새로고침 후 공유"
-                  : "현재 계산 결과 이미지 공유"}
-        </button>
-        <p
-          className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
-          aria-live="polite"
-          role={shareStatusIsError ? "alert" : undefined}
-        >
-          {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
-        </p>
-      </div>
-
       <section className={`network-fees is-${feeVisualState}`} aria-labelledby="network-fees-title">
         <header>
           <h2 id="network-fees-title">현재 온체인 수수료율<small>· 참고용</small></h2>
@@ -1210,15 +1185,76 @@ export function P2PTradeTool() {
 
       {marketError ? <p className="market-error" role="alert">{marketError}</p> : null}
 
-      <TradeRecruitmentTool
-        tradeRole={tradeRole}
-        amountUnit={amountInputUnit}
-        amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
-        sellerPremiumInput={premiumInput}
-        approximateKrw={quote?.paymentKrw ?? null}
-        approximateSats={quote?.sats ?? null}
-        bitcoinDisplayUnit={bitcoinDisplayUnit}
-      />
+      <section className="output-picker" aria-labelledby="output-picker-title">
+        <fieldset>
+          <legend id="output-picker-title">무엇을 만들까요?</legend>
+          <div className="output-options">
+            <label htmlFor="output-mode-recruitment" aria-label="거래 모집글 만들기. 공개 채널에서 상대를 찾습니다.">
+              <input
+                id="output-mode-recruitment"
+                type="radio"
+                name="output-mode"
+                value="recruitment"
+                checked={outputMode === "recruitment"}
+                onChange={() => setOutputMode("recruitment")}
+              />
+              <span><strong>거래 모집글</strong><small>공개 채널에서 상대 찾기</small></span>
+            </label>
+            <label htmlFor="output-mode-trade-image" aria-label="거래 조건 이미지 만들기. 연락 후 확정 조건을 공유합니다.">
+              <input
+                id="output-mode-trade-image"
+                type="radio"
+                name="output-mode"
+                value="trade-image"
+                checked={outputMode === "trade-image"}
+                onChange={() => setOutputMode("trade-image")}
+              />
+              <span><strong>거래 조건 이미지</strong><small>연락 후 확정 조건 공유</small></span>
+            </label>
+          </div>
+        </fieldset>
+      </section>
+
+      <div className="output-panel" hidden={outputMode !== "trade-image"}>
+        <div className="tool-actions">
+          <button
+            className={`share-button ${backgroundShareImagePreparing ? "is-background-preparing" : ""}`}
+            type="button"
+            onClick={() => void shareTrade()}
+            disabled={!shareImageAllowed || isSharing || (shareImagePreparing && !shareImageFailed)}
+            aria-busy={isSharing || shareImagePreparing}
+          >
+            {isSharing
+              ? "계산 결과 이미지 공유 중"
+              : shareImageFailed
+                ? "계산 결과 이미지 다시 준비"
+                : shareImagePreparing && !backgroundShareImagePreparing
+                  ? "계산 결과 이미지 준비 중"
+                  : stalePrice
+                    ? "시세 새로고침 후 공유"
+                    : "현재 계산 결과 이미지 공유"}
+          </button>
+          <p
+            className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
+            aria-live="polite"
+            role={shareStatusIsError ? "alert" : undefined}
+          >
+            {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
+          </p>
+        </div>
+      </div>
+
+      <div className="output-panel" hidden={outputMode !== "recruitment"}>
+        <TradeRecruitmentTool
+          tradeRole={tradeRole}
+          amountUnit={amountInputUnit}
+          amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
+          sellerPremiumInput={premiumInput}
+          approximateKrw={quote?.paymentKrw ?? null}
+          approximateSats={quote?.sats ?? null}
+          bitcoinDisplayUnit={bitcoinDisplayUnit}
+        />
+      </div>
     </section>
   );
 }

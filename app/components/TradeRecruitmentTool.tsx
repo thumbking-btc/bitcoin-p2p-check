@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildTradeRecruitmentPost,
-  copyTradeRecruitmentText,
+  shareTradeRecruitmentText,
   syncTradeRecruitmentPreview,
 } from "../lib/trade-recruitment.mjs";
 
@@ -78,7 +78,7 @@ export function TradeRecruitmentTool({
   const [canVerifyIdentity, setCanVerifyIdentity] = useState(false);
   const [memo, setMemo] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
-  const [copying, setCopying] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const generated = useMemo(() => buildTradeRecruitmentPost({
     tradeRole,
@@ -169,19 +169,26 @@ export function TradeRecruitmentTool({
     setCopyStatus("");
   }
 
-  async function copyPreview() {
-    if (copying) return;
-    setCopying(true);
+  async function sharePreview() {
+    if (sharing) return;
+    setSharing(true);
     setCopyStatus("");
+    const nativeShare = navigator.share
+      ? (value: string) => navigator.share({ title: "비트코인 P2P 거래 모집", text: value })
+      : null;
     const clipboardWrite = navigator.clipboard?.writeText
       ? navigator.clipboard.writeText.bind(navigator.clipboard)
       : null;
-    const outcome = await copyTradeRecruitmentText(previewText, clipboardWrite, legacyCopy);
-    setCopying(false);
-    setCopyStatus(outcome === "copied"
-      ? "모집글을 복사했습니다."
+    const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
+    setSharing(false);
+    setCopyStatus(outcome === "shared"
+      ? "모집글을 공유했습니다."
+      : outcome === "copied"
+        ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
       : outcome === "empty"
-        ? "복사할 모집글을 입력하세요."
+        ? "공유할 모집글을 입력하세요."
+        : outcome === "cancelled"
+          ? "공유를 취소했습니다."
         : "자동 복사하지 못했습니다. 미리보기에서 직접 선택해 복사하세요.");
   }
 
@@ -319,8 +326,8 @@ export function TradeRecruitmentTool({
         {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
         <div className="recruitment-actions">
           <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
-          <button type="button" className="recruitment-copy" onClick={() => void copyPreview()} disabled={!previewText.trim() || copying}>
-            {copying ? "복사 중" : "모집글 텍스트 복사"}
+          <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
+            {sharing ? "공유 중" : "모집글 공유"}
           </button>
         </div>
         <p

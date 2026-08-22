@@ -10,6 +10,7 @@ import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/ma
 import {
   buildTradeRecruitmentPost,
   copyTradeRecruitmentText,
+  shareTradeRecruitmentText,
   syncTradeRecruitmentPreview,
 } from "../app/lib/trade-recruitment.mjs";
 import {
@@ -281,6 +282,29 @@ test("preserves edited recruitment previews and copies the exact visible text", 
     (value) => { fallbackValue = value; return true; },
   ), "copied");
   assert.equal(fallbackValue, edited);
+
+  let sharedValue = "";
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    async (value) => { sharedValue = value; },
+  ), "shared");
+  assert.equal(sharedValue, edited);
+
+  let copiedAfterFallback = "";
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    null,
+    async (value) => { copiedAfterFallback = value; },
+  ), "copied");
+  assert.equal(copiedAfterFallback, edited);
+
+  let copiedAfterCancel = false;
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    async () => { throw new DOMException("cancelled", "AbortError"); },
+    async () => { copiedAfterCancel = true; },
+  ), "cancelled");
+  assert.equal(copiedAfterCancel, false);
   assert.equal(await copyTradeRecruitmentText("   ", null, null), "empty");
 });
 
@@ -755,6 +779,15 @@ test("renders an editable public recruitment builder without changing the live c
   ]);
   const html = (await response.text()).replace(/<!-- -->/g, "");
 
+  assert.match(html, /<legend id="output-picker-title">무엇을 만들까요\?<\/legend>/);
+  assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
+  assert.match(html, /거래 모집글/);
+  assert.match(html, /공개 채널에서 상대 찾기/);
+  assert.match(html, /거래 조건 이미지/);
+  assert.match(html, /연락 후 확정 조건 공유/);
+  assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
+  assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
+  assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);
   assert.match(html, /<h2 id="trade-recruitment-title">거래 모집글 만들기<\/h2>/);
   assert.equal((html.match(/name="recruitment-network"/g) ?? []).length, 3);
   assert.match(html, />온체인<\/span>/);
@@ -771,7 +804,7 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, /<textarea id="recruitment-preview"[^>]*>/);
   assert.doesNotMatch(html.match(/<textarea id="recruitment-preview"[^>]*>/)?.[0] ?? "", /readonly|disabled/);
   assert.match(html, /자동 문구로 되돌리기/);
-  assert.match(html, /모집글 텍스트 복사/);
+  assert.match(html, /모집글 공유/);
   assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
   assert.match(html, /구매 \/ 300만원 \/ 2% \/ 온체인/);
 
@@ -783,15 +816,17 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /approximateSats=\{quote\?\.sats \?\? null\}/);
   assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
-  assert.match(recruitmentComponent, /copyTradeRecruitmentText\(previewText/);
+  assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
   assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);
-  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| copying\}/);
+  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
   assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
   assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
   const recruitmentImports = recruitmentBuilder.match(/^(?:import[^\n]+\n)+/)?.[0] ?? "";
   assert.doesNotMatch(recruitmentImports, /trade-link|trade-share-image|p2p-quote|market/i);
   assert.match(recruitmentBuilder, /input\.tradeRole === "buyer" && input\.canShareKrwSource/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating \.trade-recruitment \{ visibility: hidden; \}/);
+  assert.match(css, /\.output-options\s*\{[^}]*grid-template-columns:\s*repeat\(2/s);
+  assert.match(css, /\.output-panel\[hidden\]\s*\{\s*display:\s*none/s);
   assert.match(css, /\.recruitment-option-list\s*\{[^}]*grid-template-columns:\s*repeat\(2/s);
   assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
   assert.match(calculator, /wss:\/\/api\.upbit\.com\/websocket\/v1/);

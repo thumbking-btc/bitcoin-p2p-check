@@ -201,11 +201,19 @@ export async function copyTradeRecruitmentText(text, writeText, fallbackCopy) {
   if (typeof text !== "string" || !text.trim()) return "empty";
 
   if (typeof writeText === "function") {
+    let timeoutId;
     try {
-      await writeText(text);
+      await Promise.race([
+        writeText(text),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("clipboard timeout")), 1_200);
+        }),
+      ]);
       return "copied";
     } catch {
       // Some in-app browsers expose Clipboard API but reject the write.
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
@@ -218,4 +226,29 @@ export async function copyTradeRecruitmentText(text, writeText, fallbackCopy) {
   }
 
   return "failed";
+}
+
+/**
+ * Opens the native text share sheet when available and falls back to copying.
+ * Cancelling the share sheet is intentional and must not trigger a copy.
+ *
+ * @param {string} text
+ * @param {((value: string) => Promise<void>) | null | undefined} shareText
+ * @param {((value: string) => Promise<void>) | null | undefined} writeText
+ * @param {((value: string) => boolean) | null | undefined} fallbackCopy
+ * @returns {Promise<"shared" | "copied" | "empty" | "cancelled" | "failed">}
+ */
+export async function shareTradeRecruitmentText(text, shareText, writeText, fallbackCopy) {
+  if (typeof text !== "string" || !text.trim()) return "empty";
+
+  if (typeof shareText === "function") {
+    try {
+      await shareText(text);
+      return "shared";
+    } catch (error) {
+      if (error && typeof error === "object" && error.name === "AbortError") return "cancelled";
+    }
+  }
+
+  return copyTradeRecruitmentText(text, writeText, fallbackCopy);
 }
