@@ -254,6 +254,45 @@ function formatClock(value: string | null | undefined) {
   }).format(date);
 }
 
+function LiveMarketTime({
+  active,
+  tradeObservedAt,
+}: {
+  active: boolean;
+  tradeObservedAt: string | null;
+}) {
+  const [currentTime, setCurrentTime] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+
+    let timer: number | null = null;
+    const tick = () => {
+      const now = Date.now();
+      setCurrentTime(new Date(now).toISOString());
+      timer = window.setTimeout(tick, 1_000 - (now % 1_000));
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer !== null) window.clearTimeout(timer);
+      tick();
+    };
+
+    tick();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [active]);
+
+  return (
+    <span title={active ? `최근 체결: ${formatTime(tradeObservedAt)}` : undefined}>
+      {active ? "실시간 · " : ""}{formatTime(active && currentTime ? currentTime : tradeObservedAt)}
+    </span>
+  );
+}
+
 function formatFeeRate(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
@@ -928,7 +967,9 @@ export function P2PTradeTool() {
           <div className="market-cell">
             <span>{referenceLabel}</span>
             <strong>{formatKrw(referencePrice)} <small>/ BTC</small></strong>
-            <small>{livePriceActive ? "실시간 · " : ""}{formatTime(referenceTime)}</small>
+            <small className="live-market-time">
+              <LiveMarketTime active={livePriceActive} tradeObservedAt={referenceTime} />
+            </small>
           </div>
           <div className="market-cell">
             <span>업비트 프리미엄</span>

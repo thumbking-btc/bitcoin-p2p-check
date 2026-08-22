@@ -46,6 +46,7 @@ a { color: inherit; }
 .market-cell strong { min-width: 0; overflow-wrap: anywhere; font: 820 clamp(14px, 4vw, 20px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .market-cell:last-child strong { color: var(--orange-dark); }
 .market-cell small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.live-market-time { font-variant-numeric: tabular-nums; }
 .stale-warning { margin: 7px 0 0; color: var(--red); font-size: 11px; font-weight: 720; }
 .imported-trade-notice { margin: 7px 0 0; padding: 7px 8px; border-left: 3px solid var(--orange-dark); background: #fff0db; color: var(--ink-soft); font-size: 11px; font-weight: 700; line-height: 1.4; }
 

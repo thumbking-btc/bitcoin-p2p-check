@@ -434,6 +434,11 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /feeRates\?\.halfHour/);
   assert.match(component, /feeRates\?\.hour/);
   assert.match(component, /second:\s*"2-digit"/);
+  assert.match(component, /function LiveMarketTime/);
+  assert.match(component, /window\.setTimeout\(tick, 1_000 - \(now % 1_000\)\)/);
+  assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
+  assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
+  assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
   assert.match(component, /약 1분마다 자동 갱신 ·/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
