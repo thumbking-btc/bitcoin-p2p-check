@@ -264,8 +264,6 @@ function LiveMarketTime({
   const [currentTime, setCurrentTime] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!active) return;
-
     let timer: number | null = null;
     const tick = () => {
       const now = Date.now();
@@ -284,11 +282,11 @@ function LiveMarketTime({
       if (timer !== null) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [active]);
+  }, []);
 
   return (
     <span title={active ? `최근 체결: ${formatTime(tradeObservedAt)}` : undefined}>
-      {active ? "실시간 · " : ""}{formatTime(active && currentTime ? currentTime : tradeObservedAt)}
+      {active ? "실시간" : "연결 중"} · {formatTime(currentTime ?? tradeObservedAt)}
     </span>
   );
 }

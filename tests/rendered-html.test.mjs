@@ -436,6 +436,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /second:\s*"2-digit"/);
   assert.match(component, /function LiveMarketTime/);
   assert.match(component, /window\.setTimeout\(tick, 1_000 - \(now % 1_000\)\)/);
+  assert.match(component, /\{active \? "실시간" : "연결 중"\} · \{formatTime\(currentTime \?\? tradeObservedAt\)\}/);
+  assert.doesNotMatch(component, /const \[currentTime, setCurrentTime\][\s\S]{0,160}if \(!active\) return;/);
   assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
   assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
   assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
