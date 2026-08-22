@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { calculateP2PQuote, MAX_PREMIUM_PERCENT, SATS_PER_BTC } from "../lib/p2p-quote.mjs";
+import {
+  calculateP2PQuote,
+  MAX_PREMIUM_PERCENT,
+  MIN_PREMIUM_PERCENT,
+  SATS_PER_BTC,
+  stepPremiumPercent,
+} from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { INSTALL_INVITE_TRIGGER_EVENT } from "../lib/install-invite.mjs";
@@ -944,6 +950,11 @@ export function P2PTradeTool() {
     setFocusedField(null);
   }
 
+  function adjustPremium(direction: -1 | 1) {
+    const nextPremium = stepPremiumPercent(premiumPercent, direction);
+    if (nextPremium !== null) setPremiumInput(String(nextPremium));
+  }
+
   return (
     <section
       className={`trade-tool ${draftHydrated ? "is-draft-hydrated" : "is-draft-hydrating"}`}
@@ -1040,21 +1051,25 @@ export function P2PTradeTool() {
                 aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
                 aria-invalid={Boolean(bitcoinAmountError) || undefined}
               />
-              <select
-                className="amount-unit-select"
-                value={amountInputUnit}
-                onChange={(event) => changeAmountInputUnit(event.target.value as AmountInputUnit)}
-                aria-label="거래 금액 입력 단위"
-              >
-                <option value="krw">원</option>
-                <option value="sats">sats</option>
-                <option value="btc">BTC</option>
-              </select>
+              <span className="amount-unit-control">
+                <select
+                  className="amount-unit-select"
+                  value={amountInputUnit}
+                  onChange={(event) => changeAmountInputUnit(event.target.value as AmountInputUnit)}
+                  aria-label="거래 금액 입력 단위"
+                  title="원·sats·BTC 단위 변경"
+                >
+                  <option value="krw">원</option>
+                  <option value="sats">sats</option>
+                  <option value="btc">BTC</option>
+                </select>
+                <span className="amount-unit-chevron" aria-hidden="true">▾</span>
+              </span>
             </span>
           </div>
 
-          <label className="field" htmlFor="seller-premium">
-            <span>판매자 프리미엄 (%)</span>
+          <div className="field">
+            <label htmlFor="seller-premium">판매자 프리미엄 (%)</label>
             <span className="input-with-unit">
               <input
                 id="seller-premium"
@@ -1064,9 +1079,29 @@ export function P2PTradeTool() {
                 aria-describedby={`premium-note${premiumError ? " premium-error" : ""}${premiumWarning ? " premium-warning" : ""}`}
                 aria-invalid={Boolean(premiumError) || undefined}
               />
-              <b>%</b>
+              <span className="premium-stepper" role="group" aria-label="판매자 프리미엄 0.01% 단위 조절">
+                <b aria-hidden="true">%</b>
+                <button
+                  type="button"
+                  onClick={() => adjustPremium(1)}
+                  disabled={premiumPercent !== null && premiumPercent >= MAX_PREMIUM_PERCENT}
+                  aria-label="판매자 프리미엄 0.01% 올리기"
+                  title="0.01% 올리기"
+                >
+                  <span aria-hidden="true">▲</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => adjustPremium(-1)}
+                  disabled={premiumPercent !== null && premiumPercent <= MIN_PREMIUM_PERCENT}
+                  aria-label="판매자 프리미엄 0.01% 내리기"
+                  title="0.01% 내리기"
+                >
+                  <span aria-hidden="true">▼</span>
+                </button>
+              </span>
             </span>
-          </label>
+          </div>
           <p className="premium-note" id="premium-note">{premiumSummary}</p>
           {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}

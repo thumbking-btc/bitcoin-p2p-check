@@ -67,8 +67,19 @@ a { color: inherit; }
 .input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid var(--control-line); background: #fff; }
 .input-with-unit input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 9px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: 760 clamp(15px, 4vw, 18px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .input-with-unit b { display: grid; min-width: 42px; min-height: 44px; align-self: stretch; place-items: center; padding: 0 10px; border-left: 1px solid var(--soft); background: #f7f3ea; color: var(--muted); font: 780 11px/1 var(--sans); white-space: nowrap; }
-.amount-unit-select { width: 54px; min-width: 54px; min-height: 44px; align-self: stretch; padding: 0 4px; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1.3 var(--sans); text-align: center; }
+.amount-unit-control { position: relative; display: grid; width: 62px; min-width: 62px; min-height: 44px; align-self: stretch; }
+.amount-unit-select { width: 100%; min-width: 0; min-height: 44px; align-self: stretch; padding: 0 20px 0 6px; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1.3 var(--sans); text-align: center; text-align-last: center; }
+.amount-unit-control:hover .amount-unit-select { background: #eee8dc; color: var(--ink); }
+.amount-unit-chevron { position: absolute; top: 50%; right: 7px; color: var(--orange-dark); font: 900 11px/1 var(--sans); pointer-events: none; transform: translateY(-50%); }
 .amount-unit-select:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: -4px; box-shadow: none; }
+.premium-stepper { display: grid; width: 54px; min-width: 54px; min-height: 44px; align-self: stretch; grid-template-columns: minmax(0, 1fr) 20px; grid-template-rows: repeat(2, minmax(22px, 1fr)); border-left: 1px solid var(--soft); background: #f7f3ea; }
+.premium-stepper b { grid-row: 1 / 3; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; }
+.premium-stepper button { display: grid; min-width: 20px; min-height: 22px; place-items: center; padding: 0; border: 0; border-left: 1px solid var(--soft); background: transparent; color: var(--muted); cursor: pointer; font: 800 8px/1 var(--sans); }
+.premium-stepper button + button { border-top: 1px solid var(--soft); }
+.premium-stepper button:hover:not(:disabled) { background: #e6ded0; color: var(--ink); }
+.premium-stepper button:active:not(:disabled) { background: var(--orange); color: #241303; }
+.premium-stepper button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--orange-dark); outline-offset: -2px; }
+.premium-stepper button:disabled { color: #a8a198; cursor: not-allowed; opacity: .55; }
 .fund-source-field { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.1fr); gap: 10px; align-items: center; }
 .fund-source-field > span { color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }
 .fund-source-field small { margin-left: 5px; color: var(--orange-dark); font-size: 10px; font-weight: 780; }
@@ -349,7 +360,7 @@ a { color: inherit; }
   .tool-heading h1 { font-size: clamp(19px, 5.4vw, 23px); }
   .brand-mark { width: 25px; height: 25px; }
   .market-strip { grid-template-columns: minmax(0, 1.25fr) minmax(112px, .75fr); }
-  .trade-form { grid-template-columns: minmax(0, 1.65fr) minmax(108px, .75fr); }
+  .trade-form { grid-template-columns: minmax(0, 1.65fr) minmax(124px, .75fr); }
   .input-with-unit input { padding-inline: 7px; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
@@ -387,13 +398,17 @@ a { color: inherit; }
   .refresh-button { min-height: 44px; justify-self: end; padding-inline: 4px; font-size: 11px; }
   .role-fieldset legend { gap: 5px; }
   .role-fieldset legend small { font-size: 10px; }
-  .trade-form { grid-template-columns: minmax(0, 1.55fr) minmax(100px, .75fr); gap: 7px; padding: 8px; }
+  .trade-form { grid-template-columns: minmax(0, 1.55fr) minmax(118px, .75fr); gap: 7px; padding: 8px; }
   .fund-source-field { grid-template-columns: minmax(98px, .7fr) minmax(0, 1.3fr); gap: 7px; }
   .fund-source-field small { display: block; margin-left: 0; }
   .fund-source-field select { padding-inline: 8px; }
   .input-with-unit input { padding-inline: 4px; }
   .input-with-unit b { min-width: 36px; padding-inline: 4px; }
-  .amount-unit-select { width: 46px; min-width: 46px; padding-inline: 2px; }
+  .amount-unit-control { width: 52px; min-width: 52px; }
+  .amount-unit-select { padding: 0 16px 0 2px; }
+  .amount-unit-chevron { right: 5px; }
+  .premium-stepper { width: 46px; min-width: 46px; grid-template-columns: minmax(0, 1fr) 18px; }
+  .premium-stepper button { min-width: 18px; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
   .capture-meta { gap: 3px 4px; }

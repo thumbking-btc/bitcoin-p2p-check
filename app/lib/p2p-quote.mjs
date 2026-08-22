@@ -20,6 +20,21 @@ export function isSupportedPremiumPercent(value) {
   return premiumBasisPoints(value) !== null;
 }
 
+export function stepPremiumPercent(value, direction) {
+  if (direction !== -1 && direction !== 1) return null;
+  if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) return null;
+
+  const currentBasisPoints = value === null ? 0 : Math.round(value * 100);
+  if (!Number.isSafeInteger(currentBasisPoints) || (value !== null && currentBasisPoints / 100 !== value)) return null;
+
+  const nextBasisPoints = Math.min(
+    MAX_PREMIUM_BPS,
+    Math.max(MIN_PREMIUM_BPS, currentBasisPoints + direction),
+  );
+  const result = nextBasisPoints / 100;
+  return Object.is(result, -0) ? 0 : result;
+}
+
 function positiveSafeInteger(value, maximum = Number.MAX_SAFE_INTEGER) {
   return typeof value === "number"
     && Number.isSafeInteger(value)

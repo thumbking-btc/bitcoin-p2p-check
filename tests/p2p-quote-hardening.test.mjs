@@ -7,6 +7,7 @@ import {
   MAX_PREMIUM_PERCENT,
   MAX_SATS,
   MIN_PREMIUM_PERCENT,
+  stepPremiumPercent,
 } from "../app/lib/p2p-quote.mjs";
 
 test("calculates both quote directions with exact half-up rounding", () => {
@@ -102,6 +103,19 @@ test("uses one bounded two-decimal premium contract", () => {
     referencePrice: 100_000_000,
     premiumPercent: MAX_PREMIUM_PERCENT,
   })?.sats, 100_000_000);
+});
+
+test("steps the premium by one basis point and clamps at supported boundaries", () => {
+  assert.equal(stepPremiumPercent(2, 1), 2.01);
+  assert.equal(stepPremiumPercent(2, -1), 1.99);
+  assert.equal(stepPremiumPercent(null, 1), 0.01);
+  assert.equal(stepPremiumPercent(null, -1), -0.01);
+  assert.equal(stepPremiumPercent(MAX_PREMIUM_PERCENT, 1), MAX_PREMIUM_PERCENT);
+  assert.equal(stepPremiumPercent(MIN_PREMIUM_PERCENT, -1), MIN_PREMIUM_PERCENT);
+  assert.equal(stepPremiumPercent(1_000, -1), MAX_PREMIUM_PERCENT);
+  assert.equal(stepPremiumPercent(-100, 1), MIN_PREMIUM_PERCENT);
+  assert.equal(stepPremiumPercent(2.001, 1), null);
+  assert.equal(stepPremiumPercent(2, 0), null);
 });
 
 test("fails closed when a rounded result is zero or exceeds its domain", () => {
