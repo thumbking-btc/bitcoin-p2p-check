@@ -1,6 +1,9 @@
 export const SATS_PER_BTC = 100_000_000;
 export const MAX_SATS = 2_100_000_000_000_000;
 
+const MIN_PREMIUM_BPS = -9_999;
+const PREMIUM_STEP_BPS = 10;
+
 function finite(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -11,6 +14,19 @@ function roundedInteger(value, maximum) {
   const rounded = Math.round(value);
   if (rounded <= 0 || rounded > maximum) return null;
   return rounded;
+}
+
+export function stepPremiumPercent(value, direction) {
+  if (direction !== -1 && direction !== 1) return null;
+  if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) return null;
+
+  const currentBasisPoints = value === null ? 0 : Math.round(value * 100);
+  if (!Number.isSafeInteger(currentBasisPoints) || (value !== null && currentBasisPoints / 100 !== value)) return null;
+
+  const nextBasisPoints = Math.max(MIN_PREMIUM_BPS, currentBasisPoints + direction * PREMIUM_STEP_BPS);
+  if (!Number.isSafeInteger(nextBasisPoints)) return null;
+  const result = nextBasisPoints / 100;
+  return Object.is(result, -0) ? 0 : result;
 }
 
 /**

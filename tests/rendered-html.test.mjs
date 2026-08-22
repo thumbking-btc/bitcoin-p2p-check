@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
-import { calculateP2PQuote, MAX_SATS } from "../app/lib/p2p-quote.mjs";
+import { calculateP2PQuote, MAX_SATS, stepPremiumPercent } from "../app/lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../app/lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
 import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
@@ -57,6 +57,16 @@ test("calculates buyer and seller quotes without hiding fees", () => {
   assert.equal(buyerDiscount?.sats, 3_061_224);
   const sellerDiscount = calculateP2PQuote({ mode: "sats", amount: 3_000_000, referencePrice: 100_000_000, premiumPercent: -2 });
   assert.equal(sellerDiscount?.paymentKrw, 2_940_000);
+});
+
+test("steps seller premium controls by one tenth of a percent", () => {
+  assert.equal(stepPremiumPercent(2, 1), 2.1);
+  assert.equal(stepPremiumPercent(2, -1), 1.9);
+  assert.equal(stepPremiumPercent(null, 1), 0.1);
+  assert.equal(stepPremiumPercent(null, -1), -0.1);
+  assert.equal(stepPremiumPercent(-99.99, -1), -99.99);
+  assert.equal(stepPremiumPercent(2.001, 1), null);
+  assert.equal(stepPremiumPercent(2, 0), null);
 });
 
 test("converts the bitcoin input between sats and BTC without changing its value", () => {
@@ -542,8 +552,15 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.field > span:first-child, \.field > label\s*\{/);
   assert.match(css, /\.input-with-unit\s*\{[^}]*display:\s*grid/s);
   assert.match(css, /\.input-with-unit b\s*\{[^}]*border-left:/s);
-  assert.match(css, /\.amount-unit-select\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(component, /className="amount-unit-chevron" aria-hidden="true">▼/);
+  assert.match(component, /판매자 프리미엄 0\.1% 올리기/);
+  assert.match(component, /판매자 프리미엄 0\.1% 내리기/);
+  assert.match(css, /\.amount-unit-control\s*\{[^}]*width:\s*50px;[^}]*min-width:\s*50px/s);
+  assert.match(css, /\.amount-unit-select\s*\{[^}]*width:\s*100%/s);
   assert.match(css, /\.amount-unit-select\s*\{[^}]*font:\s*780 11px\/1\.3 var\(--sans\)/s);
+  assert.match(css, /\.amount-unit-chevron\s*\{[^}]*width:\s*22px[^}]*pointer-events:\s*none/s);
+  assert.match(css, /\.amount-unit-control:focus-within::after\s*\{[^}]*inset:\s*2px[^}]*border:\s*3px solid var\(--orange-dark\)/s);
+  assert.match(css, /\.premium-stepper\s*\{[^}]*width:\s*50px;[^}]*grid-template-rows:\s*repeat\(2/s);
   assert.match(css, /\.fund-source-field\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
