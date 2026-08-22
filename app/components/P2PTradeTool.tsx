@@ -1217,6 +1217,7 @@ export function P2PTradeTool() {
         sellerPremiumInput={premiumInput}
         approximateKrw={quote?.paymentKrw ?? null}
         approximateSats={quote?.sats ?? null}
+        bitcoinDisplayUnit={bitcoinDisplayUnit}
       />
     </section>
   );

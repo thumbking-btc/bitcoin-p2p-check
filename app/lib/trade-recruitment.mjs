@@ -35,13 +35,15 @@ function formatApproximateKrw(value) {
     : `${rounded.toLocaleString("ko-KR")}원`;
 }
 
-function formatApproximateBitcoin(value) {
+function formatApproximateBitcoin(value, unit) {
   const roundedSats = roundToThreeSignificantDigits(Number(value));
   if (roundedSats === null) return "";
-  return `${roundedSats.toLocaleString("ko-KR")} sats · ${satsToBtcInput(roundedSats)} BTC`;
+  return unit === "btc"
+    ? `${satsToBtcInput(roundedSats)} BTC`
+    : `${roundedSats.toLocaleString("ko-KR")} sats`;
 }
 
-function formatAmount(value, unit, approximateKrw, approximateSats) {
+function formatAmount(value, unit, approximateKrw, approximateSats, bitcoinDisplayUnit) {
   const raw = String(value ?? "").replaceAll(",", "").trim();
   if (!raw) return { text: "", error: "위 계산기에서 거래 금액을 입력하세요." };
 
@@ -54,7 +56,7 @@ function formatAmount(value, unit, approximateKrw, approximateSats) {
     const exactKrw = amount % 10_000n === 0n
         ? `${(amount / 10_000n).toLocaleString("ko-KR")}만원`
         : `${amount.toLocaleString("ko-KR")}원`;
-    const approximateBitcoin = formatApproximateBitcoin(approximateSats);
+    const approximateBitcoin = formatApproximateBitcoin(approximateSats, bitcoinDisplayUnit);
     return {
       text: approximateBitcoin
         ? `${exactKrw} (현재 약 ${approximateBitcoin})`
@@ -108,6 +110,7 @@ function normalizeMemo(value) {
  *   sellerPremiumInput: string;
  *   approximateKrw?: number | null;
  *   approximateSats?: number | null;
+ *   bitcoinDisplayUnit?: "sats" | "btc";
  *   network: "onchain" | "lightning" | "both";
  *   returningTraderEnabled?: boolean;
  *   returningTraderPremiumInput?: string;
@@ -127,6 +130,7 @@ export function buildTradeRecruitmentPost(input) {
     input.amountUnit,
     input.approximateKrw,
     input.approximateSats,
+    input.bitcoinDisplayUnit,
   );
   if (amount.error) return amount;
 

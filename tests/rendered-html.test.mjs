@@ -152,13 +152,24 @@ test("builds compact public recruitment posts with exact intent and rounded equi
     amountInput: "1000000",
     sellerPremiumInput: "3",
     approximateSats: 917_345,
+    bitcoinDisplayUnit: "sats",
     network: "both",
     canShareKrwSource: true,
     canVerifyIdentity: true,
   }), {
-    text: "구매 / 100만원 (현재 약 917,000 sats · 0.00917 BTC) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
+    text: "구매 / 100만원 (현재 약 917,000 sats) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
     error: "",
   });
+
+  assert.match(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1000000",
+    sellerPremiumInput: "3",
+    approximateSats: 917_345,
+    bitcoinDisplayUnit: "btc",
+    network: "onchain",
+  }).text, /100만원 \(현재 약 0\.00917 BTC\)/);
 
   assert.deepEqual(buildTradeRecruitmentPost({
     tradeRole: "seller",
@@ -770,6 +781,7 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /sellerPremiumInput=\{premiumInput\}/);
   assert.match(integration, /approximateKrw=\{quote\?\.paymentKrw \?\? null\}/);
   assert.match(integration, /approximateSats=\{quote\?\.sats \?\? null\}/);
+  assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /copyTradeRecruitmentText\(previewText/);
   assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);

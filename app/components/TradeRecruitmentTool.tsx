@@ -18,6 +18,7 @@ type TradeRecruitmentToolProps = {
   sellerPremiumInput: string;
   approximateKrw: number | null;
   approximateSats: number | null;
+  bitcoinDisplayUnit: "sats" | "btc";
 };
 
 function signedDecimalOnly(value: string) {
@@ -68,6 +69,7 @@ export function TradeRecruitmentTool({
   sellerPremiumInput,
   approximateKrw,
   approximateSats,
+  bitcoinDisplayUnit,
 }: TradeRecruitmentToolProps) {
   const [network, setNetwork] = useState<TransferNetwork>("onchain");
   const [returningTraderEnabled, setReturningTraderEnabled] = useState(false);
@@ -85,6 +87,7 @@ export function TradeRecruitmentTool({
     sellerPremiumInput,
     approximateKrw,
     approximateSats,
+    bitcoinDisplayUnit,
     network,
     returningTraderEnabled,
     returningTraderPremiumInput,
@@ -96,6 +99,7 @@ export function TradeRecruitmentTool({
     amountUnit,
     approximateKrw,
     approximateSats,
+    bitcoinDisplayUnit,
     canShareKrwSource,
     canVerifyIdentity,
     memo,
@@ -110,6 +114,7 @@ export function TradeRecruitmentTool({
     amountUnit,
     amountInput,
     sellerPremiumInput,
+    bitcoinDisplayUnit,
     network,
     returningTraderEnabled,
     returningTraderPremiumInput,
@@ -126,6 +131,7 @@ export function TradeRecruitmentTool({
     returningTraderEnabled,
     returningTraderPremiumInput,
     sellerPremiumInput,
+    bitcoinDisplayUnit,
     tradeRole,
   ]);
   const [previewText, setPreviewText] = useState(generated.text);
