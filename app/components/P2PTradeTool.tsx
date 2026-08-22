@@ -1063,7 +1063,7 @@ export function P2PTradeTool() {
                   <option value="sats">sats</option>
                   <option value="btc">BTC</option>
                 </select>
-                <span className="amount-unit-chevron" aria-hidden="true">▾</span>
+                <span className="amount-unit-chevron" aria-hidden="true">▼</span>
               </span>
             </span>
           </div>
