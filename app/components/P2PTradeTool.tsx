@@ -1079,14 +1079,14 @@ export function P2PTradeTool() {
                 aria-describedby={`premium-note${premiumError ? " premium-error" : ""}${premiumWarning ? " premium-warning" : ""}`}
                 aria-invalid={Boolean(premiumError) || undefined}
               />
-              <span className="premium-stepper" role="group" aria-label="판매자 프리미엄 0.01% 단위 조절">
+              <span className="premium-stepper" role="group" aria-label="판매자 프리미엄 0.1% 단위 조절">
                 <b aria-hidden="true">%</b>
                 <button
                   type="button"
                   onClick={() => adjustPremium(1)}
                   disabled={premiumPercent !== null && premiumPercent >= MAX_PREMIUM_PERCENT}
-                  aria-label="판매자 프리미엄 0.01% 올리기"
-                  title="0.01% 올리기"
+                  aria-label="판매자 프리미엄 0.1% 올리기"
+                  title="0.1% 올리기"
                 >
                   <span aria-hidden="true">▲</span>
                 </button>
@@ -1094,8 +1094,8 @@ export function P2PTradeTool() {
                   type="button"
                   onClick={() => adjustPremium(-1)}
                   disabled={premiumPercent !== null && premiumPercent <= MIN_PREMIUM_PERCENT}
-                  aria-label="판매자 프리미엄 0.01% 내리기"
-                  title="0.01% 내리기"
+                  aria-label="판매자 프리미엄 0.1% 내리기"
+                  title="0.1% 내리기"
                 >
                   <span aria-hidden="true">▼</span>
                 </button>

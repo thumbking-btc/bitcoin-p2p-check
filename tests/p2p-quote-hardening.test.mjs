@@ -105,15 +105,15 @@ test("uses one bounded two-decimal premium contract", () => {
   })?.sats, 100_000_000);
 });
 
-test("steps the premium by one basis point and clamps at supported boundaries", () => {
-  assert.equal(stepPremiumPercent(2, 1), 2.01);
-  assert.equal(stepPremiumPercent(2, -1), 1.99);
-  assert.equal(stepPremiumPercent(null, 1), 0.01);
-  assert.equal(stepPremiumPercent(null, -1), -0.01);
+test("steps the premium by one tenth of a percent and clamps at supported boundaries", () => {
+  assert.equal(stepPremiumPercent(2, 1), 2.1);
+  assert.equal(stepPremiumPercent(2, -1), 1.9);
+  assert.equal(stepPremiumPercent(null, 1), 0.1);
+  assert.equal(stepPremiumPercent(null, -1), -0.1);
   assert.equal(stepPremiumPercent(MAX_PREMIUM_PERCENT, 1), MAX_PREMIUM_PERCENT);
   assert.equal(stepPremiumPercent(MIN_PREMIUM_PERCENT, -1), MIN_PREMIUM_PERCENT);
-  assert.equal(stepPremiumPercent(1_000, -1), MAX_PREMIUM_PERCENT);
-  assert.equal(stepPremiumPercent(-100, 1), MIN_PREMIUM_PERCENT);
+  assert.equal(stepPremiumPercent(1_000, -1), 999.9);
+  assert.equal(stepPremiumPercent(-100, 1), -99.9);
   assert.equal(stepPremiumPercent(2.001, 1), null);
   assert.equal(stepPremiumPercent(2, 0), null);
 });

@@ -4,6 +4,7 @@ export const MIN_PREMIUM_PERCENT = -99.99;
 export const MAX_PREMIUM_PERCENT = 999.99;
 
 const PREMIUM_SCALE = 10_000n;
+const PREMIUM_STEP_BPS = 10;
 const MIN_PREMIUM_BPS = -9_999;
 const MAX_PREMIUM_BPS = 99_999;
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
@@ -29,7 +30,7 @@ export function stepPremiumPercent(value, direction) {
 
   const nextBasisPoints = Math.min(
     MAX_PREMIUM_BPS,
-    Math.max(MIN_PREMIUM_BPS, currentBasisPoints + direction),
+    Math.max(MIN_PREMIUM_BPS, currentBasisPoints + direction * PREMIUM_STEP_BPS),
   );
   const result = nextBasisPoints / 100;
   return Object.is(result, -0) ? 0 : result;
