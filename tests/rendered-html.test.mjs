@@ -8,6 +8,11 @@ import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
 import {
+  buildTradeRecruitmentPost,
+  copyTradeRecruitmentText,
+  syncTradeRecruitmentPreview,
+} from "../app/lib/trade-recruitment.mjs";
+import {
   readTradeDraft,
   TRADE_DRAFT_MAX_RAW_LENGTH,
   TRADE_DRAFT_STORAGE_KEY,
@@ -138,6 +143,132 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   );
   assert.equal(getTradeRecipientLabel("buyer"), "구매자가 받음");
   assert.equal(getTradeRecipientLabel("seller"), "판매자가 받음");
+});
+
+test("builds compact Discord recruitment posts from KRW, sats, or BTC intent", () => {
+  assert.deepEqual(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1000000",
+    sellerPremiumInput: "3",
+    network: "both",
+    canShareKrwSource: true,
+    canVerifyIdentity: true,
+  }), {
+    text: "구매 / 100만원 / 3% / 온체인·라이트닝\n원화 출처 공유 및 신원확인 가능합니다.\nDM 부탁드립니다.",
+    error: "",
+  });
+
+  assert.deepEqual(buildTradeRecruitmentPost({
+    tradeRole: "seller",
+    amountUnit: "sats",
+    amountInput: "3000000",
+    sellerPremiumInput: "3",
+    network: "lightning",
+    returningTraderEnabled: true,
+    returningTraderPremiumInput: "2.5",
+    memo: "첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.",
+  }), {
+    text: "판매 / 3,000,000 sats / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
+    error: "",
+  });
+
+  assert.equal(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "btc",
+    amountInput: "0.10000000",
+    sellerPremiumInput: "2",
+    network: "onchain",
+  }).text, "구매 / 0.1 BTC / 2% / 온체인\nDM 부탁드립니다.");
+  assert.equal(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "btc",
+    amountInput: "0.00000001",
+    sellerPremiumInput: "2",
+    network: "onchain",
+  }).text, "구매 / 0.00000001 BTC / 2% / 온체인\nDM 부탁드립니다.");
+});
+
+test("validates recruitment discounts and excludes settlement-only details", () => {
+  const base = {
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1234567",
+    sellerPremiumInput: "3",
+    network: "onchain",
+  };
+  assert.match(buildTradeRecruitmentPost({ ...base, amountInput: "0" }).error, /0보다/);
+  assert.match(buildTradeRecruitmentPost({ ...base, amountUnit: "btc", amountInput: "0.000000001" }).error, /8자리/);
+  assert.match(buildTradeRecruitmentPost({ ...base, sellerPremiumInput: "-100" }).error, /-100%/);
+  assert.match(buildTradeRecruitmentPost({ ...base, sellerPremiumInput: "-0" }).text, /\/ 0% \//);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "" }).error, /우대 프리미엄/);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "3" }).error, /낮아야/);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "3.5" }).error, /낮아야/);
+
+  for (const [network, label] of [["onchain", "온체인"], ["lightning", "라이트닝"], ["both", "온체인·라이트닝"]]) {
+    assert.match(buildTradeRecruitmentPost({ ...base, network }).text, new RegExp(`${label}\\nDM 부탁드립니다\\.$`));
+  }
+
+  const publicPost = buildTradeRecruitmentPost({
+    ...base,
+    fundingSource: "근로소득",
+    address: "bc1qexample",
+    invoice: "lnbc1example",
+    qr: "secret",
+    paymentRequest: "secret",
+  }).text;
+  assert.equal(publicPost, "구매 / 1,234,567원 / 3% / 온체인\nDM 부탁드립니다.");
+  assert.doesNotMatch(publicPost, /근로소득|bc1|lnbc|주소|인보이스|QR|지급 ?요청|업비트|계산 시각|구매자 → 판매자|온체인 수수료/);
+
+  const sellerPost = buildTradeRecruitmentPost({
+    ...base,
+    tradeRole: "seller",
+    canShareKrwSource: true,
+    canVerifyIdentity: true,
+  }).text;
+  assert.equal(sellerPost, "판매 / 1,234,567원 / 3% / 온체인\n신원확인 가능합니다.\nDM 부탁드립니다.");
+  assert.doesNotMatch(sellerPost, /원화 출처/);
+});
+
+test("preserves edited recruitment previews and copies the exact visible text", async () => {
+  const previousGenerated = "구매 / 100만원 / 3% / 온체인\nDM 부탁드립니다.";
+  const nextGenerated = "구매 / 100만원 / 3% / 라이트닝\nDM 부탁드립니다.";
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: previousGenerated,
+    previousGenerated,
+    nextGenerated,
+  }), { preview: nextGenerated, dirty: false, outdated: false });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated: previousGenerated,
+  }), { preview: "직접 편집한 모집글", dirty: true, outdated: false });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated,
+  }), { preview: "직접 편집한 모집글", dirty: true, outdated: true });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated,
+    outdated: true,
+    force: true,
+  }), { preview: nextGenerated, dirty: false, outdated: false });
+
+  const edited = "  편집한 모집글\n그대로  ";
+  let clipboardValue = "";
+  assert.equal(await copyTradeRecruitmentText(edited, async (value) => { clipboardValue = value; }), "copied");
+  assert.equal(clipboardValue, edited);
+
+  let fallbackValue = "";
+  assert.equal(await copyTradeRecruitmentText(
+    edited,
+    async () => { throw new Error("blocked"); },
+    (value) => { fallbackValue = value; return true; },
+  ), "copied");
+  assert.equal(fallbackValue, edited);
+  assert.equal(await copyTradeRecruitmentText("   ", null, null), "empty");
 });
 
 test("suppresses a dismissed install invitation for one day", () => {
@@ -599,6 +730,53 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.ok(fundingFieldPosition < fundingNotePosition);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
+});
+
+test("renders an editable public recruitment builder without changing the live calculator path", async () => {
+  const [response, recruitmentComponent, recruitmentBuilder, calculator, css] = await Promise.all([
+    render(),
+    readFile(new URL("../app/components/TradeRecruitmentTool.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-recruitment.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const html = (await response.text()).replace(/<!-- -->/g, "");
+
+  assert.match(html, /<h2 id="trade-recruitment-title">거래 모집글 만들기<\/h2>/);
+  assert.equal((html.match(/name="recruitment-network"/g) ?? []).length, 3);
+  assert.match(html, />온체인<\/span>/);
+  assert.match(html, />라이트닝<\/span>/);
+  assert.match(html, />둘 다<\/span>/);
+  assert.match(html, /기존 거래자 우대 프리미엄/);
+  assert.match(html, /원화 출처 공유 가능/);
+  assert.match(html, /신원확인 가능/);
+  assert.match(html, /추가 조건·메모/);
+  assert.match(html, /편집 가능한 모집글 미리보기/);
+  assert.match(html, /<textarea id="recruitment-preview"[^>]*>/);
+  assert.doesNotMatch(html.match(/<textarea id="recruitment-preview"[^>]*>/)?.[0] ?? "", /readonly|disabled/);
+  assert.match(html, /입력값으로 다시 만들기/);
+  assert.match(html, /모집글 복사/);
+  assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
+  assert.match(html, /구매 \/ 300만원 \/ 2% \/ 온체인/);
+
+  const integration = calculator.match(/<TradeRecruitmentTool[\s\S]*?\/>/)?.[0] ?? "";
+  assert.match(integration, /tradeRole=\{tradeRole\}/);
+  assert.match(integration, /amountUnit=\{amountInputUnit\}/);
+  assert.match(integration, /sellerPremiumInput=\{premiumInput\}/);
+  assert.doesNotMatch(integration, /fundingSource|quote|market|address|invoice|qr|payment/i);
+  assert.match(recruitmentComponent, /copyTradeRecruitmentText\(previewText/);
+  assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);
+  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| copying \|\| previewOutdated\}/);
+  assert.match(recruitmentComponent, /거래 조건이 바뀌어 다시 만들기 필요/);
+  assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
+  const recruitmentImports = recruitmentBuilder.match(/^(?:import[^\n]+\n)+/)?.[0] ?? "";
+  assert.doesNotMatch(recruitmentImports, /trade-link|trade-share-image|p2p-quote|market/i);
+  assert.match(recruitmentBuilder, /input\.tradeRole === "buyer" && input\.canShareKrwSource/);
+  assert.match(css, /\.trade-tool\.is-draft-hydrating \.trade-recruitment \{ visibility: hidden; \}/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
+  assert.match(calculator, /wss:\/\/api\.upbit\.com\/websocket\/v1/);
+  assert.match(calculator, /requestMarketSnapshot\(includePrice\)/);
+  assert.match(calculator, /calculateP2PQuote\(\{/);
 });
 
 test("renders creator identity and Lightning support details", async () => {

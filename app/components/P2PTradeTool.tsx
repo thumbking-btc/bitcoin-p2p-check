@@ -8,6 +8,7 @@ import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
+import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
@@ -1208,6 +1209,13 @@ export function P2PTradeTool() {
       </section>
 
       {marketError ? <p className="market-error" role="alert">{marketError}</p> : null}
+
+      <TradeRecruitmentTool
+        tradeRole={tradeRole}
+        amountUnit={amountInputUnit}
+        amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
+        sellerPremiumInput={premiumInput}
+      />
     </section>
   );
 }

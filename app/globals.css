@@ -19,7 +19,7 @@
 * { box-sizing: border-box; }
 html { background: var(--paper); color: var(--ink); scroll-behavior: smooth; }
 body { min-width: 0; margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, summary, label { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
@@ -27,7 +27,8 @@ a { color: inherit; }
 .trade-tool { border: 1px solid var(--ink); background: var(--surface); box-shadow: 7px 7px 0 rgba(17, 24, 32, .12); }
 .trade-tool.is-draft-hydrating .role-fieldset,
 .trade-tool.is-draft-hydrating .trade-form,
-.trade-tool.is-draft-hydrating .trade-result { visibility: hidden; }
+.trade-tool.is-draft-hydrating .trade-result,
+.trade-tool.is-draft-hydrating .trade-recruitment { visibility: hidden; }
 .capture-card { padding: clamp(14px, 3vw, 22px); }
 .tool-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .brand-line { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -131,6 +132,54 @@ a { color: inherit; }
 .share-status.is-idle { color: var(--muted); font-weight: 620; }
 .share-status.is-feedback { color: var(--green); font-weight: 720; }
 .share-status.is-error { color: var(--red); font-weight: 720; }
+.trade-recruitment { margin: 8px clamp(14px, 3vw, 22px) 14px; padding: clamp(14px, 3vw, 20px); border: 1px solid var(--ink); background: #fff; }
+.recruitment-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.recruitment-heading h2 { margin: 3px 0 0; font-size: clamp(21px, 4.5vw, 29px); line-height: 1.05; letter-spacing: -.03em; }
+.recruitment-heading a { display: inline-flex; min-height: 44px; align-items: center; color: var(--orange-dark); font-size: 11px; font-weight: 800; text-underline-offset: 3px; white-space: nowrap; }
+.recruitment-heading a:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 3px; }
+.recruitment-intro { margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.recruitment-form { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); background: #f7f3ea; }
+.recruitment-network { min-width: 0; margin: 0; padding: 0; border: 0; }
+.recruitment-network legend, .recruitment-memo > span, .returning-premium > span:first-child { margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 780; line-height: 1.3; }
+.recruitment-network > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--control-line); background: #fff; }
+.recruitment-network label { position: relative; min-width: 0; cursor: pointer; }
+.recruitment-network label + label { border-left: 1px solid var(--control-line); }
+.recruitment-network input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.recruitment-network label span { display: grid; min-height: 44px; place-items: center; padding: 7px; color: var(--muted); font-size: 12px; font-weight: 780; text-align: center; }
+.recruitment-network label:has(input:checked) span { background: var(--ink); color: #fff; }
+.recruitment-network label:has(input:focus-visible), .recruitment-check:has(input:focus-visible) { position: relative; z-index: 1; outline: 3px solid var(--orange-dark); outline-offset: 2px; }
+.recruitment-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.recruitment-check { display: flex; min-height: 44px; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid var(--control-line); background: #fff; color: var(--ink); cursor: pointer; font-size: 12px; font-weight: 720; line-height: 1.35; }
+.recruitment-check input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--orange-dark); }
+.returning-premium { display: grid; min-width: 0; grid-column: 1 / -1; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.1fr); gap: 10px; align-items: center; }
+.returning-premium > span:first-child { margin: 0; }
+.returning-premium .input-with-unit input { font-size: 16px; }
+.recruitment-memo { display: grid; min-width: 0; }
+.recruitment-memo > span { display: block; }
+.recruitment-memo small { margin-left: 4px; color: var(--orange-dark); font-size: 10px; }
+.recruitment-memo textarea, .recruitment-preview textarea { width: 100%; min-width: 0; resize: vertical; border: 1px solid var(--control-line); border-radius: 0; background: #fff; color: var(--ink); font-size: 14px; line-height: 1.55; }
+.recruitment-memo textarea { min-height: 76px; padding: 9px 10px; }
+.recruitment-memo textarea:focus-visible, .recruitment-preview textarea:focus-visible { outline: 3px solid var(--orange-dark); outline-offset: 2px; }
+.recruitment-privacy-note { margin: 9px 0 0; padding: 8px 10px; border-left: 3px solid var(--orange-dark); background: #fff0db; color: var(--muted); font-size: 11px; font-weight: 680; line-height: 1.5; }
+.recruitment-preview { display: grid; gap: 8px; margin-top: 12px; padding: 12px; background: var(--ink); color: #fff; }
+.recruitment-preview > label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.recruitment-preview > label span { font-size: 13px; font-weight: 820; }
+.recruitment-preview > label small { color: #ffc46f; font-size: 10px; font-weight: 720; text-align: right; }
+.recruitment-preview textarea { min-height: 132px; padding: 10px 11px; font-family: var(--sans); }
+.recruitment-preview textarea:focus-visible { outline-color: #ffc46f; }
+.recruitment-error, .recruitment-outdated { margin: 0; padding: 7px 9px; font-size: 11px; font-weight: 720; line-height: 1.4; }
+.recruitment-error { border-left: 3px solid #ff8e85; background: #442925; color: #ffd8d4; }
+.recruitment-outdated { border-left: 3px solid #ffc46f; background: #3f372a; color: #ffe2b8; }
+.recruitment-actions { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 8px; }
+.recruitment-actions button { min-height: 46px; padding: 8px 10px; border-radius: 0; cursor: pointer; font-size: 12px; font-weight: 800; }
+.recruitment-actions button:first-child { border: 1px solid #687681; background: #27323c; color: #f5f0e3; }
+.recruitment-actions button:first-child:hover:not(:disabled) { border-color: #aeb8c1; background: #35414b; }
+.recruitment-actions .recruitment-copy { border: 1px solid var(--orange); background: var(--orange); color: #241303; }
+.recruitment-actions .recruitment-copy:hover:not(:disabled) { background: #ffab45; }
+.recruitment-actions button:focus-visible { outline: 3px solid #ffc46f; outline-offset: 2px; }
+.recruitment-actions button:disabled { border-color: #596571; background: #35414b; color: #9da8b1; cursor: not-allowed; }
+.recruitment-copy-status { min-height: 15px; margin: 0; color: #9ee3cf; font-size: 10px; font-weight: 720; line-height: 1.4; text-align: center; }
+.recruitment-copy-status.is-error { color: #ffb3ad; }
 .network-fees { margin: 0 clamp(14px, 3vw, 22px) 14px; border: 1px solid var(--control-line); background: #f7f3ea; }
 .network-fees > header { display: flex; min-height: 25px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
 .network-fees h2, .network-fees-status p { margin: 0; }
@@ -283,6 +332,7 @@ a { color: inherit; }
   .input-with-unit input { padding-inline: 7px; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
+  .trade-recruitment { margin-inline: 12px; }
   .network-fees { margin-inline: 12px; }
   .network-fees > header { display: grid; grid-template-columns: 1fr; gap: 2px; }
   .network-fees-status { justify-content: space-between; }
@@ -325,6 +375,12 @@ a { color: inherit; }
   .premium-stepper { width: 48px; min-width: 48px; grid-template-columns: minmax(0, 1fr) 20px; }
   .premium-stepper b { min-width: 0; }
   .premium-stepper button { min-width: 20px; font-size: 12px; }
+  .recruitment-heading { align-items: start; }
+  .recruitment-heading a { min-height: 44px; }
+  .recruitment-form, .recruitment-preview { padding: 10px; }
+  .recruitment-options { grid-template-columns: 1fr; }
+  .returning-premium { grid-template-columns: minmax(104px, .75fr) minmax(0, 1.25fr); }
+  .recruitment-actions { grid-template-columns: 1fr; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
   .capture-meta { gap: 3px 4px; }
@@ -339,7 +395,7 @@ a { color: inherit; }
 }
 
 @media (max-width: 700px) {
-  .input-with-unit input, .fund-source-field select { font-size: 16px; }
+  .input-with-unit input, .fund-source-field select, .recruitment-memo textarea, .recruitment-preview textarea { font-size: 16px; }
 }
 
 @media (max-width: 760px) {
