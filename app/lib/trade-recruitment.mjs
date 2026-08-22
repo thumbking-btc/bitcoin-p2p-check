@@ -35,12 +35,19 @@ function formatApproximateKrw(value) {
     : `${rounded.toLocaleString("ko-KR")}원`;
 }
 
+function formatSats(value, allowFractionalMan = false) {
+  if (value >= 10_000 && (allowFractionalMan || value % 10_000 === 0)) {
+    return `${(value / 10_000).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}만 sats`;
+  }
+  return `${value.toLocaleString("ko-KR")} sats`;
+}
+
 function formatApproximateBitcoin(value, unit) {
   const roundedSats = roundToThreeSignificantDigits(Number(value));
   if (roundedSats === null) return "";
   return unit === "btc"
     ? `${satsToBtcInput(roundedSats)} BTC`
-    : `${roundedSats.toLocaleString("ko-KR")} sats`;
+    : formatSats(roundedSats, true);
 }
 
 function formatAmount(value, unit, approximateKrw, approximateSats, bitcoinDisplayUnit) {
@@ -78,14 +85,12 @@ function formatAmount(value, unit, approximateKrw, approximateSats, bitcoinDispl
   }
   if (parsed.sats <= 0) return { text: "", error: "거래 금액은 0보다 커야 합니다." };
 
-  const exactSats = `${parsed.sats.toLocaleString("ko-KR")} sats`;
+  const exactSats = formatSats(parsed.sats);
   const exactBtc = `${satsToBtcInput(parsed.sats)} BTC`;
   const approximateFiat = formatApproximateKrw(approximateKrw);
-  const counterpart = [unit === "sats" ? exactBtc : exactSats, approximateFiat ? `약 ${approximateFiat}` : ""]
-    .filter(Boolean)
-    .join(" · ");
+  const exactBitcoin = unit === "sats" ? exactSats : exactBtc;
   return {
-    text: `${unit === "sats" ? exactSats : exactBtc}${counterpart ? ` (${counterpart})` : ""}`,
+    text: `${exactBitcoin}${approximateFiat ? ` (약 ${approximateFiat})` : ""}`,
     error: "",
   };
 }

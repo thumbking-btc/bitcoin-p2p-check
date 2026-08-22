@@ -157,7 +157,7 @@ test("builds compact public recruitment posts with exact intent and rounded equi
     canShareKrwSource: true,
     canVerifyIdentity: true,
   }), {
-    text: "구매 / 100만원 (약 917,000 sats) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
+    text: "구매 / 100만원 (약 91.7만 sats) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
     error: "",
   });
 
@@ -182,7 +182,7 @@ test("builds compact public recruitment posts with exact intent and rounded equi
     returningTraderPremiumInput: "2.5",
     memo: "첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.",
   }), {
-    text: "판매 / 3,000,000 sats (0.03 BTC · 약 327만원) / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
+    text: "판매 / 300만 sats (약 327만원) / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
     error: "",
   });
 
@@ -193,14 +193,14 @@ test("builds compact public recruitment posts with exact intent and rounded equi
     sellerPremiumInput: "2",
     approximateKrw: 10_923_456,
     network: "onchain",
-  }).text, "구매 / 0.1 BTC (10,000,000 sats · 약 1,090만원) / 2% / 온체인\nDM 부탁드립니다.");
+  }).text, "구매 / 0.1 BTC (약 1,090만원) / 2% / 온체인\nDM 부탁드립니다.");
   assert.equal(buildTradeRecruitmentPost({
     tradeRole: "buyer",
     amountUnit: "btc",
     amountInput: "0.00000001",
     sellerPremiumInput: "2",
     network: "onchain",
-  }).text, "구매 / 0.00000001 BTC (1 sats) / 2% / 온체인\nDM 부탁드립니다.");
+  }).text, "구매 / 0.00000001 BTC / 2% / 온체인\nDM 부탁드립니다.");
 });
 
 test("validates recruitment discounts and excludes settlement-only details", () => {
