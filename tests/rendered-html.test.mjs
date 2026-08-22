@@ -427,7 +427,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(api, /FEE_FRESH_CACHE_SECONDS = 60/);
   assert.match(api, /fees-backoff/);
   assert.doesNotMatch(api, /Coinbase|coinbaseKrwGap|frankfurter/i);
-  assert.match(component, /fetch\("\/api\/market", \{ cache: "no-store" \}\)/);
+  assert.match(component, /fetch\(`\/api\/market\?price=\$\{includePrice \? "1" : "0"\}`, \{ cache: "no-store" \}\)/);
   assert.match(component, /시세 새로고침/);
   assert.match(component, /현재 온체인 수수료율/);
   assert.match(component, /feeRates\?\.nextBlock/);
@@ -437,14 +437,15 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /약 1분마다 자동 갱신 ·/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
-  assert.match(component, /getMarketRefreshDelay\(lastMarketRefreshAtRef\.current\)/);
+  assert.match(component, /const marketRefreshIntervalMs = livePriceActive[\s\S]*MARKET_REFRESH_WITH_LIVE_PRICE_MS[\s\S]*MARKET_REFRESH_FALLBACK_MS/);
+  assert.match(component, /const getRefreshDelay = \(\) => \{[\s\S]*lastMarketRefreshAtRef\.current[\s\S]*marketRefreshIntervalMs - elapsed/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /if \(activeRefresh\) \{[\s\S]*return activeRefresh\.promise/);
   assert.match(component, /marketRequestRef\.current === refresh/);
   assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
-  assert.match(component, /pendingMarketSnapshotRef\.current = data/);
+  assert.match(component, /pendingMarketSnapshotRef\.current = nextData/);
   assert.match(component, /applyMarketSnapshot\(pendingSnapshot, true\)/);
   assert.match(component, /preparedShareFormKeyRef\.current !== shareFormKey/);
   assert.match(component, /setShareStatus\(\(current\) => formChanged/);
@@ -555,7 +556,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /className="amount-unit-chevron" aria-hidden="true">▼/);
   assert.match(component, /판매자 프리미엄 0\.1% 올리기/);
   assert.match(component, /판매자 프리미엄 0\.1% 내리기/);
-  assert.match(css, /\.amount-unit-control\s*\{[^}]*width:\s*50px;[^}]*min-width:\s*50px/s);
+  assert.match(css, /\.amount-unit-control\s*\{[^}]*width:\s*56px;[^}]*min-width:\s*56px/s);
   assert.match(css, /\.amount-unit-select\s*\{[^}]*width:\s*100%/s);
   assert.match(css, /\.amount-unit-select\s*\{[^}]*font:\s*780 11px\/1\.3 var\(--sans\)/s);
   assert.match(css, /\.amount-unit-chevron\s*\{[^}]*width:\s*22px[^}]*pointer-events:\s*none/s);
@@ -684,7 +685,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-v3/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-v4/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);

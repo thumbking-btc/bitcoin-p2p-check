@@ -67,7 +67,7 @@ a { color: inherit; }
 .input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid var(--control-line); background: #fff; }
 .input-with-unit input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 9px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: 760 clamp(15px, 4vw, 18px)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .input-with-unit b { display: grid; min-width: 42px; min-height: 44px; align-self: stretch; place-items: center; padding: 0 10px; border-left: 1px solid var(--soft); background: #f7f3ea; color: var(--muted); font: 780 11px/1 var(--sans); white-space: nowrap; }
-.amount-unit-control { position: relative; display: grid; width: 50px; min-width: 50px; min-height: 44px; align-self: stretch; }
+.amount-unit-control { position: relative; display: grid; width: 56px; min-width: 56px; min-height: 44px; align-self: stretch; }
 .amount-unit-select { width: 100%; min-width: 0; min-height: 44px; align-self: stretch; padding: 0 22px 0 0; border: 0; border-left: 1px solid var(--soft); border-radius: 0; appearance: none; background: #f7f3ea; color: var(--muted); cursor: pointer; font: 780 11px/1.3 var(--sans); text-align: center; text-align-last: center; }
 .amount-unit-control:hover .amount-unit-select { background: #eee8dc; color: var(--ink); }
 .amount-unit-chevron { position: absolute; inset: 0 0 0 auto; display: grid; width: 22px; place-items: center; border-left: 1px solid var(--soft); background: #f7f3ea; color: var(--orange-dark); font: 900 16px/1 var(--sans); pointer-events: none; }
@@ -318,7 +318,7 @@ a { color: inherit; }
   .fund-source-field select { padding-inline: 8px; }
   .input-with-unit input { padding-inline: 4px; }
   .input-with-unit b { min-width: 36px; padding-inline: 4px; }
-  .amount-unit-control { width: 48px; min-width: 48px; }
+  .amount-unit-control { width: 54px; min-width: 54px; }
   .amount-unit-select { padding: 0 20px 0 0; }
   .amount-unit-chevron { width: 20px; font-size: 15px; }
   .premium-stepper { width: 48px; min-width: 48px; grid-template-columns: minmax(0, 1fr) 20px; }
