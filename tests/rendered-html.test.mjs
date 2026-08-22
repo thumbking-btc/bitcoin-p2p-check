@@ -580,6 +580,8 @@ test("keeps market data official and separates public promotion from private req
   assert.match(css, /\.amount-unit-select\s*\{[^}]*font:\s*780 11px\/1\.3 var\(--sans\)/s);
   assert.match(css, /\.amount-unit-chevron\s*\{[^}]*width:\s*22px[^}]*border-left:[^}]*font:\s*900 16px\/1 var\(--sans\)/s);
   assert.match(css, /\.amount-unit-chevron\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(css, /\.amount-unit-select:focus-visible\s*\{[^}]*outline:\s*none/s);
+  assert.match(css, /\.amount-unit-control:focus-within::after\s*\{[^}]*inset:\s*2px[^}]*border:\s*3px solid var\(--orange-dark\)/s);
   assert.match(css, /\.premium-stepper\s*\{[^}]*width:\s*50px;[^}]*min-width:\s*50px[^}]*grid-template-rows:\s*repeat\(2/s);
   assert.match(css, /\.fund-source-field\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
