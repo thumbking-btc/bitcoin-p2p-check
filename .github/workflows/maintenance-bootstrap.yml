@@ -93,6 +93,7 @@ jobs:
               '  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);\n'
               '  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);\n'
               '  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);\n'
               '});\n',
               'test("uses the tested fallback and live market refresh intervals", () => {\n'
               '  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);\n'
