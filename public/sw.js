@@ -14,6 +14,7 @@ const APP_SHELL = [
   "/icons/icon-maskable-512-v2.png",
   "/icons/apple-touch-icon-v2.png",
 ];
+const APP_SHELL_PATHS = new Set(APP_SHELL);
 
 async function putRuntime(request, response) {
   const cache = await caches.open(RUNTIME_CACHE_NAME);
@@ -24,6 +25,40 @@ async function putRuntime(request, response) {
   if (overflow > 0) {
     await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
   }
+}
+
+function referencedSameOriginAssets(html, baseUrl) {
+  const assets = new Set();
+  const attributePattern = /(?:src|href)=["']([^"'#]+)["']/g;
+  let match;
+  while ((match = attributePattern.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], baseUrl);
+      if (url.origin !== self.location.origin) continue;
+      if (url.pathname.startsWith("/api/") || APP_SHELL_PATHS.has(url.pathname)) continue;
+      assets.add(url.toString());
+    } catch {
+      // 잘못된 URL 하나 때문에 나머지 앱 셸 캐시를 포기하지 않습니다.
+    }
+  }
+  return [...assets];
+}
+
+async function precachePath(cache, path) {
+  const response = await fetch(path, { cache: "reload" });
+  if (!response.ok) return;
+
+  await cache.put(path, response.clone());
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return;
+
+  const html = await response.text();
+  const assets = referencedSameOriginAssets(html, new URL(path, self.location.origin));
+  await Promise.allSettled(assets.map(async (assetUrl) => {
+    if (await cache.match(assetUrl)) return;
+    const assetResponse = await fetch(assetUrl, { cache: "reload" });
+    if (assetResponse.ok) await cache.put(assetUrl, assetResponse);
+  }));
 }
 
 async function matchCurrentCaches(request) {
@@ -48,10 +83,7 @@ async function matchOfflineNavigation(request) {
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(PRECACHE_NAME);
-    await Promise.allSettled(APP_SHELL.map(async (path) => {
-      const response = await fetch(path, { cache: "reload" });
-      if (response.ok) await cache.put(path, response);
-    }));
+    await Promise.allSettled(APP_SHELL.map((path) => precachePath(cache, path)));
   })());
   self.skipWaiting();
 });
