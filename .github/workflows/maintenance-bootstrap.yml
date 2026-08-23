@@ -24,7 +24,7 @@ jobs:
           node-version: 22.19.0
           cache: npm
 
-      - name: Connect market refresh logic to its tests
+      - name: Connect production logic to verified tests
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -123,6 +123,68 @@ jobs:
                   '  assert.match(component, /const getRefreshDelay = \\(\\) => getMarketRefreshDelay\\([\\s\\S]*lastMarketRefreshAtRef\\.current,[\\s\\S]*marketRefreshIntervalMs/);\n',
                   "market refresh source assertions",
               )
+              tests = replace_once(
+                  tests,
+                  'async function readPngSize(url) {\n',
+                  'async function readAppVersion() {\n'
+                  '  const source = await readFile(new URL("../app/lib/app-version.ts", import.meta.url), "utf8");\n'
+                  '  const match = source.match(/export const APP_VERSION = "([^"]+)";/);\n'
+                  '  assert.ok(match, "APP_VERSION must be a quoted string");\n'
+                  '  return match[1];\n'
+                  '}\n\n'
+                  'async function readPngSize(url) {\n',
+                  "app version helper",
+              )
+              tests = replace_once(
+                  tests,
+                  '  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage] = await Promise.all([\n',
+                  '  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage, appVersion] = await Promise.all([\n',
+                  "PWA test version result",
+              )
+              tests = replace_once(
+                  tests,
+                  '    readFile(new URL("../public/og-v2.png", import.meta.url)),\n'
+                  '  ]);\n',
+                  '    readFile(new URL("../public/og-v2.png", import.meta.url)),\n'
+                  '    readAppVersion(),\n'
+                  '  ]);\n',
+                  "PWA test version read",
+              )
+              tests = replace_once(
+                  tests,
+                  r'  assert.match(html, /aria-label="버전 2\.0\.4">v2\.0\.4<\/span>/);' + '\n',
+                  '  assert.ok(html.includes(`aria-label="버전 ${appVersion}">v${appVersion}</span>`));\n',
+                  "rendered app version assertion",
+              )
+              tests = replace_once(
+                  tests,
+                  '  const [worker, nextConfig, wrangler, headers, css, home, packageJson] = await Promise.all([\n',
+                  '  const [worker, nextConfig, wrangler, headers, css, home, packageJson, appVersion] = await Promise.all([\n',
+                  "static test version result",
+              )
+              tests = replace_once(
+                  tests,
+                  '    readFile(new URL("../package.json", import.meta.url), "utf8"),\n'
+                  '  ]);\n',
+                  '    readFile(new URL("../package.json", import.meta.url), "utf8"),\n'
+                  '    readAppVersion(),\n'
+                  '  ]);\n',
+                  "static test version read",
+              )
+              tests = replace_once(
+                  tests,
+                  r'  assert.match(packageJson, /"version": "2\.0\.4"/);' + '\n',
+                  '  assert.equal(JSON.parse(packageJson).version, appVersion);\n',
+                  "package version assertion",
+              )
+              tests = replace_once(
+                  tests,
+                  '  const iphoneCard = html.match(',
+                  '  assert.equal((installSource.match(/loading="lazy"/g) ?? []).length, 2);\n'
+                  '  assert.equal((installSource.match(/decoding="async"/g) ?? []).length, 2);\n'
+                  '  const iphoneCard = html.match(',
+                  "install image loading assertions",
+              )
               test_path.write_text(tests, encoding="utf-8")
           PY
 
@@ -135,6 +197,9 @@ jobs:
       - name: Verify
         run: npm run verify
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Commit verified generated files
         run: |
           git config user.name "github-actions[bot]"
@@ -143,5 +208,5 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "Connect market refresh logic to verified tests"
+          git commit -m "Connect maintenance logic to verified tests"
           git push origin HEAD:${{ github.head_ref }}
