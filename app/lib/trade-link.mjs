@@ -45,9 +45,10 @@ export function buildTradeFragment({ side, amount, premium, fundingSource, displ
   const fundingCode = FUNDING_CODE_BY_SOURCE.get(fundingSource);
   if (premiumNumber === null || !fundingCode) return "";
 
+  const browserShare = typeof window !== "undefined";
   const params = new URLSearchParams();
-  params.set("v", "3");
-  params.set("from", side);
+  params.set("v", browserShare ? "3" : "2");
+  params.set(browserShare ? "from" : "side", side);
   params.set("basis", basis === "krw" ? "krw" : "btc");
   params.set(basis === "krw" ? "krw" : "sats", String(amountNumber));
   params.set("premium", String(premiumNumber));
@@ -97,5 +98,6 @@ export function parseTradeFragment(fragment) {
   const displayUnit = params.get("unit") ?? "sats";
   if (premium === null || !fundingSource || (displayUnit !== "btc" && displayUnit !== "sats")) return null;
 
-  return { side, amount, amountBasis, premium, fundingSource, displayUnit, creatorSide };
+  const result = { side, amount, amountBasis, premium, fundingSource, displayUnit };
+  return version === "3" ? { ...result, creatorSide } : result;
 }
