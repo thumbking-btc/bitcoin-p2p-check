@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { PwaRegistration } from "./components/PwaRegistration";
-import "./runtime-globals.css";
+import "./globals.css";
 
 export const viewport: Viewport = {
   themeColor: "#f7931a",
