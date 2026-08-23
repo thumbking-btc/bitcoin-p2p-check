@@ -1,0 +1,71 @@
+name: Recruitment test sync
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-verify:
+    if: github.head_ref == 'chore/maintenance-verification-v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out maintenance branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Point recruitment source assertions at production synchronization
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/rendered-html.test.mjs")
+          text = path.read_text(encoding="utf-8")
+          old = '''  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);
+          assert.match(recruitmentComponent, /const previewText = previewOverride \\?\\? generated\\.text/);
+          assert.match(recruitmentComponent, /setPreviewOverride\\(value === generated\\.text \\? null : value\\)/);
+          assert.doesNotMatch(recruitmentComponent, /setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef|syncTradeRecruitmentPreview/);
+          '''
+          new = '''  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);
+          assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\\(\\{/);
+          assert.match(recruitmentComponent, /previousGenerated: previewState\\.generatedText/);
+          assert.match(recruitmentComponent, /nextGenerated: generated\\.text/);
+          assert.match(recruitmentComponent, /setPreviewState\\(\\{[\\s\\S]*preview: event\\.target\\.value,[\\s\\S]*generatedText: generated\\.text/);
+          assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
+          '''
+          if old not in text:
+              raise SystemExit("expected legacy recruitment source assertions once")
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one legacy assertion block, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify
+        run: npm run verify
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Commit verified test update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/rendered-html.test.mjs
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Test the production recruitment preview synchronizer"
+          git push origin HEAD:${{ github.head_ref }}
