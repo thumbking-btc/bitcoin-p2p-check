@@ -1,4 +1,4 @@
-const CACHE_NAME = "bitcoin-p2p-check-v4";
+const CACHE_NAME = "bitcoin-p2p-check-v5";
 const APP_SHELL = [
   "/",
   "/install/",

@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Vinext static export currently breaks next/link navigation. */
 
+import { APP_VERSION } from "../lib/app-version";
+
 type SiteRouteNavProps = {
   current: "calculator" | "install";
 };
@@ -17,6 +19,7 @@ export function SiteRouteNav({ current }: SiteRouteNavProps) {
       ) : (
         <a className="site-route-install" href="/install/">홈 화면에 추가하는 방법</a>
       )}
+      <span className="app-version" aria-label={`버전 ${APP_VERSION}`}>{`v${APP_VERSION}`}</span>
     </nav>
   );
 }

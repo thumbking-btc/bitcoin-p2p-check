@@ -4,9 +4,19 @@ import test from "node:test";
 import { calculateP2PQuote, MAX_SATS, stepPremiumPercent } from "../app/lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../app/lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
-import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
+import {
+  buildTradeIntent,
+  formatTradeBitcoinAmount,
+  getTradeRecipientLabel,
+} from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
+import {
+  buildTradeRecruitmentPost,
+  copyTradeRecruitmentText,
+  shareTradeRecruitmentText,
+  syncTradeRecruitmentPreview,
+} from "../app/lib/trade-recruitment.mjs";
 import {
   readTradeDraft,
   TRADE_DRAFT_MAX_RAW_LENGTH,
@@ -118,7 +128,7 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "buyer", amountBasis: "bitcoin", paymentKrw: 10_200_000, sats: 10_000_000, bitcoinDisplayUnit: "sats" }),
-    "10,000,000 sats 삽니다.",
+    "1,000만 sats 삽니다.",
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "seller", amountBasis: "krw", paymentKrw: 500_000, sats: 490_196, bitcoinDisplayUnit: "btc" }),
@@ -134,10 +144,175 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "seller", paymentKrw: 10_000, sats: 10_000_000, bitcoinDisplayUnit: "sats" }),
-    "10,000,000 sats 팝니다.",
+    "1,000만 sats 팝니다.",
   );
+  assert.equal(formatTradeBitcoinAmount({ sats: 40_000_000, bitcoinDisplayUnit: "sats" }), "4,000만 sats");
+  assert.equal(formatTradeBitcoinAmount({ sats: 4_000_000, bitcoinDisplayUnit: "btc" }), "0.04 BTC");
+  assert.equal(formatTradeBitcoinAmount({ sats: 1_234_567, bitcoinDisplayUnit: "sats" }), "1,234,567 sats");
   assert.equal(getTradeRecipientLabel("buyer"), "구매자가 받음");
   assert.equal(getTradeRecipientLabel("seller"), "판매자가 받음");
+});
+
+test("builds compact public recruitment posts with exact intent and rounded equivalents", () => {
+  assert.deepEqual(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1000000",
+    sellerPremiumInput: "3",
+    approximateSats: 917_345,
+    bitcoinDisplayUnit: "sats",
+    network: "both",
+    canShareKrwSource: true,
+    canVerifyIdentity: true,
+  }), {
+    text: "구매 / 100만원 (약 91.7만 sats) / 3% / 온체인·라이트닝\n원화 출처 설명과 상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.",
+    error: "",
+  });
+
+  assert.match(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1000000",
+    sellerPremiumInput: "3",
+    approximateSats: 917_345,
+    bitcoinDisplayUnit: "btc",
+    network: "onchain",
+  }).text, /100만원 \(약 0\.00917 BTC\)/);
+
+  assert.deepEqual(buildTradeRecruitmentPost({
+    tradeRole: "seller",
+    amountUnit: "sats",
+    amountInput: "3000000",
+    sellerPremiumInput: "3",
+    approximateKrw: 3_271_234,
+    network: "lightning",
+    returningTraderEnabled: true,
+    returningTraderPremiumInput: "2.5",
+    memo: "첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.",
+  }), {
+    text: "판매 / 300만 sats (약 327만원) / 3% (기존 거래자 2.5%) / 라이트닝\n첫 거래자는 활동 내역을 확인합니다.\n답변이 늦을 수 있습니다.\nDM 부탁드립니다.",
+    error: "",
+  });
+
+  assert.equal(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "btc",
+    amountInput: "0.10000000",
+    sellerPremiumInput: "2",
+    approximateKrw: 10_923_456,
+    network: "onchain",
+  }).text, "구매 / 0.1 BTC (약 1,090만원) / 2% / 온체인\nDM 부탁드립니다.");
+  assert.equal(buildTradeRecruitmentPost({
+    tradeRole: "buyer",
+    amountUnit: "btc",
+    amountInput: "0.00000001",
+    sellerPremiumInput: "2",
+    network: "onchain",
+  }).text, "구매 / 0.00000001 BTC / 2% / 온체인\nDM 부탁드립니다.");
+});
+
+test("validates recruitment discounts and excludes settlement-only details", () => {
+  const base = {
+    tradeRole: "buyer",
+    amountUnit: "krw",
+    amountInput: "1234567",
+    sellerPremiumInput: "3",
+    network: "onchain",
+  };
+  assert.match(buildTradeRecruitmentPost({ ...base, amountInput: "0" }).error, /0보다/);
+  assert.match(buildTradeRecruitmentPost({ ...base, amountUnit: "btc", amountInput: "0.000000001" }).error, /8자리/);
+  assert.match(buildTradeRecruitmentPost({ ...base, sellerPremiumInput: "-100" }).error, /-100%/);
+  assert.match(buildTradeRecruitmentPost({ ...base, sellerPremiumInput: "-0" }).text, /\/ 0% \//);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "" }).error, /우대 프리미엄/);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "3" }).error, /낮아야/);
+  assert.match(buildTradeRecruitmentPost({ ...base, returningTraderEnabled: true, returningTraderPremiumInput: "3.5" }).error, /낮아야/);
+
+  for (const [network, label] of [["onchain", "온체인"], ["lightning", "라이트닝"], ["both", "온체인·라이트닝"]]) {
+    assert.match(buildTradeRecruitmentPost({ ...base, network }).text, new RegExp(`${label}\\nDM 부탁드립니다\\.$`));
+  }
+
+  const publicPost = buildTradeRecruitmentPost({
+    ...base,
+    fundingSource: "근로소득",
+    address: "bc1qexample",
+    invoice: "lnbc1example",
+    qr: "secret",
+    paymentRequest: "secret",
+  }).text;
+  assert.equal(publicPost, "구매 / 1,234,567원 / 3% / 온체인\nDM 부탁드립니다.");
+  assert.doesNotMatch(publicPost, /근로소득|bc1|lnbc|주소|인보이스|QR|지급 ?요청|업비트|계산 시각|구매자 → 판매자|온체인 수수료/);
+
+  const sellerPost = buildTradeRecruitmentPost({
+    ...base,
+    tradeRole: "seller",
+    canShareKrwSource: true,
+    canVerifyIdentity: true,
+  }).text;
+  assert.equal(sellerPost, "판매 / 1,234,567원 / 3% / 온체인\n상호 신원확인 협의 가능합니다.\nDM 부탁드립니다.");
+  assert.doesNotMatch(sellerPost, /원화 출처/);
+});
+
+test("preserves edited recruitment previews and copies the exact visible text", async () => {
+  const previousGenerated = "구매 / 100만원 / 3% / 온체인\nDM 부탁드립니다.";
+  const nextGenerated = "구매 / 100만원 / 3% / 라이트닝\nDM 부탁드립니다.";
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: previousGenerated,
+    previousGenerated,
+    nextGenerated,
+  }), { preview: nextGenerated, dirty: false });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated: previousGenerated,
+  }), { preview: "직접 편집한 모집글", dirty: true });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated,
+  }), { preview: "직접 편집한 모집글", dirty: true });
+  assert.deepEqual(syncTradeRecruitmentPreview({
+    preview: "직접 편집한 모집글",
+    previousGenerated,
+    nextGenerated,
+    force: true,
+  }), { preview: nextGenerated, dirty: false });
+
+  const edited = "  편집한 모집글\n그대로  ";
+  let clipboardValue = "";
+  assert.equal(await copyTradeRecruitmentText(edited, async (value) => { clipboardValue = value; }), "copied");
+  assert.equal(clipboardValue, edited);
+
+  let fallbackValue = "";
+  assert.equal(await copyTradeRecruitmentText(
+    edited,
+    async () => { throw new Error("blocked"); },
+    (value) => { fallbackValue = value; return true; },
+  ), "copied");
+  assert.equal(fallbackValue, edited);
+
+  let sharedValue = "";
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    async (value) => { sharedValue = value; },
+  ), "shared");
+  assert.equal(sharedValue, edited);
+
+  let copiedAfterFallback = "";
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    null,
+    async (value) => { copiedAfterFallback = value; },
+  ), "copied");
+  assert.equal(copiedAfterFallback, edited);
+
+  let copiedAfterCancel = false;
+  assert.equal(await shareTradeRecruitmentText(
+    edited,
+    async () => { throw new DOMException("cancelled", "AbortError"); },
+    async () => { copiedAfterCancel = true; },
+  ), "cancelled");
+  assert.equal(copiedAfterCancel, false);
+  assert.equal(await copyTradeRecruitmentText("   ", null, null), "empty");
 });
 
 test("suppresses a dismissed install invitation for one day", () => {
@@ -383,7 +558,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   }
   assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
   assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
-  assert.match(html, /거래 조건 공유/);
+  assert.match(html, /거래 조건 이미지 공유/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
@@ -489,6 +664,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.ok(shareTextOrder.every((index) => index >= 0));
   assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
   assert.doesNotMatch(shareTextBlock, /반올림/);
+  assert.match(shareTextBlock, /formatTradeBitcoinAmount/);
+  assert.doesNotMatch(shareTextBlock, /formatTradeBitcoinAmount[^\n]*\([^\n]*format(?:Sats|Btc)/);
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
   assert.match(component, /BTC로 보기/);
@@ -507,14 +684,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /satsToBtcInput\(imported\.amount\)/);
   assert.match(component, /inputMode=\{amountBasis === "krw" \|\| bitcoinDisplayUnit === "sats" \? "numeric" : "decimal"\}/);
   assert.match(shareTransport, /files: \[file\]/);
-  assert.match(component, /현재 시세로 다시 계산하기:/);
+  assert.match(component, /거래 조건 검증하기:/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
   assert.match(component, /window\.history\.replaceState/);
-  assert.match(component, /현재 업비트 시세로 다시 계산했습니다/);
+  assert.match(component, /공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
-  assert.match(component, /거래 조건 준비 중/);
+  assert.match(component, /거래 조건 이미지 준비 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
@@ -524,6 +701,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /구매자 → 판매자/);
   assert.match(imageRenderer, /판매자 → 구매자/);
   assert.match(imageRenderer, /bitcoinDisplayUnit/);
+  assert.match(imageRenderer, /formatTradeBitcoinAmount/);
+  assert.doesNotMatch(imageRenderer, /subvalue:\s*input\.bitcoinDisplayUnit/);
   assert.match(imageRenderer, /amountBasis/);
   assert.match(imageRenderer, /금액 기준/);
   assert.match(imageRenderer, /recipientLabel/);
@@ -599,6 +778,77 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.ok(fundingFieldPosition < fundingNotePosition);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
+});
+
+test("renders an editable public recruitment builder without changing the live calculator path", async () => {
+  const [response, recruitmentComponent, recruitmentBuilder, calculator, css] = await Promise.all([
+    render(),
+    readFile(new URL("../app/components/TradeRecruitmentTool.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-recruitment.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const html = (await response.text()).replace(/<!-- -->/g, "");
+
+  assert.match(html, /<legend id="output-picker-title">무엇을 만들까요\?<\/legend>/);
+  assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
+  assert.match(html, /거래 모집글/);
+  assert.match(html, /공개 채널에서 상대 찾기/);
+  assert.match(html, /거래 조건 이미지/);
+  assert.match(html, /연락 후 확정 조건 공유/);
+  assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
+  assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
+  assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);
+  assert.match(html, /<h2 id="trade-recruitment-title">거래 모집글 만들기<\/h2>/);
+  assert.equal((html.match(/name="recruitment-network"/g) ?? []).length, 3);
+  assert.match(html, />온체인<\/span>/);
+  assert.match(html, />라이트닝<\/span>/);
+  assert.match(html, />둘 다<\/span>/);
+  assert.match(html, /<details class="recruitment-options">/);
+  assert.match(html, /선택 문구 추가/);
+  assert.match(html, /여러 개 선택 가능/);
+  assert.match(html, /기존 거래자 우대/);
+  assert.match(recruitmentComponent, /className="returning-option"/);
+  assert.match(recruitmentComponent, /기존 거래자 우대 프리미엄 0\.1% 올리기/);
+  assert.match(recruitmentComponent, /기존 거래자 우대 프리미엄 0\.1% 내리기/);
+  assert.doesNotMatch(recruitmentComponent, /returningTraderEnabled \? \(\s*<label className="returning-premium"/);
+  assert.match(css, /\.recruitment-option-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /\.returning-option\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(150px, \.72fr\)/s);
+  assert.match(html, /원화 출처 설명 가능/);
+  assert.match(html, /상호 신원확인 협의 가능/);
+  assert.match(html, /추가 조건·메모/);
+  assert.match(html, /편집 가능한 모집글 미리보기/);
+  assert.match(html, /<textarea id="recruitment-preview"[^>]*>/);
+  assert.doesNotMatch(html.match(/<textarea id="recruitment-preview"[^>]*>/)?.[0] ?? "", /readonly|disabled/);
+  assert.match(html, /자동 문구로 되돌리기/);
+  assert.match(html, /모집글 공유/);
+  assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
+  assert.match(html, /구매 \/ 300만원 \/ 2% \/ 온체인/);
+
+  const integration = calculator.match(/<TradeRecruitmentTool[\s\S]*?\/>/)?.[0] ?? "";
+  assert.match(integration, /tradeRole=\{tradeRole\}/);
+  assert.match(integration, /amountUnit=\{amountInputUnit\}/);
+  assert.match(integration, /sellerPremiumInput=\{premiumInput\}/);
+  assert.match(integration, /approximateKrw=\{quote\?\.paymentKrw \?\? null\}/);
+  assert.match(integration, /approximateSats=\{quote\?\.sats \?\? null\}/);
+  assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
+  assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
+  assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
+  assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);
+  assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
+  assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
+  assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
+  const recruitmentImports = recruitmentBuilder.match(/^(?:import[^\n]+\n)+/)?.[0] ?? "";
+  assert.doesNotMatch(recruitmentImports, /trade-link|trade-share-image|p2p-quote|market/i);
+  assert.match(recruitmentBuilder, /input\.tradeRole === "buyer" && input\.canShareKrwSource/);
+  assert.match(css, /\.trade-tool\.is-draft-hydrating \.trade-recruitment \{ visibility: hidden; \}/);
+  assert.match(css, /\.output-options\s*\{[^}]*grid-template-columns:\s*repeat\(2/s);
+  assert.match(css, /\.output-panel\[hidden\]\s*\{\s*display:\s*none/s);
+  assert.match(css, /\.recruitment-check\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
+  assert.match(calculator, /wss:\/\/api\.upbit\.com\/websocket\/v1/);
+  assert.match(calculator, /requestMarketSnapshot\(includePrice\)/);
+  assert.match(calculator, /calculateP2PQuote\(\{/);
 });
 
 test("renders creator identity and Lightning support details", async () => {
@@ -692,7 +942,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-v4/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-v5/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
@@ -706,12 +956,13 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
+  assert.match(html, /aria-label="버전 2\.0\.0">v2\.0\.0<\/span>/);
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
   assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
   assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
-  assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다\. 공유된 조건은 현재 시세로 다시 계산됩니다\."/);
+  assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 계산하고 거래 모집글 또는 조건 이미지로 공유합니다\."/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
   assert.match(html, /property="og:image:width" content="1200"/);
   assert.match(html, /property="og:image:height" content="630"/);
@@ -794,6 +1045,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
   assert.match(wrangler, /"run_worker_first":\s*\["\/api\/market",\s*"\/api\/market\/"\]/);
   assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
+  assert.match(packageJson, /"version": "2\.0\.0"/);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.match(headers, /Content-Security-Policy:/);
