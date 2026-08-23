@@ -62,7 +62,7 @@ npm run dev
 
 GitHub의 기능 브랜치는 Cloudflare 프리뷰로 빌드되고, 승인된 릴리스가 `main`에 반영되면 프로덕션 Worker가 자동 배포됩니다. 정식 버전 태그는 실제 프로덕션 릴리스에만 부여합니다.
 
-Pull Request와 `main` 변경에는 GitHub Actions 검증을 실행합니다. 검증은 잠금 파일 기반 설치 후 `npm run verify`를 수행하며, 실제 병합·배포 차단 여부는 저장소의 브랜치 보호 설정에서 해당 검사를 필수 조건으로 지정해야 합니다.
+Pull Request와 `main` 변경에는 GitHub Actions 검증을 실행합니다. 검증은 잠금 파일 기반 설치 후 `npm run verify`와 실제 배포 의존성 보안 감사를 수행하며, 실제 병합·배포 차단 여부는 저장소의 브랜치 보호 설정에서 해당 검사를 필수 조건으로 지정해야 합니다.
 
 수동 배포가 필요한 비상 상황에서는 Cloudflare 로그인 후 아래 명령으로 검증을 먼저 통과한 정적 PWA와 시세 전용 Worker를 함께 배포할 수 있습니다.
 
