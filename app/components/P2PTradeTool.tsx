@@ -7,7 +7,6 @@ import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs
 import { buildTradeIntent, formatTradeBitcoinAmount } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
-import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
 import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
 
 type TradeRole = "buyer" | "seller";
@@ -340,12 +339,6 @@ export function P2PTradeTool() {
   const [resultAnnouncement, setResultAnnouncement] = useState("");
   const [shareStatus, setShareStatus] = useState("");
   const [isSharing, setIsSharing] = useState(false);
-  const [shareImageGeneration, setShareImageGeneration] = useState(0);
-  const [preparedShareImage, setPreparedShareImage] = useState<{
-    key: string;
-    file: File | null;
-    failed: boolean;
-  } | null>(null);
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
   const lastMarketRefreshAtRef = useRef(0);
@@ -354,7 +347,6 @@ export function P2PTradeTool() {
   const isSharingRef = useRef(false);
   const pendingMarketSnapshotRef = useRef<MarketSnapshot | null>(null);
   const suppressNextResultAnnouncementRef = useRef(false);
-  const preparedShareFormKeyRef = useRef("");
 
   const applyMarketSnapshot = useCallback((data: MarketSnapshot, silent: boolean) => {
     const current = marketRef.current;
@@ -833,78 +825,17 @@ export function P2PTradeTool() {
   const shareTextWithLink = shareText && tradeLink
     ? `${shareText}\n\n거래 조건 검증하기: ${tradeLink}`
     : shareText;
-
-  const shareImageInput = useMemo<TradeShareImageInput | null>(() => {
-    if (!quote || referencePrice === null || premiumPercent === null) return null;
-    return {
-      tradeRole,
-      amountBasis,
-      bitcoinDisplayUnit,
-      referenceLabel,
-      referencePriceKrw: referencePrice,
-      referenceTime,
-      koreaPremiumRatio: effectiveKoreaPremium,
-      sellerPremiumPercent: premiumPercent,
-      buyerFundingSource: fundingSource,
-      paymentKrw: quote.paymentKrw,
-      sats: quote.sats,
-      btcAmount: quote.sats / SATS_PER_BTC,
-      appliedPriceKrw: quote.appliedPrice,
-    };
-  }, [amountBasis, bitcoinDisplayUnit, effectiveKoreaPremium, fundingSource, premiumPercent, quote, referenceLabel, referencePrice, referenceTime, tradeRole]);
-
-  const shareImageKey = shareImageInput ? JSON.stringify(shareImageInput) : "";
-  const shareFormKey = JSON.stringify({
-    tradeRole,
-    amountBasis,
-    bitcoinDisplayUnit,
-    amount,
-    premiumPercent,
-    fundingSource,
-  });
-  const shareImageAllowed = Boolean(shareImageInput)
+  const shareImageAllowed = Boolean(quote)
+    && referencePrice !== null
+    && premiumPercent !== null
     && draftHydrated
     && !stalePrice
     && marketState === "ready";
-  const preparedShareFile = preparedShareImage?.key === shareImageKey ? preparedShareImage.file : null;
-  const shareImageFailed = preparedShareImage?.key === shareImageKey && preparedShareImage.failed;
-  const shareImagePreparing = shareImageAllowed && !preparedShareFile && !shareImageFailed;
-  const backgroundShareImagePreparing = shareImagePreparing && Boolean(preparedShareImage?.file);
-  const shareStatusIsError = Boolean(shareStatus) && (shareImageFailed || shareStatus.includes("못") || shareStatus.includes("다시"));
-
-  useEffect(() => {
-    if (!shareImageInput || !shareImageAllowed) return;
-    let active = true;
-    const timeout = window.setTimeout(() => {
-      void createTradeShareImage(shareImageInput).then(
-        (file) => {
-          if (!active) return;
-          const formChanged = preparedShareFormKeyRef.current !== shareFormKey;
-          preparedShareFormKeyRef.current = shareFormKey;
-          setPreparedShareImage({ key: shareImageKey, file, failed: false });
-          setShareStatus((current) => formChanged || current === "공유할 거래 조건을 준비하지 못했습니다. 다시 시도해 주세요." ? "" : current);
-        },
-        () => {
-          if (!active) return;
-          setPreparedShareImage({ key: shareImageKey, file: null, failed: true });
-          setShareStatus("공유할 거래 조건을 준비하지 못했습니다. 다시 시도해 주세요.");
-        },
-      );
-    }, 80);
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [shareFormKey, shareImageAllowed, shareImageGeneration, shareImageInput, shareImageKey]);
+  const shareStatusIsError = Boolean(shareStatus)
+    && (shareStatus.includes("못") || shareStatus.includes("다시"));
 
   async function shareTrade() {
-    if (shareImageFailed) {
-      setShareStatus("");
-      setPreparedShareImage(null);
-      setShareImageGeneration((value) => value + 1);
-      return;
-    }
-    if (!shareTextWithLink || !preparedShareFile || isSharing) return;
+    if (!shareTextWithLink || !shareImageAllowed || !quote || referencePrice === null || premiumPercent === null || isSharing) return;
     if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
       setPriceExpired(true);
       setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
@@ -914,8 +845,24 @@ export function P2PTradeTool() {
     isSharingRef.current = true;
     setIsSharing(true);
     try {
+      const { createTradeShareImage } = await import("../lib/trade-share-image");
+      const shareFile = await createTradeShareImage({
+        tradeRole,
+        amountBasis,
+        bitcoinDisplayUnit,
+        referenceLabel,
+        referencePriceKrw: referencePrice,
+        referenceTime,
+        koreaPremiumRatio: effectiveKoreaPremium,
+        sellerPremiumPercent: premiumPercent,
+        buyerFundingSource: fundingSource,
+        paymentKrw: quote.paymentKrw,
+        sats: quote.sats,
+        btcAmount: quote.sats / SATS_PER_BTC,
+        appliedPriceKrw: quote.appliedPrice,
+      });
       const outcome = await shareImageFile({
-        file: preparedShareFile,
+        file: shareFile,
         title: tradeIntent,
         text: shareTextWithLink,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
@@ -1270,28 +1217,24 @@ export function P2PTradeTool() {
         </details>
         <div className="tool-actions">
           <button
-            className={`share-button ${backgroundShareImagePreparing ? "is-background-preparing" : ""}`}
+            className="share-button"
             type="button"
             onClick={() => void shareTrade()}
-            disabled={!shareImageAllowed || isSharing || (shareImagePreparing && !shareImageFailed)}
-            aria-busy={isSharing || shareImagePreparing}
+            disabled={!shareImageAllowed || isSharing}
+            aria-busy={isSharing}
           >
             {isSharing
               ? "거래 조건 이미지 공유 중"
-              : shareImageFailed
-                ? "거래 조건 이미지 다시 준비"
-                : shareImagePreparing && !backgroundShareImagePreparing
-                  ? "거래 조건 이미지 준비 중"
-                  : stalePrice
-                    ? "시세 새로고침 후 공유"
-                    : "거래 조건 이미지 공유"}
+              : stalePrice
+                ? "시세 새로고침 후 공유"
+                : "거래 조건 이미지 공유"}
           </button>
           <p
             className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
             aria-live="polite"
             role={shareStatusIsError ? "alert" : undefined}
           >
-            {shareStatus || (!isSharing && (!shareImagePreparing || backgroundShareImagePreparing) ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
+            {shareStatus || (!isSharing ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
           </p>
         </div>
       </div>
