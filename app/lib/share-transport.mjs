@@ -28,27 +28,27 @@ export async function shareImageFile({
   nativeCanShare,
   download,
 }) {
-  const shareFile = await materializeShareFile(file);
+  file = await materializeShareFile(file);
   let canShareFile = false;
   if (typeof nativeShare === "function" && typeof nativeCanShare === "function") {
     try {
-      canShareFile = nativeCanShare({ files: [shareFile] });
+      canShareFile = nativeCanShare({ files: [file] });
     } catch {
       canShareFile = false;
     }
   }
 
   if (!canShareFile) {
-    download(shareFile);
+    download(file);
     return "downloaded";
   }
 
   try {
-    await nativeShare({ title, text, files: [shareFile] });
+    await nativeShare({ title, text, files: [file] });
     return "shared";
   } catch (error) {
     if (isAbortError(error)) return "cancelled";
-    download(shareFile);
+    download(file);
     return "downloaded-after-error";
   }
 }
