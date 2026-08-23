@@ -1,4 +1,4 @@
-name: Payment request preview check
+name: Trade receive-info preview check
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify:
-    if: github.head_ref == 'feature/lightning-address-preview' || github.event_name == 'workflow_dispatch'
+    if: github.head_ref == 'feature/trade-receive-info-flow' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,27 +29,12 @@ jobs:
       - name: Build static app
         run: npm run build
 
-      - name: Verify payment request preview was exported
+      - name: Verify receive-info flow was exported
         run: |
-          grep -R -q "BTC 받을 정보 만들기" dist/client
-          grep -R -q "온체인 수취 주소" dist/client
-          grep -R -q "라이트닝 주소" dist/client
-
-      - name: Verify user's Corn Wallet address through deployed preview API
-        run: |
-          node - <<'NODE'
-          const response = await fetch('https://e9f5acd6-bitcoin-p2p-check.thumbking-btc.workers.dev/api/lightning-address', {
-            method: 'POST',
-            headers: {'content-type': 'application/json'},
-            body: JSON.stringify({address: 'thumbking@oksu.su', amountSats: 21}),
-          });
-          const text = await response.text();
-          console.log('status', response.status);
-          console.log(text.slice(0, 1200));
-          if (!response.ok) process.exit(1);
-          const data = JSON.parse(text);
-          if (!data.ok || typeof data.invoice !== 'string' || !data.invoice.toLowerCase().startsWith('lnbc')) process.exit(1);
-          NODE
+          grep -R -q "BTC 받을 정보 추가" dist/client
+          grep -R -q "라이트닝 주소를 그대로 공유합니다" dist/client
+          grep -R -q "현재 거래의 받을 sats와 정확히 같은 인보이스만 통과합니다" dist/client
+          grep -R -q 'params.set("v","3")\|params.set("v", "3")' dist/client
 
       - name: Verify Worker bundle
         run: npx wrangler deploy --dry-run --config wrangler.jsonc
