@@ -1,0 +1,1 @@
+restore rendered-html test from main blob
