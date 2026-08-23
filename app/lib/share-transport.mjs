@@ -14,6 +14,12 @@ function isAbortError(error) {
   return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
 }
 
+async function materializeShareFile(file) {
+  if (file?.type !== "application/x-bitcoin-p2p-trade-image+json") return file;
+  const { materializeTradeShareImage } = await import("./trade-share-image");
+  return materializeTradeShareImage(file);
+}
+
 export async function shareImageFile({
   file,
   title,
@@ -22,26 +28,27 @@ export async function shareImageFile({
   nativeCanShare,
   download,
 }) {
+  const shareFile = await materializeShareFile(file);
   let canShareFile = false;
   if (typeof nativeShare === "function" && typeof nativeCanShare === "function") {
     try {
-      canShareFile = nativeCanShare({ files: [file] });
+      canShareFile = nativeCanShare({ files: [shareFile] });
     } catch {
       canShareFile = false;
     }
   }
 
   if (!canShareFile) {
-    download(file);
+    download(shareFile);
     return "downloaded";
   }
 
   try {
-    await nativeShare({ title, text, files: [file] });
+    await nativeShare({ title, text, files: [shareFile] });
     return "shared";
   } catch (error) {
     if (isAbortError(error)) return "cancelled";
-    download(file);
+    download(shareFile);
     return "downloaded-after-error";
   }
 }
