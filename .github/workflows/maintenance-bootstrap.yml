@@ -158,12 +158,25 @@ jobs:
               )
               tests = replace_once(
                   tests,
+                  '  const iphoneCard = html.match(',
+                  '  assert.equal((installSource.match(/loading="lazy"/g) ?? []).length, 2);\n'
+                  '  assert.equal((installSource.match(/decoding="async"/g) ?? []).length, 2);\n'
+                  '  const iphoneCard = html.match(',
+                  "install image loading assertions",
+              )
+
+              static_marker = 'test("exports static pages and keeps only the market endpoint in the Worker", async () => {'
+              if tests.count(static_marker) != 1:
+                  raise SystemExit(f"expected one static export test, found {tests.count(static_marker)}")
+              before_static, static_test = tests.split(static_marker, 1)
+              static_test = replace_once(
+                  static_test,
                   '  const [worker, nextConfig, wrangler, headers, css, home, packageJson] = await Promise.all([\n',
                   '  const [worker, nextConfig, wrangler, headers, css, home, packageJson, appVersion] = await Promise.all([\n',
                   "static test version result",
               )
-              tests = replace_once(
-                  tests,
+              static_test = replace_once(
+                  static_test,
                   '    readFile(new URL("../package.json", import.meta.url), "utf8"),\n'
                   '  ]);\n',
                   '    readFile(new URL("../package.json", import.meta.url), "utf8"),\n'
@@ -171,20 +184,13 @@ jobs:
                   '  ]);\n',
                   "static test version read",
               )
-              tests = replace_once(
-                  tests,
+              static_test = replace_once(
+                  static_test,
                   r'  assert.match(packageJson, /"version": "2\.0\.4"/);' + '\n',
                   '  assert.equal(JSON.parse(packageJson).version, appVersion);\n',
                   "package version assertion",
               )
-              tests = replace_once(
-                  tests,
-                  '  const iphoneCard = html.match(',
-                  '  assert.equal((installSource.match(/loading="lazy"/g) ?? []).length, 2);\n'
-                  '  assert.equal((installSource.match(/decoding="async"/g) ?? []).length, 2);\n'
-                  '  const iphoneCard = html.match(',
-                  "install image loading assertions",
-              )
+              tests = before_static + static_marker + static_test
               test_path.write_text(tests, encoding="utf-8")
           PY
 
