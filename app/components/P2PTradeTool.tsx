@@ -159,15 +159,20 @@ async function parseUpbitTickerMessage(data: unknown): Promise<LivePrice | null>
   }
 
   if (!value || typeof value !== "object") return null;
-  const ticker = value as {
+  const trade = value as {
     code?: unknown;
+    cd?: unknown;
+    mk?: unknown;
     trade_price?: unknown;
+    tp?: unknown;
     trade_timestamp?: unknown;
+    ttms?: unknown;
   };
-  if (ticker.code !== "KRW-BTC") return null;
+  const code = trade.code ?? trade.cd ?? trade.mk;
+  if (code !== "KRW-BTC") return null;
 
-  const priceKrw = Number(ticker.trade_price);
-  const observedAtMs = Number(ticker.trade_timestamp);
+  const priceKrw = Number(trade.trade_price ?? trade.tp);
+  const observedAtMs = Number(trade.trade_timestamp ?? trade.ttms);
   if (!Number.isFinite(priceKrw) || priceKrw <= 0 || !Number.isFinite(observedAtMs)) return null;
 
   const ageMs = Date.now() - observedAtMs;
@@ -557,7 +562,8 @@ export function P2PTradeTool() {
         if (disposed || socket !== nextSocket || !browserIsActive()) return;
         nextSocket.send(JSON.stringify([
           { ticket: `bitcoin-p2p-check-${Date.now()}` },
-          { type: "ticker", codes: ["KRW-BTC"] },
+          { type: "trade", codes: ["KRW-BTC"], is_only_realtime: true },
+          { format: "SIMPLE" },
         ]));
       };
 
@@ -1236,6 +1242,7 @@ export function P2PTradeTool() {
 
       <div className="output-panel" hidden={outputMode !== "recruitment"}>
         <TradeRecruitmentTool
+          active={outputMode === "recruitment"}
           tradeRole={tradeRole}
           amountUnit={amountInputUnit}
           amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}

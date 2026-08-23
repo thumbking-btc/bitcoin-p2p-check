@@ -1,6 +1,6 @@
 {
   "name": "bitcoin-p2p-check",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "private": true,
   "engines": {
     "node": ">=22.13.0 <23"
@@ -11,7 +11,7 @@
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "deploy": "npm run verify && wrangler deploy --config wrangler.jsonc",
-    "test:built": "node --test tests/rendered-html.test.mjs",
+    "test:built": "node --test tests/*.test.mjs",
     "test": "npm run build && npm run test:built",
     "verify": "npm run lint && npm run build && npm run test:built",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"

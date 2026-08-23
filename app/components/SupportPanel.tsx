@@ -1,25 +1,9 @@
-"use client";
-
 import Image from "next/image";
-import { useState } from "react";
+import { SupportAddressCopy } from "./SupportAddressCopy";
 
 const LIGHTNING_ADDRESS = "thumbking@oksu.su";
 
 export function SupportPanel() {
-  const [copyStatus, setCopyStatus] = useState("");
-  const [copyFailed, setCopyFailed] = useState(false);
-
-  async function copyAddress() {
-    try {
-      await navigator.clipboard.writeText(LIGHTNING_ADDRESS);
-      setCopyFailed(false);
-      setCopyStatus("주소를 복사했습니다.");
-    } catch {
-      setCopyFailed(true);
-      setCopyStatus("복사하지 못했습니다. 주소를 길게 눌러 복사해 주세요.");
-    }
-  }
-
   return (
     <section className="creator-support" aria-label="제작자와 후원">
       <article className="creator-card" aria-labelledby="creator-title">
@@ -71,20 +55,7 @@ export function SupportPanel() {
               preserveAspectRatio="none"
             />
           </svg>
-          <figcaption className="support-address-card">
-            <span>라이트닝 주소</span>
-            <code>{LIGHTNING_ADDRESS}</code>
-            <button type="button" aria-label="라이트닝 주소 복사" onClick={copyAddress}>
-              복사
-            </button>
-            <p
-              className={`support-status${copyFailed ? " is-error" : ""}`}
-              aria-live="polite"
-              role={copyFailed ? "alert" : undefined}
-            >
-              {copyStatus}
-            </p>
-          </figcaption>
+          <SupportAddressCopy address={LIGHTNING_ADDRESS} />
         </figure>
       </article>
     </section>
