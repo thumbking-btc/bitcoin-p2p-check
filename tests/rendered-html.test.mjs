@@ -960,7 +960,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-v5/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-precache-v6/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
