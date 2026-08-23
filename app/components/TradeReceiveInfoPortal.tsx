@@ -22,6 +22,7 @@ type LightningPayResponse = {
   amountSats?: number;
   invoice?: string;
   message?: string;
+  address?: string;
   normalizedSource?: string;
   sourceType?: "address" | "lnurl" | "url";
 };
@@ -56,6 +57,11 @@ function formatExpiry(seconds: number) {
 function invoiceLike(value: string) {
   const normalized = value.trim().toLowerCase();
   return normalized.startsWith("lnbc") || normalized.startsWith("lightning:lnbc");
+}
+
+function lightningAddressLike(value: string) {
+  const normalized = value.trim();
+  return normalized.includes("@") && !/^lnurl1/iu.test(normalized) && !/^https:\/\//iu.test(normalized);
 }
 
 async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
@@ -185,22 +191,27 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       return;
     }
 
+    const isAddress = lightningAddressLike(source);
     setBusy(true);
     setFeedback("현재 거래 금액으로 라이트닝 인보이스를 요청하고 있습니다.");
     const generation = generationRef.current;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await fetch("/api/lightning-pay", {
+      const endpoint = isAddress ? "/api/lightning-address" : "/api/lightning-pay";
+      const body = isAddress
+        ? { address: source, amountSats: expectedSats }
+        : { source, amountSats: expectedSats };
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         signal: controller.signal,
-        body: JSON.stringify({ source, amountSats: expectedSats }),
+        body: JSON.stringify(body),
       });
       const data = await readLightningPayResponse(response);
       if (!response.ok || !data.ok || typeof data.invoice !== "string" || data.amountSats !== expectedSats) {
-        throw new Error(data.message || "라이트닝 주소에서 인보이스를 만들지 못했습니다.");
+        throw new Error(data.message || "라이트닝 수취정보에서 인보이스를 만들지 못했습니다.");
       }
       if (generationRef.current !== generation) return;
       const next = makeLightningInvoiceResult(data.invoice, expectedSats, true);
@@ -209,7 +220,8 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         return;
       }
       setResult(next);
-      if (typeof data.normalizedSource === "string" && data.sourceType === "address") setLightningSource(data.normalizedSource);
+      const normalized = isAddress ? data.address : data.normalizedSource;
+      if (typeof normalized === "string") setLightningSource(normalized);
       setError("");
       setFeedback("수취 지갑이 발급한 거래 금액 고정 인보이스를 확인하고 QR을 만들었습니다.");
     } catch (reason) {
