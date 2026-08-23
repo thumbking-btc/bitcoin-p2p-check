@@ -1,7 +1,7 @@
 import { validateBolt11Invoice } from "../app/lib/bolt11-invoice.mjs";
 
 const TEST_ADDRESSES = [
-  "onleines@walletofsatoshi.com",
+  "blankgrass886@walletofsatoshi.com",
   "holyseed@oksu.su",
 ];
 
