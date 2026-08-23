@@ -1,4 +1,6 @@
-const CACHE_NAME = "bitcoin-p2p-check-v5";
+const PRECACHE_NAME = "bitcoin-p2p-check-precache-v6";
+const RUNTIME_CACHE_NAME = "bitcoin-p2p-check-runtime-v1";
+const MAX_RUNTIME_ENTRIES = 40;
 const APP_SHELL = [
   "/",
   "/install/",
@@ -10,9 +12,20 @@ const APP_SHELL = [
   "/icons/apple-touch-icon-v2.png",
 ];
 
+async function putRuntime(request, response) {
+  const cache = await caches.open(RUNTIME_CACHE_NAME);
+  await cache.put(request, response);
+
+  const keys = await cache.keys();
+  const overflow = keys.length - MAX_RUNTIME_ENTRIES;
+  if (overflow > 0) {
+    await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
+  }
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(PRECACHE_NAME);
     await Promise.allSettled(APP_SHELL.map(async (path) => {
       const response = await fetch(path, { cache: "reload" });
       if (response.ok) await cache.put(path, response);
@@ -22,9 +35,10 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  const activeCaches = new Set([PRECACHE_NAME, RUNTIME_CACHE_NAME]);
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => !activeCaches.has(key)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
@@ -47,8 +61,7 @@ self.addEventListener("fetch", (event) => {
       fetch(request)
         .then((response) => {
           if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            event.waitUntil(putRuntime(request, response.clone()).catch(() => {}));
           }
           return response;
         })
@@ -58,17 +71,15 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (["script", "style", "image", "font"].includes(request.destination)) {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        const network = fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        });
-        return cached ?? network;
-      }),
-    );
+    event.respondWith((async () => {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+
+      const response = await fetch(request);
+      if (response.ok) {
+        event.waitUntil(putRuntime(request, response.clone()).catch(() => {}));
+      }
+      return response;
+    })());
   }
 });
