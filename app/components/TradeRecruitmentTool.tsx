@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
   shareTradeRecruitmentText,
@@ -13,6 +13,7 @@ type AmountUnit = "krw" | "sats" | "btc";
 type TransferNetwork = "onchain" | "lightning" | "both";
 
 type TradeRecruitmentToolProps = {
+  active: boolean;
   tradeRole: TradeRole;
   amountUnit: AmountUnit;
   amountInput: string;
@@ -166,7 +167,7 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
   );
 }
 
-export function TradeRecruitmentTool({
+function TradeRecruitmentToolComponent({
   tradeRole,
   amountUnit,
   amountInput,
@@ -180,7 +181,7 @@ export function TradeRecruitmentTool({
   const [returningTraderPremiumOverride, setReturningTraderPremiumInput] = useState<string | null>(null);
   const [canShareKrwSource, setCanShareKrwSource] = useState(false);
   const [canVerifyIdentity, setCanVerifyIdentity] = useState(false);
-  const [memo, setMemo] = useState("");
+  const [memoText, setMemo] = useState("");
   const returningTraderPremiumInput = returningTraderPremiumOverride
     ?? suggestedReturningPremium(sellerPremiumInput);
   const returningPremiumPercent = returningTraderPremiumInput === "" || returningTraderPremiumInput === "-"
@@ -200,7 +201,7 @@ export function TradeRecruitmentTool({
     returningTraderPremiumInput,
     canShareKrwSource,
     canVerifyIdentity,
-    memo,
+    memo: memoText,
   }), [
     amountInput,
     amountUnit,
@@ -209,7 +210,7 @@ export function TradeRecruitmentTool({
     bitcoinDisplayUnit,
     canShareKrwSource,
     canVerifyIdentity,
-    memo,
+    memoText,
     network,
     returningTraderEnabled,
     returningTraderPremiumInput,
@@ -227,13 +228,13 @@ export function TradeRecruitmentTool({
     returningTraderPremiumInput,
     canShareKrwSource,
     canVerifyIdentity,
-    memo,
+    memo: memoText,
   }), [
     amountInput,
     amountUnit,
     canShareKrwSource,
     canVerifyIdentity,
-    memo,
+    memoText,
     network,
     returningTraderEnabled,
     returningTraderPremiumInput,
@@ -362,7 +363,7 @@ export function TradeRecruitmentTool({
           <span>추가 조건·메모 <small>선택 사항</small></span>
           <textarea
             id="recruitment-memo"
-            value={memo}
+            value={memoText}
             maxLength={300}
             rows={3}
             placeholder="예: 답변이 늦을 수 있습니다. 첫 거래자는 활동 내역을 확인합니다."
@@ -379,3 +380,20 @@ export function TradeRecruitmentTool({
     </section>
   );
 }
+
+function recruitmentPropsEqual(
+  previous: TradeRecruitmentToolProps,
+  next: TradeRecruitmentToolProps,
+) {
+  if (previous.active !== next.active) return false;
+  if (!next.active) return true;
+  return previous.tradeRole === next.tradeRole
+    && previous.amountUnit === next.amountUnit
+    && previous.amountInput === next.amountInput
+    && previous.sellerPremiumInput === next.sellerPremiumInput
+    && previous.approximateKrw === next.approximateKrw
+    && previous.approximateSats === next.approximateSats
+    && previous.bitcoinDisplayUnit === next.bitcoinDisplayUnit;
+}
+
+export const TradeRecruitmentTool = memo(TradeRecruitmentToolComponent, recruitmentPropsEqual);
