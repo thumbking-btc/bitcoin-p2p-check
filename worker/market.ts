@@ -8,6 +8,8 @@ const PRICE_TIMEOUT_MS = 4_000;
 const PREMIUM_TIMEOUT_MS = 2_500;
 const FEE_TIMEOUT_MS = 2_500;
 const FRESH_CACHE_SECONDS = 15;
+const PREMIUM_FRESH_CACHE_SECONDS = 60;
+const PREMIUM_RETRY_BACKOFF_SECONDS = 30;
 const FEE_FRESH_CACHE_SECONDS = 60;
 const FEE_RETRY_BACKOFF_SECONDS = 30;
 const STALE_CACHE_SECONDS = 5 * 60;
@@ -53,6 +55,10 @@ type FeeValue = {
   retrievedAt: string;
 };
 
+type PremiumBackoff = {
+  failure: UpstreamFailure;
+};
+
 type FeeBackoff = {
   failure: UpstreamFailure;
 };
@@ -60,6 +66,13 @@ type FeeBackoff = {
 type SourceResult<T> =
   | { ok: true; value: T }
   | { ok: false; failure: UpstreamFailure };
+
+type ResolvedSource<T> = {
+  value: T | null;
+  state: SourceState;
+  failure: UpstreamFailure | null;
+  staleAgeSeconds: number | null;
+};
 
 type MarketSnapshot = {
   checkedAt: string;
@@ -97,6 +110,7 @@ type CloudflareCacheStorage = CacheStorage & { default: Cache };
 
 let pendingSnapshotWithPrice: Promise<MarketSnapshot> | null = null;
 let pendingReferenceSnapshot: Promise<MarketSnapshot> | null = null;
+let pendingPremiumFetch: Promise<SourceResult<PremiumValue>> | null = null;
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -177,6 +191,14 @@ async function fetchPremium(retrievedAt: string): Promise<SourceResult<PremiumVa
   return { ok: true, value: { koreaPremium, retrievedAt } };
 }
 
+function fetchPremiumShared(retrievedAt: string): Promise<SourceResult<PremiumValue>> {
+  if (pendingPremiumFetch) return pendingPremiumFetch;
+  pendingPremiumFetch = fetchPremium(retrievedAt).finally(() => {
+    pendingPremiumFetch = null;
+  });
+  return pendingPremiumFetch;
+}
+
 async function fetchFees(retrievedAt: string): Promise<SourceResult<FeeValue>> {
   const result = await fetchJson(MEMPOOL_FEES, FEE_TIMEOUT_MS);
   if (!result.ok) return result;
@@ -223,7 +245,9 @@ type CacheName =
   | "fresh-with-price"
   | "fresh-reference"
   | "last-price"
+  | "fresh-premium"
   | "last-premium"
+  | "premium-backoff"
   | "fresh-fees"
   | "last-fees"
   | "fees-backoff";
@@ -266,18 +290,69 @@ function isRecent(timestamp: string | null, nowMs: number): boolean {
   return age !== null && age <= STALE_CACHE_SECONDS;
 }
 
+async function resolvePremium(
+  request: Request,
+  cache: Cache,
+  context: WorkerExecutionContext,
+  nowMs: number,
+  retrievedAt: string,
+): Promise<ResolvedSource<PremiumValue>> {
+  const [freshPremium, lastPremium, backoff] = await Promise.all([
+    readCachedJson<PremiumValue>(cache, cacheKey(request, "fresh-premium")),
+    readCachedJson<PremiumValue>(cache, cacheKey(request, "last-premium")),
+    readCachedJson<PremiumBackoff>(cache, cacheKey(request, "premium-backoff")),
+  ]);
+
+  if (freshPremium) {
+    return { value: freshPremium, state: "current", failure: null, staleAgeSeconds: null };
+  }
+
+  const usableLastPremium = lastPremium && isRecent(lastPremium.retrievedAt, nowMs)
+    ? lastPremium
+    : null;
+  if (backoff) {
+    return {
+      value: usableLastPremium,
+      state: usableLastPremium ? "stale" : "unavailable",
+      failure: backoff.failure,
+      staleAgeSeconds: usableLastPremium ? ageSeconds(usableLastPremium.retrievedAt, nowMs) : null,
+    };
+  }
+
+  const result = await fetchPremiumShared(retrievedAt);
+  if (result.ok) {
+    context.waitUntil(Promise.all([
+      cache.put(
+        cacheKey(request, "fresh-premium"),
+        cacheResponse(result.value, PREMIUM_FRESH_CACHE_SECONDS),
+      ),
+      cache.put(
+        cacheKey(request, "last-premium"),
+        cacheResponse(result.value, STALE_CACHE_SECONDS),
+      ),
+    ]).then(() => undefined));
+    return { value: result.value, state: "current", failure: null, staleAgeSeconds: null };
+  }
+
+  context.waitUntil(cache.put(
+    cacheKey(request, "premium-backoff"),
+    cacheResponse({ failure: result.failure }, PREMIUM_RETRY_BACKOFF_SECONDS),
+  ));
+  return {
+    value: usableLastPremium,
+    state: usableLastPremium ? "stale" : "unavailable",
+    failure: result.failure,
+    staleAgeSeconds: usableLastPremium ? ageSeconds(usableLastPremium.retrievedAt, nowMs) : null,
+  };
+}
+
 async function resolveFees(
   request: Request,
   cache: Cache,
   context: WorkerExecutionContext,
   nowMs: number,
   retrievedAt: string,
-): Promise<{
-  value: FeeValue | null;
-  state: SourceState;
-  failure: UpstreamFailure | null;
-  staleAgeSeconds: number | null;
-}> {
+): Promise<ResolvedSource<FeeValue>> {
   const [freshFees, lastFees, backoff] = await Promise.all([
     readCachedJson<FeeValue>(cache, cacheKey(request, "fresh-fees")),
     readCachedJson<FeeValue>(cache, cacheKey(request, "last-fees")),
@@ -346,22 +421,18 @@ async function buildSnapshot(
   const nowMs = now.getTime();
   const checkedAt = now.toISOString();
 
-  const [priceResult, premiumResult, feeResult, cachedPrice, cachedPremium] = await Promise.all([
+  const [priceResult, premiumResult, feeResult, cachedPrice] = await Promise.all([
     includePrice ? fetchPrice(nowMs, checkedAt) : Promise.resolve(null),
-    fetchPremium(checkedAt),
+    resolvePremium(request, cache, context, nowMs, checkedAt),
     resolveFees(request, cache, context, nowMs, checkedAt),
     includePrice ? readCachedJson<PriceValue>(cache, cacheKey(request, "last-price")) : Promise.resolve(null),
-    readCachedJson<PremiumValue>(cache, cacheKey(request, "last-premium")),
   ]);
 
   const usableCachedPrice = cachedPrice && isRecent(cachedPrice.retrievedAt, nowMs)
     ? cachedPrice
     : null;
-  const usableCachedPremium = cachedPremium && isRecent(cachedPremium.retrievedAt, nowMs)
-    ? cachedPremium
-    : null;
   const price = priceResult?.ok ? priceResult.value : usableCachedPrice;
-  const premium = premiumResult.ok ? premiumResult.value : usableCachedPremium;
+  const premium = premiumResult.value;
   const priceState: SourceState = !includePrice
     ? "unavailable"
     : priceResult?.ok
@@ -369,18 +440,12 @@ async function buildSnapshot(
       : price
         ? "stale"
         : "unavailable";
-  const premiumState: SourceState = premiumResult.ok ? "current" : premium ? "stale" : "unavailable";
+  const premiumState = premiumResult.state;
 
   if (priceResult?.ok) {
     context.waitUntil(cache.put(
       cacheKey(request, "last-price"),
       cacheResponse(priceResult.value, STALE_CACHE_SECONDS),
-    ));
-  }
-  if (premiumResult.ok) {
-    context.waitUntil(cache.put(
-      cacheKey(request, "last-premium"),
-      cacheResponse(premiumResult.value, STALE_CACHE_SECONDS),
     ));
   }
 
@@ -409,12 +474,12 @@ async function buildSnapshot(
     sourceStatus: { price: priceState, premium: premiumState, fees: feeResult.state },
     sourceFailure: {
       price: includePrice && priceResult && !priceResult.ok ? priceResult.failure : null,
-      premium: premiumResult.ok ? null : premiumResult.failure,
+      premium: premiumResult.failure,
       fees: feeResult.failure,
     },
     staleAgeSeconds: {
       price: priceState === "stale" ? ageSeconds(price?.retrievedAt ?? null, nowMs) : null,
-      premium: premiumState === "stale" ? ageSeconds(premium?.retrievedAt ?? null, nowMs) : null,
+      premium: premiumResult.staleAgeSeconds,
       fees: feeResult.staleAgeSeconds,
     },
     sources: {
