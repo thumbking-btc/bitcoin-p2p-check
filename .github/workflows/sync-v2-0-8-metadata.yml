@@ -1,0 +1,68 @@
+name: Sync v2.0.8 metadata
+
+on:
+  push:
+    branches: [optimize/final-main-cleanup-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v5
+        with:
+          ref: optimize/final-main-cleanup-v2
+
+      - name: Sync lock metadata and optimization assertions
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          lock.version = packageJson.version;
+          lock.packages[''].version = packageJson.version;
+          fs.writeFileSync('package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
+
+          const testPath = 'tests/rendered-html.test.mjs';
+          const original = fs.readFileSync(testPath, 'utf8');
+          let registrationUpdates = 0;
+          let cacheUpdates = 0;
+          const next = original.split('\n').flatMap((line) => {
+            if (line.includes('assert.match(registration') && line.includes('serviceWorker')) {
+              registrationUpdates += 1;
+              return [
+                '  assert.match(registration, /serviceWorkerUrl =/);',
+                '  assert.match(registration, /updateViaCache: "none"/);',
+              ];
+            }
+            if (line.includes('assert.match(serviceWorker') && line.includes('bitcoin-p2p-check-precache-v6')) {
+              cacheUpdates += 1;
+              return [
+                '  assert.match(serviceWorker, /WORKER_VERSION/);',
+                '  assert.match(serviceWorker, /bitcoin-p2p-check-precache-\\$\\{WORKER_VERSION\\}/);',
+                '  assert.match(serviceWorker, /matchCurrentCaches/);',
+              ];
+            }
+            return [line];
+          }).join('\n');
+
+          if (registrationUpdates !== 1 || cacheUpdates !== 1) {
+            throw new Error(`unexpected assertion matches: registration=${registrationUpdates}, cache=${cacheUpdates}`);
+          }
+          fs.writeFileSync(testPath, next);
+          NODE
+
+      - name: Commit synchronized files
+        run: |
+          if git diff --quiet -- package-lock.json tests/rendered-html.test.mjs; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json tests/rendered-html.test.mjs
+          git commit -m "Sync v2.0.8 lock metadata and optimization tests"
+          git push origin HEAD:optimize/final-main-cleanup-v2
