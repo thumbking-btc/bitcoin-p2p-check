@@ -19,9 +19,6 @@
 /out/
 *.tsbuildinfo
 
-# generated styles
-/app/runtime-globals.css
-
 # misc
 .DS_Store
 *.pem
