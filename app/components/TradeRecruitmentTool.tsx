@@ -236,36 +236,38 @@ export function TradeRecruitmentTool({
               : "여러 개 선택 가능"}</small>
           </summary>
           <div className="recruitment-option-list">
-            <label className="recruitment-check">
-              <input
-                type="checkbox"
-                checked={returningTraderEnabled}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setReturningTraderEnabled(checked);
-                  if (checked && !returningTraderPremiumInput) {
-                    setReturningTraderPremiumInput(suggestedReturningPremium(sellerPremiumInput));
-                  }
-                }}
-              />
-              <span>기존 거래자 우대 프리미엄</span>
-            </label>
-            {returningTraderEnabled ? (
-              <label className="returning-premium" htmlFor="returning-trader-premium">
-                <span>기존 거래자 프리미엄</span>
-                <span className="input-with-unit">
-                  <input
-                    id="returning-trader-premium"
-                    inputMode="decimal"
-                    value={returningTraderPremiumInput}
-                    onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
-                    aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
-                    aria-invalid={returningPremiumInvalid || undefined}
-                  />
-                  <b aria-hidden="true">%</b>
-                </span>
+            <div className={`returning-option${returningTraderEnabled ? " is-enabled" : ""}`}>
+              <label className="recruitment-check">
+                <input
+                  type="checkbox"
+                  checked={returningTraderEnabled}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setReturningTraderEnabled(checked);
+                    if (checked && !returningTraderPremiumInput) {
+                      setReturningTraderPremiumInput(suggestedReturningPremium(sellerPremiumInput));
+                    }
+                  }}
+                />
+                <span>기존 거래자 우대</span>
               </label>
-            ) : null}
+              {returningTraderEnabled ? (
+                <label className="returning-premium" htmlFor="returning-trader-premium">
+                  <span>우대 프리미엄</span>
+                  <span className="input-with-unit">
+                    <input
+                      id="returning-trader-premium"
+                      inputMode="decimal"
+                      value={returningTraderPremiumInput}
+                      onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                      aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
+                      aria-invalid={returningPremiumInvalid || undefined}
+                    />
+                    <b aria-hidden="true">%</b>
+                  </span>
+                </label>
+              ) : null}
+            </div>
             {tradeRole === "buyer" ? (
               <label className="recruitment-check">
                 <input

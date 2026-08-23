@@ -807,7 +807,11 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, /<details class="recruitment-options">/);
   assert.match(html, /선택 문구 추가/);
   assert.match(html, /여러 개 선택 가능/);
-  assert.match(html, /기존 거래자 우대 프리미엄/);
+  assert.match(html, /기존 거래자 우대/);
+  assert.match(recruitmentComponent, /className=\{`returning-option\$\{returningTraderEnabled \? " is-enabled" : ""\}`\}/);
+  assert.match(recruitmentComponent, /<span>우대 프리미엄<\/span>/);
+  assert.match(css, /\.returning-option\.is-enabled\s*\{[^}]*grid-template-columns:/s);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.returning-option\.is-enabled\s*\{\s*grid-template-columns:\s*1fr;/);
   assert.match(html, /원화 출처 설명 가능/);
   assert.match(html, /상호 신원확인 협의 가능/);
   assert.match(html, /추가 조건·메모/);

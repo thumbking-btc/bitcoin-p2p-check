@@ -171,7 +171,11 @@ a { color: inherit; }
 .recruitment-option-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px; border-top: 1px solid var(--line); background: #f7f3ea; }
 .recruitment-check { display: flex; min-height: 44px; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid var(--control-line); background: #fff; color: var(--ink); cursor: pointer; font-size: 12px; font-weight: 720; line-height: 1.35; }
 .recruitment-check input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--orange-dark); }
-.returning-premium { display: grid; min-width: 0; grid-column: 1 / -1; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.1fr); gap: 10px; align-items: center; }
+.returning-option { display: grid; min-width: 0; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr); border: 1px solid var(--control-line); background: #fff; }
+.returning-option.is-enabled { grid-template-columns: minmax(0, 1fr) minmax(220px, .8fr); }
+.returning-option .recruitment-check { border: 0; background: transparent; }
+.returning-option.is-enabled .recruitment-check { border-right: 1px solid var(--line); }
+.returning-premium { display: grid; min-width: 0; grid-template-columns: auto minmax(116px, 1fr); gap: 8px; align-items: center; padding: 5px 6px 5px 10px; }
 .returning-premium > span:first-child { margin: 0; }
 .returning-premium .input-with-unit input { font-size: 16px; }
 .recruitment-memo { display: grid; min-width: 0; }
@@ -353,6 +357,9 @@ a { color: inherit; }
   .output-picker { margin-inline: 12px; }
   .trade-recruitment { margin-inline: 12px; }
   .recruitment-option-list { grid-template-columns: 1fr; }
+  .returning-option.is-enabled { grid-template-columns: 1fr; }
+  .returning-option.is-enabled .recruitment-check { border-right: 0; border-bottom: 1px solid var(--line); }
+  .returning-premium { grid-template-columns: 1fr; gap: 5px; padding: 8px 9px 9px; }
   .network-fees { margin-inline: 12px; }
   .network-fees > header { display: grid; grid-template-columns: 1fr; gap: 2px; }
   .network-fees-status { justify-content: space-between; }
@@ -398,7 +405,6 @@ a { color: inherit; }
   .recruitment-heading { align-items: start; }
   .recruitment-heading a { min-height: 44px; }
   .recruitment-form, .recruitment-preview { padding: 10px; }
-  .returning-premium { grid-template-columns: minmax(104px, .75fr) minmax(0, 1.25fr); }
   .recruitment-actions { grid-template-columns: 1fr; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
