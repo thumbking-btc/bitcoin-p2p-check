@@ -31,9 +31,11 @@ jobs:
 
       - name: Verify receive-info flow was exported
         run: |
-          grep -R -q "BTC 받을 정보 추가" dist/client
-          grep -R -q "라이트닝 주소를 그대로 공유합니다" dist/client
-          grep -R -q "현재 거래의 받을 sats와 정확히 같은 인보이스만 통과합니다" dist/client
+          grep -R -q "BTC 받을 정보" dist/client
+          grep -R -q "선택 사항" dist/client
+          grep -R -q "금액 고정 인보이스 만들기" dist/client
+          grep -R -q "LNURL1" dist/client
+          grep -R -q "인보이스 확인 및 QR 만들기" dist/client
           grep -R -q 'params.set("v","3")\|params.set("v", "3")' dist/client
 
       - name: Verify Worker bundle
