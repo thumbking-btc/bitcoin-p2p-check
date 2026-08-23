@@ -866,9 +866,11 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
-  assert.match(recruitmentComponent, /const previewText = previewOverride \?\? generated\.text/);
-  assert.match(recruitmentComponent, /setPreviewOverride\(value === generated\.text \? null : value\)/);
-  assert.doesNotMatch(recruitmentComponent, /setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef|syncTradeRecruitmentPreview/);
+  assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\(\{/);
+  assert.match(recruitmentComponent, /previousGenerated: previewState\.generatedText/);
+  assert.match(recruitmentComponent, /nextGenerated: generated\.text/);
+  assert.match(recruitmentComponent, /setPreviewState\(\{[\s\S]*preview: event\.target\.value,[\s\S]*generatedText: generated\.text/);
+  assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
   assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
   assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
   assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
