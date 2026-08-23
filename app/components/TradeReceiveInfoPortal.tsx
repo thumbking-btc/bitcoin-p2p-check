@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
@@ -11,11 +11,19 @@ type Rail = "onchain" | "lightning";
 type LightningMode = "address" | "invoice";
 type QrArtifact = { data: Uint8ClampedArray; height: number; width: number; payload: string };
 type Result = {
-  kind: "onchain" | "lightning-address" | "lightning-invoice";
+  kind: "onchain" | "lightning-generated" | "lightning-invoice";
   payload: string;
   shareText: string;
   qr: QrArtifact;
   expiresAt?: number;
+};
+type LightningPayResponse = {
+  ok?: boolean;
+  amountSats?: number;
+  invoice?: string;
+  message?: string;
+  normalizedSource?: string;
+  sourceType?: "address" | "lnurl" | "url";
 };
 
 function findExpectedSats(): number | null {
@@ -26,18 +34,6 @@ function findExpectedSats(): number | null {
   if (!match) return null;
   const sats = Number(match[1].replace(/,/g, ""));
   return Number.isSafeInteger(sats) && sats > 0 ? sats : null;
-}
-
-function lightningAddress(value: string): string | null {
-  const normalized = value.trim().toLowerCase();
-  if (normalized.length < 3 || normalized.length > 320 || /\s/.test(normalized)) return null;
-  const at = normalized.indexOf("@");
-  if (at <= 0 || at !== normalized.lastIndexOf("@") || at === normalized.length - 1) return null;
-  const user = normalized.slice(0, at);
-  const domain = normalized.slice(at + 1);
-  if (!/^[a-z0-9._+-]{1,128}$/.test(user)) return null;
-  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(domain)) return null;
-  return `${user}@${domain}`;
 }
 
 function formatSats(value: number) {
@@ -57,6 +53,11 @@ function formatExpiry(seconds: number) {
   }).format(new Date(seconds * 1_000));
 }
 
+function invoiceLike(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith("lnbc") || normalized.startsWith("lightning:lnbc");
+}
+
 async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((value) => value ? resolve(value) : reject(new Error("QR 생성 실패")), "image/png");
@@ -64,21 +65,28 @@ async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
   return new File([blob], name, { type: "image/png", lastModified: Date.now() });
 }
 
+async function readLightningPayResponse(response: Response): Promise<LightningPayResponse> {
+  const text = await response.text();
+  if (!text) throw new Error("라이트닝 결제 요청 서버가 빈 응답을 반환했습니다.");
+  try {
+    return JSON.parse(text) as LightningPayResponse;
+  } catch {
+    throw new Error("라이트닝 결제 요청 서버의 응답을 읽지 못했습니다.");
+  }
+}
+
 function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
-  const [address, setAddress] = useState("");
+  const [lightningSource, setLightningSource] = useState("");
   const [invoice, setInvoice] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const remaining = useMemo(() => {
-    if (!result?.expiresAt) return null;
-    return Math.max(0, result.expiresAt - Math.floor(Date.now() / 1000));
-  }, [result]);
+  const generationRef = useRef(0);
 
   useLayoutEffect(() => {
     if (!result || !canvasRef.current) return;
@@ -95,20 +103,48 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   }, [result]);
 
   function clear() {
+    generationRef.current += 1;
     result?.qr.data.fill(0);
     setResult(null);
     setError("");
     setFeedback("");
   }
 
-  function build() {
+  function makeLightningInvoiceResult(rawInvoice: string, amountSats: number, generated: boolean): Result {
+    const checked = validateBolt11Invoice(rawInvoice, {
+      expectedSats: BigInt(amountSats),
+      minimumRemainingSeconds: 60,
+    });
+    const qr = createVerifiedTextQr(checked.canonicalInvoice.toUpperCase(), {
+      maximumLength: MAX_BOLT11_LENGTH,
+      maximumPixelSize: 520,
+      level: "M",
+    });
+    return {
+      kind: generated ? "lightning-generated" : "lightning-invoice",
+      payload: checked.canonicalInvoice,
+      expiresAt: checked.expiresAt,
+      qr,
+      shareText: [
+        "[BTC 수취정보 · 라이트닝 인보이스]",
+        `받을 금액: ${formatSats(amountSats)}`,
+        `인보이스 만료: ${formatExpiry(checked.expiresAt)}`,
+        "BOLT11:",
+        checked.canonicalInvoice,
+      ].join("\n"),
+    };
+  }
+
+  async function build() {
+    if (busy) return;
     clear();
     if (!expectedSats) {
       setError("거래 금액을 먼저 계산하십시오.");
       return;
     }
-    try {
-      if (rail === "onchain") {
+
+    if (rail === "onchain") {
+      try {
         const request = createOnchainRequest(onchain.trim(), BigInt(expectedSats));
         const qr = createVerifiedTextQr(request.uri, { maximumLength: 220, maximumPixelSize: 520, level: "M" });
         setResult({
@@ -123,64 +159,81 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
           ].join("\n"),
         });
         setFeedback("주소와 거래 금액을 확인하여 BIP21 QR을 만들었습니다.");
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
+      }
+      return;
+    }
+
+    if (lightningMode === "invoice") {
+      if (!invoice.trim()) {
+        setError("BOLT11 인보이스를 입력하십시오.");
         return;
       }
+      try {
+        setResult(makeLightningInvoiceResult(invoice, expectedSats, false));
+        setFeedback("인보이스의 메인넷·금액·서명·만료시간을 확인했습니다.");
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "라이트닝 인보이스를 확인하지 못했습니다.");
+      }
+      return;
+    }
 
-      if (lightningMode === "address") {
-        const normalized = lightningAddress(address);
-        if (!normalized) throw new Error("라이트닝 주소는 사용자명@도메인 형식으로 입력하십시오.");
-        const qr = createVerifiedTextQr(normalized, { maximumLength: 320, maximumPixelSize: 520, level: "M" });
-        setResult({
-          kind: "lightning-address",
-          payload: normalized,
-          qr,
-          shareText: [
-            "[BTC 수취정보 · 라이트닝 주소]",
-            `받을 금액: ${formatSats(expectedSats)}`,
-            `라이트닝 주소: ${normalized}`,
-            "금액은 주소 QR에 고정되지 않습니다. 위 거래 금액을 확인한 뒤 송금하십시오.",
-          ].join("\n"),
-        });
-        setFeedback("라이트닝 주소와 주소 QR을 만들었습니다.");
+    const source = lightningSource.trim();
+    if (!source) {
+      setError("라이트닝 주소 또는 LNURL-pay를 입력하십시오.");
+      return;
+    }
+
+    setBusy(true);
+    setFeedback("현재 거래 금액으로 라이트닝 인보이스를 요청하고 있습니다.");
+    const generation = generationRef.current;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch("/api/lightning-pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+        body: JSON.stringify({ source, amountSats: expectedSats }),
+      });
+      const data = await readLightningPayResponse(response);
+      if (!response.ok || !data.ok || typeof data.invoice !== "string" || data.amountSats !== expectedSats) {
+        throw new Error(data.message || "라이트닝 주소에서 인보이스를 만들지 못했습니다.");
+      }
+      if (generationRef.current !== generation) return;
+      const next = makeLightningInvoiceResult(data.invoice, expectedSats, true);
+      if (generationRef.current !== generation) {
+        next.qr.data.fill(0);
         return;
       }
-
-      const checked = validateBolt11Invoice(invoice, {
-        expectedSats: BigInt(expectedSats),
-        minimumRemainingSeconds: 60,
-      });
-      const qr = createVerifiedTextQr(checked.canonicalInvoice.toUpperCase(), {
-        maximumLength: MAX_BOLT11_LENGTH,
-        maximumPixelSize: 520,
-        level: "M",
-      });
-      setResult({
-        kind: "lightning-invoice",
-        payload: checked.canonicalInvoice,
-        expiresAt: checked.expiresAt,
-        qr,
-        shareText: [
-          "[BTC 수취정보 · 라이트닝 인보이스]",
-          `받을 금액: ${formatSats(expectedSats)}`,
-          `인보이스 만료: ${formatExpiry(checked.expiresAt)}`,
-          "BOLT11:",
-          checked.canonicalInvoice,
-        ].join("\n"),
-      });
-      setFeedback("인보이스의 메인넷·금액·서명·만료시간을 확인했습니다.");
+      setResult(next);
+      if (typeof data.normalizedSource === "string" && data.sourceType === "address") setLightningSource(data.normalizedSource);
+      setError("");
+      setFeedback("수취 지갑이 발급한 거래 금액 고정 인보이스를 확인하고 QR을 만들었습니다.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "수취정보를 확인하지 못했습니다.");
+      if (generationRef.current !== generation) return;
+      if (controller.signal.aborted) {
+        setError("라이트닝 지갑 서비스의 응답 시간이 초과되었습니다. 다시 시도하거나 인보이스를 직접 입력하십시오.");
+      } else {
+        setError(reason instanceof Error ? reason.message : "라이트닝 결제 요청을 만들지 못했습니다.");
+      }
+      setFeedback("");
+    } finally {
+      window.clearTimeout(timeout);
+      setBusy(false);
     }
   }
 
   async function share() {
     if (!result || !canvasRef.current) return;
-    if (result.expiresAt && result.expiresAt <= Math.floor(Date.now() / 1000)) {
-      setError("인보이스가 만료되었습니다. 지갑에서 새 인보이스를 만든 뒤 다시 입력하십시오.");
+    if (result.expiresAt && result.expiresAt <= Math.floor(Date.now() / 1_000)) {
+      setError("인보이스가 만료되었습니다. 새 인보이스를 만든 뒤 다시 공유하십시오.");
       return;
     }
     try {
-      const file = await qrFile(canvasRef.current, result.kind === "onchain" ? "onchain-qr.png" : "lightning-qr.png");
+      const file = await qrFile(canvasRef.current, result.kind === "onchain" ? "onchain-qr.png" : "lightning-invoice-qr.png");
       if (navigator.share) {
         const canFile = typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
         if (canFile) {
@@ -189,7 +242,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
           return;
         }
         await navigator.share({ title: "BTC 수취정보", text: result.shareText });
-        setFeedback("수취정보 문구를 공유했습니다. QR 파일 동시 공유를 지원하지 않는 기기입니다.");
+        setFeedback("수취정보 문구를 공유했습니다. 이 기기는 QR 파일 동시 공유를 지원하지 않습니다.");
         return;
       }
       await navigator.clipboard.writeText(result.shareText);
@@ -200,17 +253,34 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     }
   }
 
+  function changeLightningSource(value: string) {
+    if (invoiceLike(value)) {
+      clear();
+      setInvoice(value);
+      setLightningSource("");
+      setLightningMode("invoice");
+      setFeedback("BOLT11 인보이스로 인식하여 직접 입력 방식으로 전환했습니다.");
+      return;
+    }
+    clear();
+    setLightningSource(value.slice(0, 2_048));
+  }
+
+  const buildLabel = rail === "onchain"
+    ? "QR 만들기"
+    : lightningMode === "address"
+      ? busy ? "인보이스 요청 중" : "금액 고정 인보이스 만들기"
+      : "인보이스 확인 및 QR 만들기";
+
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
-      <header className={styles.header}>
-        <h3 id="receive-info-title">BTC 받을 정보</h3>
-        <span className={styles.optional}>선택 사항</span>
-      </header>
+      <div className={styles.header}>
+        <h3 id="receive-info-title">BTC 받을 정보 <span>(선택 사항)</span></h3>
+      </div>
+      <p className={styles.intro}>거래 조건과 함께 받을 주소나 인보이스를 공유할 수 있습니다. 입력하지 않으면 거래 조건만 공유됩니다.</p>
+      <p className={styles.amountNote}>현재 거래에서 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
 
-      <p className={styles.intro}>거래 조건과 함께 받을 주소나 인보이스를 공유할 수 있습니다. 입력하지 않아도 거래 조건만 공유할 수 있습니다.</p>
-      <p className={styles.amountNote}><span>구매자만 입력합니다.</span><span>현재 받을 금액</span><b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
-
-      <fieldset className={styles.railPicker}>
+      <fieldset className={styles.railPicker} disabled={busy}>
         <legend>BTC 전송 방식</legend>
         <label>
           <input type="radio" name="embedded-receive-rail" checked={rail === "onchain"} onChange={() => { clear(); setRail("onchain"); }} />
@@ -218,42 +288,42 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         </label>
         <label>
           <input type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} />
-          <span><strong>라이트닝</strong><small>주소 또는 인보이스</small></span>
+          <span><strong>라이트닝</strong><small>주소·LNURL 또는 인보이스</small></span>
         </label>
       </fieldset>
 
       {rail === "onchain" ? (
         <label className={styles.field}>
           <span>온체인 수취 주소</span>
-          <input className={styles.input} value={onchain} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
+          <input className={styles.input} value={onchain} disabled={busy} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
         </label>
       ) : (
         <>
           <div className={styles.modeRow}>
-            <p>{lightningMode === "address" ? "라이트닝 주소를 그대로 공유합니다." : "지갑에서 만든 인보이스의 금액과 만료를 확인합니다."}</p>
-            <button className={styles.modeButton} type="button" onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
+            <p>{lightningMode === "address" ? "주소만 입력하면 현재 거래 금액의 인보이스를 수취 지갑에 요청합니다." : "지갑에서 직접 만든 인보이스를 거래 금액과 대조합니다."}</p>
+            <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
             </button>
           </div>
           {lightningMode === "address" ? (
             <label className={styles.field}>
-              <span>라이트닝 주소</span>
-              <input className={styles.input} value={address} onChange={(event) => { clear(); setAddress(event.target.value); }} placeholder="username@example.com" />
-              <small>주소와 주소 QR을 공유합니다. 금액은 QR에 고정되지 않습니다.</small>
+              <span>라이트닝 주소 / LNURL-pay</span>
+              <input className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
+              <small>Lightning Address와 지갑이 공유한 LNURL-pay 문자열을 지원합니다. 반환된 BOLT11은 거래 sats와 다시 대조합니다.</small>
             </label>
           ) : (
             <label className={styles.field}>
               <span>BOLT11 인보이스</span>
-              <textarea className={styles.textarea} value={invoice} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc..." />
-              <small>현재 거래에서 받을 sats와 정확히 같은 인보이스만 사용할 수 있습니다.</small>
+              <textarea className={styles.textarea} value={invoice} disabled={busy} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+              <small>메인넷·서명·만료시간과 현재 거래의 받을 sats가 정확히 같은지 확인합니다.</small>
             </label>
           )}
         </>
       )}
 
       <div className={styles.actions}>
-        <button className={styles.primary} type="button" onClick={build}>QR 만들기</button>
-        <button className={styles.secondary} type="button" onClick={() => { clear(); setOnchain(""); setAddress(""); setInvoice(""); }}>초기화</button>
+        <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
       </div>
 
       {error ? <p className={`${styles.status} ${styles.error}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
@@ -261,11 +331,11 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       {result ? (
         <div className={styles.result}>
           <div className={styles.resultInfo}>
-            <span className={styles.resultBadge}>{result.kind === "onchain" ? "온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
+            <span className={styles.resultBadge}>{result.kind === "onchain" ? "온체인" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{expectedSats ? formatSats(expectedSats) : "—"}</strong>
             <dl>
-              <div><dt>공유 내용</dt><dd>{result.kind === "lightning-invoice" ? "BOLT11 + QR" : result.kind === "lightning-address" ? "주소 + QR" : "BIP21 + QR"}</dd></div>
-              {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)}{remaining === 0 ? " · 만료됨" : ""}</dd></div> : null}
+              <div><dt>공유 내용</dt><dd>{result.kind === "onchain" ? "BIP21 + QR" : "BOLT11 + QR"}</dd></div>
+              {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)}</dd></div> : null}
             </dl>
             <button className={styles.primary} type="button" onClick={() => void share()}>수취정보 공유</button>
           </div>
