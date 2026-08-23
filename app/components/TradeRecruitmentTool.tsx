@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
   shareTradeRecruitmentText,
@@ -19,6 +19,11 @@ type TradeRecruitmentToolProps = {
   approximateKrw: number | null;
   approximateSats: number | null;
   bitcoinDisplayUnit: "sats" | "btc";
+};
+
+type RecruitmentPost = {
+  text: string;
+  error: string;
 };
 
 function signedDecimalOnly(value: string) {
@@ -62,6 +67,91 @@ function legacyCopy(value: string) {
   }
 }
 
+function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
+  const [previewOverride, setPreviewOverride] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    generatedText: string;
+    previewText: string;
+    message: string;
+  } | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const previewText = previewOverride ?? generated.text;
+  const previewDirty = previewOverride !== null && previewOverride !== generated.text;
+  const copyStatus = copyFeedback?.generatedText === generated.text
+    && copyFeedback.previewText === previewText
+    ? copyFeedback.message
+    : "";
+
+  function regeneratePreview() {
+    setPreviewOverride(null);
+    setCopyFeedback(null);
+  }
+
+  async function sharePreview() {
+    if (sharing) return;
+    const feedbackContext = {
+      generatedText: generated.text,
+      previewText,
+    };
+    setSharing(true);
+    setCopyFeedback(null);
+    const nativeShare = navigator.share
+      ? (value: string) => navigator.share({ title: "비트코인 P2P 거래 모집", text: value })
+      : null;
+    const clipboardWrite = navigator.clipboard?.writeText
+      ? navigator.clipboard.writeText.bind(navigator.clipboard)
+      : null;
+    const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
+    setSharing(false);
+    const message = outcome === "shared"
+      ? "모집글을 공유했습니다."
+      : outcome === "copied"
+        ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
+        : outcome === "empty"
+          ? "공유할 모집글을 입력하세요."
+          : outcome === "cancelled"
+            ? "공유를 취소했습니다."
+            : "자동 복사하지 못했습니다. 미리보기에서 직접 선택해 복사하세요.";
+    setCopyFeedback({ ...feedbackContext, message });
+  }
+
+  return (
+    <div className="recruitment-preview">
+      <label htmlFor="recruitment-preview">
+        <span>편집 가능한 모집글 미리보기</span>
+        <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
+      </label>
+      <textarea
+        id="recruitment-preview"
+        value={previewText}
+        rows={5}
+        maxLength={2_000}
+        aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
+        aria-invalid={Boolean(generated.error) || undefined}
+        onChange={(event) => {
+          const value = event.target.value;
+          setPreviewOverride(value === generated.text ? null : value);
+          setCopyFeedback(null);
+        }}
+      />
+      {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
+      <div className="recruitment-actions">
+        <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
+        <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
+          {sharing ? "공유 중" : "모집글 공유"}
+        </button>
+      </div>
+      <p
+        className={`recruitment-copy-status ${copyStatus.includes("못") ? "is-error" : ""}`}
+        id="recruitment-copy-status"
+        aria-live="polite"
+      >
+        {copyStatus}
+      </p>
+    </div>
+  );
+}
+
 export function TradeRecruitmentTool({
   tradeRole,
   amountUnit,
@@ -77,9 +167,6 @@ export function TradeRecruitmentTool({
   const [canShareKrwSource, setCanShareKrwSource] = useState(false);
   const [canVerifyIdentity, setCanVerifyIdentity] = useState(false);
   const [memo, setMemo] = useState("");
-  const [previewOverride, setPreviewOverride] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState("");
-  const [sharing, setSharing] = useState(false);
   const returningTraderPremiumInput = returningTraderPremiumOverride
     ?? suggestedReturningPremium(sellerPremiumInput);
   const returningPremiumPercent = returningTraderPremiumInput === "" || returningTraderPremiumInput === "-"
@@ -140,52 +227,13 @@ export function TradeRecruitmentTool({
     bitcoinDisplayUnit,
     tradeRole,
   ]);
-  const previewText = previewOverride ?? generated.text;
-  const previewDirty = previewOverride !== null && previewOverride !== generated.text;
   const returningPremiumInvalid = returningTraderEnabled
     && generated.error.startsWith("기존 거래자");
-
-  useEffect(() => {
-    setPreviewOverride(null);
-    setCopyStatus("");
-  }, [structuredKey]);
-
-  useEffect(() => {
-    setCopyStatus("");
-  }, [generated.text]);
-
-  function regeneratePreview() {
-    setPreviewOverride(null);
-    setCopyStatus("");
-  }
 
   function adjustReturningPremium(direction: -1 | 1) {
     const current = Number.isFinite(returningPremiumPercent) ? returningPremiumPercent : null;
     const next = stepPremiumPercent(current, direction);
     if (next !== null) setReturningTraderPremiumInput(String(next));
-  }
-
-  async function sharePreview() {
-    if (sharing) return;
-    setSharing(true);
-    setCopyStatus("");
-    const nativeShare = navigator.share
-      ? (value: string) => navigator.share({ title: "비트코인 P2P 거래 모집", text: value })
-      : null;
-    const clipboardWrite = navigator.clipboard?.writeText
-      ? navigator.clipboard.writeText.bind(navigator.clipboard)
-      : null;
-    const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
-    setSharing(false);
-    setCopyStatus(outcome === "shared"
-      ? "모집글을 공유했습니다."
-      : outcome === "copied"
-        ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
-      : outcome === "empty"
-        ? "공유할 모집글을 입력하세요."
-        : outcome === "cancelled"
-          ? "공유를 취소했습니다."
-        : "자동 복사하지 못했습니다. 미리보기에서 직접 선택해 복사하세요.");
   }
 
   return (
@@ -313,39 +361,7 @@ export function TradeRecruitmentTool({
         공개 모집에는 실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요. 필요한 정보는 상대방과 DM에서 확인하세요.
       </p>
 
-      <div className="recruitment-preview">
-        <label htmlFor="recruitment-preview">
-          <span>편집 가능한 모집글 미리보기</span>
-          <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
-        </label>
-        <textarea
-          id="recruitment-preview"
-          value={previewText}
-          rows={5}
-          maxLength={2_000}
-          aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
-          aria-invalid={Boolean(generated.error) || undefined}
-          onChange={(event) => {
-            const value = event.target.value;
-            setPreviewOverride(value === generated.text ? null : value);
-            setCopyStatus("");
-          }}
-        />
-        {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
-        <div className="recruitment-actions">
-          <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
-          <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
-            {sharing ? "공유 중" : "모집글 공유"}
-          </button>
-        </div>
-        <p
-          className={`recruitment-copy-status ${copyStatus.includes("못") ? "is-error" : ""}`}
-          id="recruitment-copy-status"
-          aria-live="polite"
-        >
-          {copyStatus}
-        </p>
-      </div>
+      <RecruitmentPreview key={structuredKey} generated={generated} />
     </section>
   );
 }
