@@ -1,4 +1,4 @@
-import { getTradeRecipientLabel } from "./trade-share-copy.mjs";
+import { formatTradeBitcoinAmount, getTradeRecipientLabel } from "./trade-share-copy.mjs";
 
 export type TradeShareImageInput = {
   tradeRole: "buyer" | "seller";
@@ -83,16 +83,6 @@ function fitText(
 
 function formatKrw(value: number) {
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
-}
-
-function formatSats(value: number) {
-  return `${Math.round(value).toLocaleString("ko-KR")} sats`;
-}
-
-function formatBtc(value: number) {
-  return `${value.toLocaleString("ko-KR", {
-    maximumFractionDigits: 8,
-  })} BTC`;
 }
 
 function formatPercentFromRatio(value: number | null) {
@@ -352,8 +342,7 @@ export async function createTradeShareImage(input: TradeShareImageInput): Promis
   drawFlowRow(context, {
     y: 528,
     label: "판매자 → 구매자",
-    value: input.bitcoinDisplayUnit === "btc" ? formatBtc(input.btcAmount) : formatSats(input.sats),
-    subvalue: input.bitcoinDisplayUnit === "btc" ? formatSats(input.sats) : formatBtc(input.btcAmount),
+    value: formatTradeBitcoinAmount({ sats: input.sats, bitcoinDisplayUnit: input.bitcoinDisplayUnit }),
     recipientLabel: input.tradeRole === "buyer" ? recipientLabel : undefined,
     highlighted: input.tradeRole === "buyer",
   });

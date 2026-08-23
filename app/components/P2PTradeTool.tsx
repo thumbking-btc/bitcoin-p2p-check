@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { calculateP2PQuote, SATS_PER_BTC, stepPremiumPercent } from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
-import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
+import { buildTradeIntent, formatTradeBitcoinAmount } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { createTradeShareImage, type TradeShareImageInput } from "../lib/trade-share-image";
@@ -768,7 +768,7 @@ export function P2PTradeTool() {
     tradeIntent,
     `계산 시각: ${formatTime(referenceTime)}`,
     `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
-    `판매자 → 구매자: ${bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)} (${bitcoinDisplayUnit === "btc" ? formatSats(quote.sats) : formatBtc(quote.sats)})`,
+    `판매자 → 구매자: ${formatTradeBitcoinAmount({ sats: quote.sats, bitcoinDisplayUnit })}`,
     `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
     "",
     "[가격 계산]",
@@ -867,7 +867,7 @@ export function P2PTradeTool() {
     });
     const tradeLink = tradeFragment ? `${window.location.origin}/${tradeFragment}` : "";
     const textWithLink = tradeLink
-      ? `${shareText}\n\n현재 시세로 다시 계산하기: ${tradeLink}`
+      ? `${shareText}\n\n거래 조건 검증하기: ${tradeLink}`
       : shareText;
     setShareStatus("");
     isSharingRef.current = true;
@@ -882,7 +882,7 @@ export function P2PTradeTool() {
         download: downloadTradeImage,
       });
       if (outcome === "shared") {
-        setShareStatus("현재 거래 조건을 공유했습니다.");
+        setShareStatus("거래 조건 이미지를 공유했습니다.");
       } else if (outcome === "downloaded") {
         setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
       } else if (outcome === "downloaded-after-error") {
@@ -989,7 +989,7 @@ export function P2PTradeTool() {
         ) : null}
         {importedTradeLink ? (
           <p className="imported-trade-notice" role="status">
-            공유된 입력값을 현재 업비트 시세로 다시 계산했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
+            공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
           </p>
         ) : null}
 
@@ -1225,14 +1225,14 @@ export function P2PTradeTool() {
             aria-busy={isSharing || shareImagePreparing}
           >
             {isSharing
-              ? "계산 결과 이미지 공유 중"
+              ? "거래 조건 이미지 공유 중"
               : shareImageFailed
-                ? "계산 결과 이미지 다시 준비"
+                ? "거래 조건 이미지 다시 준비"
                 : shareImagePreparing && !backgroundShareImagePreparing
-                  ? "계산 결과 이미지 준비 중"
+                  ? "거래 조건 이미지 준비 중"
                   : stalePrice
                     ? "시세 새로고침 후 공유"
-                    : "현재 계산 결과 이미지 공유"}
+                    : "거래 조건 이미지 공유"}
           </button>
           <p
             className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}

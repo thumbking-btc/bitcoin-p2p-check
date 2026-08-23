@@ -6,6 +6,27 @@ function finitePositive(value) {
 }
 
 /**
+ * Formats the exact bitcoin amount in the user's selected display unit.
+ * Whole 10,000-sat amounts use the compact Korean "만" form for sharing.
+ *
+ * @param {{ sats: number; bitcoinDisplayUnit?: "btc" | "sats" }} input
+ */
+export function formatTradeBitcoinAmount(input) {
+  const sats = finitePositive(input.sats);
+  if (sats === null) return "";
+  const roundedSats = Math.round(sats);
+  if (input.bitcoinDisplayUnit === "btc") {
+    return `${(roundedSats / SATS_PER_BTC).toLocaleString("ko-KR", {
+      maximumFractionDigits: 8,
+      useGrouping: false,
+    })} BTC`;
+  }
+  return roundedSats >= 10_000 && roundedSats % 10_000 === 0
+    ? `${(roundedSats / 10_000).toLocaleString("ko-KR")}만 sats`
+    : `${roundedSats.toLocaleString("ko-KR")} sats`;
+}
+
+/**
  * @param {{
  *   tradeRole: "buyer" | "seller";
  *   amountBasis?: "krw" | "bitcoin";
@@ -31,14 +52,7 @@ export function buildTradeIntent(input) {
 
   if (amountBasis === "bitcoin" && (input.tradeRole === "buyer" || input.tradeRole === "seller")) {
     const action = input.tradeRole === "buyer" ? "삽니다." : "팝니다.";
-    if (input.bitcoinDisplayUnit !== "btc") {
-      return `${Math.round(sats).toLocaleString("ko-KR")} sats ${action}`;
-    }
-    const btc = (sats / SATS_PER_BTC).toLocaleString("ko-KR", {
-      maximumFractionDigits: 8,
-      useGrouping: false,
-    });
-    return `${btc} BTC ${action}`;
+    return `${formatTradeBitcoinAmount({ sats, bitcoinDisplayUnit: input.bitcoinDisplayUnit })} ${action}`;
   }
 
   return "";

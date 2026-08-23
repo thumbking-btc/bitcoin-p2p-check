@@ -4,7 +4,11 @@ import test from "node:test";
 import { calculateP2PQuote, MAX_SATS, stepPremiumPercent } from "../app/lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../app/lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../app/lib/share-transport.mjs";
-import { buildTradeIntent, getTradeRecipientLabel } from "../app/lib/trade-share-copy.mjs";
+import {
+  buildTradeIntent,
+  formatTradeBitcoinAmount,
+  getTradeRecipientLabel,
+} from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
 import {
@@ -124,7 +128,7 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "buyer", amountBasis: "bitcoin", paymentKrw: 10_200_000, sats: 10_000_000, bitcoinDisplayUnit: "sats" }),
-    "10,000,000 sats 삽니다.",
+    "1,000만 sats 삽니다.",
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "seller", amountBasis: "krw", paymentKrw: 500_000, sats: 490_196, bitcoinDisplayUnit: "btc" }),
@@ -140,8 +144,11 @@ test("writes a natural buy or sell sentence at the start of a share", () => {
   );
   assert.equal(
     buildTradeIntent({ tradeRole: "seller", paymentKrw: 10_000, sats: 10_000_000, bitcoinDisplayUnit: "sats" }),
-    "10,000,000 sats 팝니다.",
+    "1,000만 sats 팝니다.",
   );
+  assert.equal(formatTradeBitcoinAmount({ sats: 40_000_000, bitcoinDisplayUnit: "sats" }), "4,000만 sats");
+  assert.equal(formatTradeBitcoinAmount({ sats: 4_000_000, bitcoinDisplayUnit: "btc" }), "0.04 BTC");
+  assert.equal(formatTradeBitcoinAmount({ sats: 1_234_567, bitcoinDisplayUnit: "sats" }), "1,234,567 sats");
   assert.equal(getTradeRecipientLabel("buyer"), "구매자가 받음");
   assert.equal(getTradeRecipientLabel("seller"), "판매자가 받음");
 });
@@ -551,7 +558,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   }
   assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
   assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
-  assert.match(html, /현재 계산 결과 이미지 공유/);
+  assert.match(html, /거래 조건 이미지 공유/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
@@ -657,6 +664,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.ok(shareTextOrder.every((index) => index >= 0));
   assert.deepEqual(shareTextOrder, [...shareTextOrder].sort((left, right) => left - right));
   assert.doesNotMatch(shareTextBlock, /반올림/);
+  assert.match(shareTextBlock, /formatTradeBitcoinAmount/);
+  assert.doesNotMatch(shareTextBlock, /formatTradeBitcoinAmount[^\n]*\([^\n]*format(?:Sats|Btc)/);
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
   assert.match(component, /BTC로 보기/);
@@ -675,14 +684,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /satsToBtcInput\(imported\.amount\)/);
   assert.match(component, /inputMode=\{amountBasis === "krw" \|\| bitcoinDisplayUnit === "sats" \? "numeric" : "decimal"\}/);
   assert.match(shareTransport, /files: \[file\]/);
-  assert.match(component, /현재 시세로 다시 계산하기:/);
+  assert.match(component, /거래 조건 검증하기:/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
   assert.match(component, /window\.history\.replaceState/);
-  assert.match(component, /현재 업비트 시세로 다시 계산했습니다/);
+  assert.match(component, /공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
-  assert.match(component, /계산 결과 이미지 준비 중/);
+  assert.match(component, /거래 조건 이미지 준비 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
@@ -692,6 +701,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /구매자 → 판매자/);
   assert.match(imageRenderer, /판매자 → 구매자/);
   assert.match(imageRenderer, /bitcoinDisplayUnit/);
+  assert.match(imageRenderer, /formatTradeBitcoinAmount/);
+  assert.doesNotMatch(imageRenderer, /subvalue:\s*input\.bitcoinDisplayUnit/);
   assert.match(imageRenderer, /amountBasis/);
   assert.match(imageRenderer, /금액 기준/);
   assert.match(imageRenderer, /recipientLabel/);
