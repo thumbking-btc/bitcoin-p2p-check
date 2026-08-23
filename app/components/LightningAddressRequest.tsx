@@ -378,20 +378,8 @@ export function LightningAddressRequest() {
           <p>구매자가 BTC를 받을 때</p>
           <h2 id="lightning-request-title">라이트닝 결제 요청 만들기</h2>
         </div>
-        <span>서버 저장 없음</span>
+        <span>저장하지 않음</span>
       </header>
-
-      <fieldset className={styles.modePicker}>
-        <legend>입력 방식</legend>
-        <label>
-          <input type="radio" name="lightning-input-mode" checked={mode === "address"} onChange={() => changeMode("address")} />
-          <span><b>라이트닝 주소</b><small>기본 방식</small></span>
-        </label>
-        <label>
-          <input type="radio" name="lightning-input-mode" checked={mode === "invoice"} onChange={() => changeMode("invoice")} />
-          <span><b>인보이스 직접 입력</b><small>lnbc… 붙여넣기</small></span>
-        </label>
-      </fieldset>
 
       <div className={styles.form}>
         <label className={styles.field} htmlFor="lightning-request-sats">
@@ -449,6 +437,13 @@ export function LightningAddressRequest() {
             <small>지갑에서 위 금액으로 새로 만든 메인넷 인보이스를 입력하십시오.</small>
           </label>
         )}
+      </div>
+
+      <div className={styles.modeSwitch}>
+        <span>{mode === "address" ? "지갑에서 인보이스를 이미 만들었습니까?" : "라이트닝 주소로 자동 발급받겠습니까?"}</span>
+        <button type="button" onClick={() => changeMode(mode === "address" ? "invoice" : "address")}>
+          {mode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
+        </button>
       </div>
 
       <div className={styles.primaryActions}>
