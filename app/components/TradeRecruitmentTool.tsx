@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
   shareTradeRecruitmentText,
-  syncTradeRecruitmentPreview,
 } from "../lib/trade-recruitment.mjs";
 import { stepPremiumPercent } from "../lib/p2p-quote.mjs";
 
@@ -78,6 +77,7 @@ export function TradeRecruitmentTool({
   const [canShareKrwSource, setCanShareKrwSource] = useState(false);
   const [canVerifyIdentity, setCanVerifyIdentity] = useState(false);
   const [memo, setMemo] = useState("");
+  const [previewOverride, setPreviewOverride] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [sharing, setSharing] = useState(false);
   const returningTraderPremiumInput = returningTraderPremiumOverride
@@ -140,38 +140,22 @@ export function TradeRecruitmentTool({
     bitcoinDisplayUnit,
     tradeRole,
   ]);
-  const [previewText, setPreviewText] = useState(generated.text);
-  const [previewDirty, setPreviewDirty] = useState(false);
-  const previousGeneratedRef = useRef(generated.text);
-  const previousStructuredKeyRef = useRef(structuredKey);
+  const previewText = previewOverride ?? generated.text;
+  const previewDirty = previewOverride !== null && previewOverride !== generated.text;
   const returningPremiumInvalid = returningTraderEnabled
     && generated.error.startsWith("기존 거래자");
 
   useEffect(() => {
-    const structuredChanged = previousStructuredKeyRef.current !== structuredKey;
-    const next = syncTradeRecruitmentPreview({
-      preview: previewText,
-      previousGenerated: previousGeneratedRef.current,
-      nextGenerated: generated.text,
-      force: structuredChanged,
-    });
-    previousGeneratedRef.current = generated.text;
-    previousStructuredKeyRef.current = structuredKey;
-    if (next.preview !== previewText) setPreviewText(next.preview);
-    if (next.dirty !== previewDirty) setPreviewDirty(next.dirty);
+    setPreviewOverride(null);
     setCopyStatus("");
-  }, [generated.text, previewDirty, previewText, structuredKey]);
+  }, [structuredKey]);
+
+  useEffect(() => {
+    setCopyStatus("");
+  }, [generated.text]);
 
   function regeneratePreview() {
-    const next = syncTradeRecruitmentPreview({
-      preview: previewText,
-      previousGenerated: previousGeneratedRef.current,
-      nextGenerated: generated.text,
-      force: true,
-    });
-    previousGeneratedRef.current = generated.text;
-    setPreviewText(next.preview);
-    setPreviewDirty(next.dirty);
+    setPreviewOverride(null);
     setCopyStatus("");
   }
 
@@ -343,8 +327,7 @@ export function TradeRecruitmentTool({
           aria-invalid={Boolean(generated.error) || undefined}
           onChange={(event) => {
             const value = event.target.value;
-            setPreviewText(value);
-            setPreviewDirty(value !== generated.text);
+            setPreviewOverride(value === generated.text ? null : value);
             setCopyStatus("");
           }}
         />
