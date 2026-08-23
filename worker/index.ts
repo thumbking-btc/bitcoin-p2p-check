@@ -1,4 +1,5 @@
 import { handleLightningAddressRequest } from "./lightning-address";
+import { handleLightningPayRequest } from "./lightning-pay";
 import { handleMarketRequest } from "./market";
 
 export interface WorkerExecutionContext {
@@ -19,6 +20,10 @@ export default {
 
     if (url.pathname === "/api/lightning-address" || url.pathname === "/api/lightning-address/") {
       return handleLightningAddressRequest(request);
+    }
+
+    if (url.pathname === "/api/lightning-pay" || url.pathname === "/api/lightning-pay/") {
+      return handleLightningPayRequest(request);
     }
 
     return new Response("Not found", {
