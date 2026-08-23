@@ -1,13 +1,13 @@
 {
   "name": "bitcoin-p2p-check",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "private": true,
   "engines": {
     "node": ">=22.13.0 <23"
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "npm install --package-lock-only --ignore-scripts && cp package-lock.json public/generated-package-lock.json && vinext build",
+    "build": "vinext build",
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
