@@ -71,6 +71,8 @@ export default function InstallPage() {
               src="/install/iphone-guide-v1.png"
               width="1080"
               height="1920"
+              loading="lazy"
+              decoding="async"
               alt="Safari의 더 보기, 공유, 메뉴 펼치기, 홈 화면에 추가, 추가 버튼을 차례대로 표시한 다섯 단계 안내"
             />
             <div className="install-guide-actions">
@@ -91,6 +93,8 @@ export default function InstallPage() {
               src="/install/android-guide-v1.png"
               width="1080"
               height="1920"
+              loading="lazy"
+              decoding="async"
               alt="Chrome의 더 보기, 설치 및 바로가기 만들기, 설치 버튼을 차례대로 표시한 세 단계 안내"
             />
             <div className="install-guide-actions">
