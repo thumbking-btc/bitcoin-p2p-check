@@ -1,4 +1,5 @@
 import { P2PTradeTool } from "./components/P2PTradeTool";
+import { TradeReceiveInfoPortal } from "./components/TradeReceiveInfoPortal";
 import { SupportPanel } from "./components/SupportPanel";
 import { InstallCta } from "./components/InstallCta";
 import { SiteRouteNav } from "./components/SiteRouteNav";
@@ -10,6 +11,7 @@ export default function Home() {
     <>
       <main className="site-main">
         <P2PTradeTool />
+        <TradeReceiveInfoPortal />
 
         <details className="reference-details">
           <summary>
