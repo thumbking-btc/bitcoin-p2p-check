@@ -15,6 +15,7 @@ const API_HEADERS = {
 const DISCOVERY_TIMEOUT_MS = 5_000;
 const INVOICE_TIMEOUT_MS = 7_000;
 const MAX_REDIRECTS = 2;
+const MAX_REQUEST_BYTES = 2_048;
 const MAX_JSON_BYTES = 256_000;
 const MAX_LIGHTNING_ADDRESS_LENGTH = 320;
 const MAX_INVOICE_LENGTH = 1_200;
@@ -139,6 +140,46 @@ function finiteSafeInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+async function readLimitedJson(request: Request): Promise<unknown> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) {
+    fail("INVALID_REQUEST", "요청 내용이 너무 큽니다.", 413);
+  }
+
+  if (!request.body) fail("INVALID_REQUEST", "요청 내용을 확인하지 못했습니다.");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        fail("INVALID_REQUEST", "요청 내용이 너무 큽니다.", 413);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch {
+    fail("INVALID_REQUEST", "요청 내용을 확인하지 못했습니다.");
+  }
+}
+
 async function fetchJson(url: URL, timeoutMs: number): Promise<unknown> {
   let current = safeHttpsUrl(url);
 
@@ -214,12 +255,7 @@ export async function handleLightningAddressRequest(request: Request): Promise<R
       fail("INVALID_REQUEST", "JSON 요청만 사용할 수 있습니다.");
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      fail("INVALID_REQUEST", "요청 내용을 확인하지 못했습니다.");
-    }
+    const body = await readLimitedJson(request);
     if (!isRecord(body)) fail("INVALID_REQUEST", "요청 내용을 확인하지 못했습니다.");
 
     const { address, username, domain } = normalizeLightningAddress(body.address);
