@@ -1,4 +1,4 @@
-name: Lightning preview check
+name: Payment request preview check
 
 on:
   pull_request:
@@ -29,8 +29,11 @@ jobs:
       - name: Build static app
         run: npm run build
 
-      - name: Verify Lightning preview was exported
-        run: grep -R -q "라이트닝 결제 요청 만들기" dist/client
+      - name: Verify payment request preview was exported
+        run: |
+          grep -R -q "BTC 받을 정보 만들기" dist/client
+          grep -R -q "온체인 수취 주소" dist/client
+          grep -R -q "라이트닝 주소" dist/client
 
       - name: Verify Worker bundle
         run: npx wrangler deploy --dry-run --config wrangler.jsonc
