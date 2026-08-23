@@ -10,7 +10,12 @@ import {
   getTradeRecipientLabel,
 } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
-import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";
+import {
+  getMarketRefreshDelay,
+  getMarketRefreshInterval,
+  MARKET_REFRESH_FALLBACK_MS,
+  MARKET_REFRESH_WITH_LIVE_PRICE_MS,
+} from "../app/lib/market-refresh.mjs";
 import {
   buildTradeRecruitmentPost,
   copyTradeRecruitmentText,
@@ -31,6 +36,13 @@ import {
   INSTALL_INVITE_DISMISS_MS,
   isInstallInviteSuppressed,
 } from "../app/lib/install-invite.mjs";
+
+async function readAppVersion() {
+  const source = await readFile(new URL("../app/lib/app-version.ts", import.meta.url), "utf8");
+  const match = source.match(/export const APP_VERSION = "([^"]+)";/);
+  assert.ok(match, "APP_VERSION must be a quoted string");
+  return match[1];
+}
 
 async function readPngSize(url) {
   const buffer = await readFile(url);
@@ -433,13 +445,17 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
-test("schedules visible market refreshes just beyond the 15-second server cache", () => {
-  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);
-  assert.equal(getMarketRefreshDelay(0, 100_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);
-  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);
+test("uses the tested fallback and live market refresh intervals", () => {
+  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);
+  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);
+  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);
+  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);
+  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 16_000);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 115_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 116_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);
 });
 
 test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
@@ -621,8 +637,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /약 1분마다 자동 갱신 ·/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
-  assert.match(component, /const marketRefreshIntervalMs = livePriceActive[\s\S]*MARKET_REFRESH_WITH_LIVE_PRICE_MS[\s\S]*MARKET_REFRESH_FALLBACK_MS/);
-  assert.match(component, /const getRefreshDelay = \(\) => \{[\s\S]*lastMarketRefreshAtRef\.current[\s\S]*marketRefreshIntervalMs - elapsed/);
+  assert.match(component, /const marketRefreshIntervalMs = getMarketRefreshInterval\(livePriceActive\)/);
+  assert.match(component, /const getRefreshDelay = \(\) => getMarketRefreshDelay\([\s\S]*lastMarketRefreshAtRef\.current,[\s\S]*marketRefreshIntervalMs/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
@@ -895,7 +911,7 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage, appVersion] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
@@ -906,6 +922,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
     readFile(new URL("../public/og-v2.png", import.meta.url)),
+    readAppVersion(),
   ]);
   const manifest = JSON.parse(manifestText);
 
@@ -974,7 +991,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
-  assert.match(html, /aria-label="버전 2\.0\.4">v2\.0\.4<\/span>/);
+  assert.ok(html.includes(`aria-label="버전 ${appVersion}">v${appVersion}</span>`));
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
@@ -1021,6 +1038,8 @@ test("renders BIP39-style home-screen installation guides for mobile and PC", as
   assert.match(html, /주소창의 설치 아이콘/);
   assert.match(html, /src="\/install\/iphone-guide-v1\.png"/);
   assert.match(html, /src="\/install\/android-guide-v1\.png"/);
+  assert.equal((installSource.match(/loading="lazy"/g) ?? []).length, 2);
+  assert.equal((installSource.match(/decoding="async"/g) ?? []).length, 2);
   const iphoneCard = html.match(/<article[^>]*id="iphone"[\s\S]*?<\/article>/)?.[0] ?? "";
   const androidCard = html.match(/<article[^>]*id="android"[\s\S]*?<\/article>/)?.[0] ?? "";
   assert.equal((iphoneCard.match(/<li>/g) ?? []).length, 5);
@@ -1048,7 +1067,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
     access(new URL("../dist/client/install/index.html", import.meta.url)),
     access(new URL("../dist/client/404.html", import.meta.url)),
   ]);
-  const [worker, nextConfig, wrangler, headers, css, home, packageJson] = await Promise.all([
+  const [worker, nextConfig, wrangler, headers, css, home, packageJson, appVersion] = await Promise.all([
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
@@ -1056,6 +1075,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readAppVersion(),
   ]);
 
   assert.match(nextConfig, /output:\s*"export"/);
@@ -1063,7 +1083,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
   assert.match(wrangler, /"run_worker_first":\s*\["\/api\/market",\s*"\/api\/market\/"\]/);
   assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
-  assert.match(packageJson, /"version": "2\.0\.4"/);
+  assert.equal(JSON.parse(packageJson).version, appVersion);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.match(headers, /Content-Security-Policy:/);
