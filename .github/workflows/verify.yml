@@ -47,26 +47,19 @@ jobs:
           cat /tmp/discovery.json
           node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync("/tmp/discovery.json","utf8")); if(j.tag!=="payRequest" || typeof j.callback!=="string") process.exit(1); console.log("DISCOVERY_OK", j.callback, j.minSendable, j.maxSendable)'
 
-      - name: Request fixed invoice through deployed staging
+      - name: Request fixed invoice through exact deployed commit
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
-            echo "attempt=$attempt"
-            status=$(curl --silent --show-error --max-time 30 \
-              -H 'Content-Type: application/json' \
-              -H 'Accept: application/json' \
-              -X POST \
-              --data '{"address":"thumbking@oksu.su","amountSats":1000}' \
-              -o /tmp/lightning.json \
-              -w '%{http_code}' \
-              'https://staging-bitcoin-p2p-check.thumbking-btc.workers.dev/api/market?receive=lightning-address' || true)
-            echo "HTTP=$status"
-            cat /tmp/lightning.json || true
-            echo
-            if [ "$status" = "200" ]; then
-              node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync("/tmp/lightning.json","utf8")); if(j.ok!==true || j.amountSats!==1000 || typeof j.invoice!=="string" || !j.invoice.toLowerCase().startsWith("lnbc")) process.exit(1); console.log("STAGING_INVOICE_OK", j.invoice.slice(0,36)+"...")'
-              exit 0
-            fi
-            sleep 20
-          done
-          exit 1
+          status=$(curl --silent --show-error --max-time 30 \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json' \
+            -X POST \
+            --data '{"address":"thumbking@oksu.su","amountSats":1000}' \
+            -o /tmp/lightning.json \
+            -w '%{http_code}' \
+            'https://c5f4632d-bitcoin-p2p-check.thumbking-btc.workers.dev/api/market?receive=lightning-address' || true)
+          echo "HTTP=$status"
+          cat /tmp/lightning.json || true
+          echo
+          test "$status" = "200"
+          node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync("/tmp/lightning.json","utf8")); if(j.ok!==true || j.amountSats!==1000 || typeof j.invoice!=="string" || !j.invoice.toLowerCase().startsWith("lnbc")) process.exit(1); console.log("COMMIT_INVOICE_OK", j.invoice.slice(0,36)+"...")'
