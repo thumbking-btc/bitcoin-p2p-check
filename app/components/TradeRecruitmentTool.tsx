@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
   shareTradeRecruitmentText,
+  syncTradeRecruitmentPreview,
 } from "../lib/trade-recruitment.mjs";
 import { stepPremiumPercent } from "../lib/p2p-quote.mjs";
 
@@ -68,22 +69,33 @@ function legacyCopy(value: string) {
 }
 
 function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
-  const [previewOverride, setPreviewOverride] = useState<string | null>(null);
+  const [previewState, setPreviewState] = useState(() => ({
+    preview: generated.text,
+    generatedText: generated.text,
+  }));
   const [copyFeedback, setCopyFeedback] = useState<{
     generatedText: string;
     previewText: string;
     message: string;
   } | null>(null);
   const [sharing, setSharing] = useState(false);
-  const previewText = previewOverride ?? generated.text;
-  const previewDirty = previewOverride !== null && previewOverride !== generated.text;
+  const syncedPreview = syncTradeRecruitmentPreview({
+    preview: previewState.preview,
+    previousGenerated: previewState.generatedText,
+    nextGenerated: generated.text,
+  });
+  const previewText = syncedPreview.preview;
+  const previewDirty = syncedPreview.dirty;
   const copyStatus = copyFeedback?.generatedText === generated.text
     && copyFeedback.previewText === previewText
     ? copyFeedback.message
     : "";
 
   function regeneratePreview() {
-    setPreviewOverride(null);
+    setPreviewState({
+      preview: generated.text,
+      generatedText: generated.text,
+    });
     setCopyFeedback(null);
   }
 
@@ -129,8 +141,10 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
         aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
         aria-invalid={Boolean(generated.error) || undefined}
         onChange={(event) => {
-          const value = event.target.value;
-          setPreviewOverride(value === generated.text ? null : value);
+          setPreviewState({
+            preview: event.target.value,
+            generatedText: generated.text,
+          });
           setCopyFeedback(null);
         }}
       />
