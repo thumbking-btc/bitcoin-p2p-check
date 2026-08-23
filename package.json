@@ -6,17 +6,12 @@
     "node": ">=22.13.0 <23"
   },
   "scripts": {
-    "prepare:styles": "node scripts/prepare-tailwind-free-styles.mjs",
-    "predev": "npm run prepare:styles",
     "dev": "vinext dev",
-    "prebuild": "npm run prepare:styles",
     "build": "vinext build",
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
-    "pretest": "npm run prepare:styles",
     "test": "vinext build && node --test tests/rendered-html.test.mjs",
-    "prelint": "npm run prepare:styles",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
