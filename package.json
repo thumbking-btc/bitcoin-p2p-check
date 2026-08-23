@@ -15,6 +15,10 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "2.3.0",
+    "@nuintun/qrcode": "5.0.3",
+    "@scure/base": "2.3.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
