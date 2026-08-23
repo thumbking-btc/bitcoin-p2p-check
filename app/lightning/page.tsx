@@ -18,10 +18,10 @@ export default function LightningRequestPage() {
       <main className="site-main">
         <section className="trade-tool">
           <article className="capture-card">
-            <header className="tool-heading">
+            <header className={`tool-heading ${styles.pageHeading}`}>
               <div className="brand-line">
                 <span className="brand-mark" aria-hidden="true">₿</span>
-                <h1>라이트닝 결제 요청</h1>
+                <h1>라이트닝 요청</h1>
               </div>
               <a className={styles.backLink} href="/">계산기로 돌아가기</a>
             </header>
