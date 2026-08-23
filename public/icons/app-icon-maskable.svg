@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">비트코인 P2P 계산기 마스커블 아이콘</title>
+  <rect width="512" height="512" fill="#111820"/>
+  <circle cx="256" cy="256" r="142" fill="#f7931a"/>
+  <text
+    x="256"
+    y="266"
+    fill="#fff"
+    font-family="Arial, 'Segoe UI Symbol', sans-serif"
+    font-size="198"
+    font-weight="700"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    transform="rotate(13.88 256 256)"
+  >₿</text>
+</svg>
