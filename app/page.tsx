@@ -22,6 +22,13 @@ export default function Home() {
         <div className={previewStyles.standardContent}>
           <P2PTradeTool />
 
+          <nav className={previewStyles.paymentRequestEntry} aria-label="BTC 받을 정보 만들기">
+            <a href="#lightning-preview">
+              <strong>BTC 받을 정보 만들기</strong>
+              <small>온체인 주소 또는 라이트닝 수취 정보 공유</small>
+            </a>
+          </nav>
+
           <details className="reference-details">
             <summary>
               <span>계산 기준·데이터 출처</span>
