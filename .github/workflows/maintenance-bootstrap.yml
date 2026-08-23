@@ -1,0 +1,132 @@
+name: Maintenance bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-and-verify:
+    if: github.head_ref == 'chore/maintenance-verification-v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Connect the production refresh scheduler to its tested helper
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one {label}, found {text.count(old)}")
+              return text.replace(old, new, 1)
+
+          component_path = Path("app/components/P2PTradeTool.tsx")
+          component = component_path.read_text(encoding="utf-8")
+          component = replace_once(
+              component,
+              'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n',
+              'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n'
+              'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";\n',
+              "market refresh import",
+          )
+          component = replace_once(
+              component,
+              'const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;\n'
+              'const MARKET_REFRESH_FALLBACK_MS = 16_000;\n',
+              '',
+              "duplicated market refresh constants",
+          )
+          component = replace_once(
+              component,
+              '  const marketRefreshIntervalMs = livePriceActive\n'
+              '    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS\n'
+              '    : MARKET_REFRESH_FALLBACK_MS;\n',
+              '  const marketRefreshIntervalMs = getMarketRefreshInterval(livePriceActive);\n',
+              "market refresh interval selection",
+          )
+          component = replace_once(
+              component,
+              '    const getRefreshDelay = () => {\n'
+              '      const lastRequestAt = lastMarketRefreshAtRef.current;\n'
+              '      if (!Number.isFinite(lastRequestAt) || lastRequestAt <= 0) return 0;\n'
+              '      const elapsed = Math.max(0, Date.now() - lastRequestAt);\n'
+              '      return Math.max(0, marketRefreshIntervalMs - elapsed);\n'
+              '    };\n',
+              '    const getRefreshDelay = () => getMarketRefreshDelay(\n'
+              '      lastMarketRefreshAtRef.current,\n'
+              '      marketRefreshIntervalMs,\n'
+              '    );\n',
+              "inline market refresh delay calculation",
+          )
+          component_path.write_text(component, encoding="utf-8")
+
+          test_path = Path("tests/rendered-html.test.mjs")
+          tests = test_path.read_text(encoding="utf-8")
+          tests = replace_once(
+              tests,
+              'import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";\n',
+              'import {\n'
+              '  getMarketRefreshDelay,\n'
+              '  getMarketRefreshInterval,\n'
+              '  MARKET_REFRESH_FALLBACK_MS,\n'
+              '  MARKET_REFRESH_WITH_LIVE_PRICE_MS,\n'
+              '} from "../app/lib/market-refresh.mjs";\n',
+              "market refresh test import",
+          )
+          tests = replace_once(
+              tests,
+              'test("schedules visible market refreshes just beyond the 15-second server cache", () => {\n'
+              '  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);\n'
+              '  assert.equal(getMarketRefreshDelay(0, 100_000), 0);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);\n'
+              '});\n',
+              'test("uses the tested fallback and live market refresh intervals", () => {\n'
+              '  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);\n'
+              '  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);\n'
+              '  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);\n'
+              '  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);\n'
+              '  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 16_000);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 115_999), 1);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 116_000), 0);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);\n'
+              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);\n'
+              '});\n',
+              "market refresh timing test",
+          )
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+
+      - name: Regenerate the dependency lock
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Upload generated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-generated-files
+          path: |
+            app/components/P2PTradeTool.tsx
+            tests/rendered-html.test.mjs
+            package-lock.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify
+        run: npm run verify
