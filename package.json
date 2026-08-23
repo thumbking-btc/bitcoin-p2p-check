@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "npm run test && npm run lint && vinext build",
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
