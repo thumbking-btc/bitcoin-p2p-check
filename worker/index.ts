@@ -6,10 +6,16 @@ export interface WorkerExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
+export interface WorkerEnvironment {
+  ASSETS: {
+    fetch(request: Request): Promise<Response>;
+  };
+}
+
 export default {
   async fetch(
     request: Request,
-    _environment: unknown,
+    environment: WorkerEnvironment,
     context: WorkerExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
@@ -26,14 +32,6 @@ export default {
       return handleLightningPayRequest(request);
     }
 
-    return new Response("Not found", {
-      status: 404,
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/plain; charset=utf-8",
-        "Referrer-Policy": "no-referrer",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    return environment.ASSETS.fetch(request);
   },
 };
