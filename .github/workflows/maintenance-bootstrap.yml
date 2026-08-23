@@ -24,7 +24,7 @@ jobs:
           node-version: 22.19.0
           cache: npm
 
-      - name: Prepare maintenance changes
+      - name: Connect market refresh logic to its tests
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -36,7 +36,8 @@ jobs:
 
           component_path = Path("app/components/P2PTradeTool.tsx")
           component = component_path.read_text(encoding="utf-8")
-          if 'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";' not in component:
+          component_marker = 'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";'
+          if component_marker not in component:
               component = replace_once(
                   component,
                   'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n',
@@ -77,7 +78,8 @@ jobs:
 
           test_path = Path("tests/rendered-html.test.mjs")
           tests = test_path.read_text(encoding="utf-8")
-          if "MARKET_REFRESH_WITH_LIVE_PRICE_MS" not in tests:
+          test_marker = '  getMarketRefreshInterval,\n  MARKET_REFRESH_FALLBACK_MS,'
+          if test_marker not in tests:
               tests = replace_once(
                   tests,
                   'import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";\n',
@@ -113,160 +115,19 @@ jobs:
                   '});\n',
                   "market refresh timing test",
               )
+              tests = replace_once(
+                  tests,
+                  '  assert.match(component, /const marketRefreshIntervalMs = livePriceActive[\\s\\S]*MARKET_REFRESH_WITH_LIVE_PRICE_MS[\\s\\S]*MARKET_REFRESH_FALLBACK_MS/);\n'
+                  '  assert.match(component, /const getRefreshDelay = \\(\\) => \\{[\\s\\S]*lastMarketRefreshAtRef\\.current[\\s\\S]*marketRefreshIntervalMs - elapsed/);\n',
+                  '  assert.match(component, /const marketRefreshIntervalMs = getMarketRefreshInterval\\(livePriceActive\\)/);\n'
+                  '  assert.match(component, /const getRefreshDelay = \\(\\) => getMarketRefreshDelay\\([\\s\\S]*lastMarketRefreshAtRef\\.current,[\\s\\S]*marketRefreshIntervalMs/);\n',
+                  "market refresh source assertions",
+              )
               test_path.write_text(tests, encoding="utf-8")
-
-          recruitment_path = Path("app/components/TradeRecruitmentTool.tsx")
-          recruitment = recruitment_path.read_text(encoding="utf-8")
-          if "function RecruitmentPreview" not in recruitment:
-              recruitment = replace_once(
-                  recruitment,
-                  'import { useEffect, useMemo, useState } from "react";',
-                  'import { useMemo, useState } from "react";',
-                  "React hook import",
-              )
-
-              preview_component = '''function RecruitmentPreview({
-            generated,
-          }: {
-            generated: { text: string; error: string };
-          }) {
-            const [previewOverride, setPreviewOverride] = useState<string | null>(null);
-            const [copyFeedback, setCopyFeedback] = useState<{
-              generatedText: string;
-              previewText: string;
-              message: string;
-            } | null>(null);
-            const [sharing, setSharing] = useState(false);
-            const previewText = previewOverride ?? generated.text;
-            const previewDirty = previewOverride !== null && previewOverride !== generated.text;
-            const copyStatus = copyFeedback?.generatedText === generated.text
-              && copyFeedback.previewText === previewText
-              ? copyFeedback.message
-              : "";
-
-            function regeneratePreview() {
-              setPreviewOverride(null);
-              setCopyFeedback(null);
-            }
-
-            async function sharePreview() {
-              if (sharing) return;
-              const feedbackContext = {
-                generatedText: generated.text,
-                previewText,
-              };
-              setSharing(true);
-              setCopyFeedback(null);
-              const nativeShare = navigator.share
-                ? (value: string) => navigator.share({ title: "비트코인 P2P 거래 모집", text: value })
-                : null;
-              const clipboardWrite = navigator.clipboard?.writeText
-                ? navigator.clipboard.writeText.bind(navigator.clipboard)
-                : null;
-              const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
-              setSharing(false);
-              const message = outcome === "shared"
-                ? "모집글을 공유했습니다."
-                : outcome === "copied"
-                  ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
-                  : outcome === "empty"
-                    ? "공유할 모집글을 입력하세요."
-                    : outcome === "cancelled"
-                      ? "공유를 취소했습니다."
-                      : "자동 복사하지 못했습니다. 미리보기에서 직접 선택해 복사하세요.";
-              setCopyFeedback({ ...feedbackContext, message });
-            }
-
-            return (
-              <div className="recruitment-preview">
-                <label htmlFor="recruitment-preview">
-                  <span>편집 가능한 모집글 미리보기</span>
-                  <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
-                </label>
-                <textarea
-                  id="recruitment-preview"
-                  value={previewText}
-                  rows={5}
-                  maxLength={2_000}
-                  aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
-                  aria-invalid={Boolean(generated.error) || undefined}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setPreviewOverride(value === generated.text ? null : value);
-                    setCopyFeedback(null);
-                  }}
-                />
-                {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
-                <div className="recruitment-actions">
-                  <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
-                  <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
-                    {sharing ? "공유 중" : "모집글 공유"}
-                  </button>
-                </div>
-                <p
-                  className={`recruitment-copy-status ${copyStatus.includes("못") ? "is-error" : ""}`}
-                  id="recruitment-copy-status"
-                  aria-live="polite"
-                >
-                  {copyStatus}
-                </p>
-              </div>
-            );
-          }'''
-              recruitment = replace_once(
-                  recruitment,
-                  "export function TradeRecruitmentTool({",
-                  f"{preview_component}\n\nexport function TradeRecruitmentTool({{",
-                  "recruitment preview component insertion point",
-              )
-              recruitment = replace_once(
-                  recruitment,
-                  '  const [memo, setMemo] = useState("");\n'
-                  '  const [previewOverride, setPreviewOverride] = useState<string | null>(null);\n'
-                  '  const [copyStatus, setCopyStatus] = useState("");\n'
-                  '  const [sharing, setSharing] = useState(false);\n',
-                  '  const [memo, setMemo] = useState("");\n',
-                  "recruitment preview parent state",
-              )
-              preview_logic_start = recruitment.index('  const previewText = previewOverride ?? generated.text;')
-              preview_logic_end = recruitment.index('\n\n  return (\n', preview_logic_start)
-              parent_logic = '''  const returningPremiumInvalid = returningTraderEnabled
-            && generated.error.startsWith("기존 거래자");
-
-          function adjustReturningPremium(direction: -1 | 1) {
-            const current = Number.isFinite(returningPremiumPercent) ? returningPremiumPercent : null;
-            const next = stepPremiumPercent(current, direction);
-            if (next !== null) setReturningTraderPremiumInput(String(next));
-          }'''
-              recruitment = (
-                  recruitment[:preview_logic_start]
-                  + parent_logic
-                  + recruitment[preview_logic_end:]
-              )
-              preview_markup_start = recruitment.index('      <div className="recruitment-preview">')
-              parent_section_end = recruitment.index('\n    </section>\n  );\n}', preview_markup_start)
-              recruitment = (
-                  recruitment[:preview_markup_start]
-                  + '      <RecruitmentPreview key={structuredKey} generated={generated} />\n'
-                  + recruitment[parent_section_end:]
-              )
-              recruitment_path.write_text(recruitment, encoding="utf-8")
           PY
 
       - name: Regenerate the dependency lock
         run: npm install --package-lock-only --ignore-scripts
-
-      - name: Upload generated files
-        uses: actions/upload-artifact@v4
-        with:
-          name: maintenance-generated-files
-          path: |
-            app/components/P2PTradeTool.tsx
-            app/components/TradeRecruitmentTool.tsx
-            tests/rendered-html.test.mjs
-            package-lock.json
-          if-no-files-found: error
-          retention-days: 1
 
       - name: Install locked dependencies
         run: npm ci
@@ -278,9 +139,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/components/P2PTradeTool.tsx app/components/TradeRecruitmentTool.tsx tests/rendered-html.test.mjs package-lock.json
+          git add app/components/P2PTradeTool.tsx tests/rendered-html.test.mjs package-lock.json
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "Connect maintenance logic to verified tests"
+          git commit -m "Connect market refresh logic to verified tests"
           git push origin HEAD:${{ github.head_ref }}
