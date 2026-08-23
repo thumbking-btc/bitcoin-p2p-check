@@ -31,23 +31,24 @@ jobs:
 
           path = Path("tests/rendered-html.test.mjs")
           text = path.read_text(encoding="utf-8")
-          old = '''  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);
-          assert.match(recruitmentComponent, /const previewText = previewOverride \\?\\? generated\\.text/);
-          assert.match(recruitmentComponent, /setPreviewOverride\\(value === generated\\.text \\? null : value\\)/);
-          assert.doesNotMatch(recruitmentComponent, /setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef|syncTradeRecruitmentPreview/);
-          '''
-          new = '''  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);
-          assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\\(\\{/);
-          assert.match(recruitmentComponent, /previousGenerated: previewState\\.generatedText/);
-          assert.match(recruitmentComponent, /nextGenerated: generated\\.text/);
-          assert.match(recruitmentComponent, /setPreviewState\\(\\{[\\s\\S]*preview: event\\.target\\.value,[\\s\\S]*generatedText: generated\\.text/);
-          assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
-          '''
-          if old not in text:
-              raise SystemExit("expected legacy recruitment source assertions once")
-          if text.count(old) != 1:
-              raise SystemExit(f"expected one legacy assertion block, found {text.count(old)}")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          start_marker = '  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);\n'
+          end_marker = '  assert.doesNotMatch(recruitmentComponent, /setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef|syncTradeRecruitmentPreview/);\n'
+          if text.count(start_marker) != 1:
+              raise SystemExit(f"expected one recruitment assertion start, found {text.count(start_marker)}")
+          if text.count(end_marker) != 1:
+              raise SystemExit(f"expected one recruitment assertion end, found {text.count(end_marker)}")
+          start = text.index(start_marker)
+          end = text.index(end_marker, start) + len(end_marker)
+          replacement = "\n".join([
+              '  assert.match(recruitmentComponent, /shareTradeRecruitmentText\\(previewText/);',
+              '  assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\\(\\{/);',
+              '  assert.match(recruitmentComponent, /previousGenerated: previewState\\.generatedText/);',
+              '  assert.match(recruitmentComponent, /nextGenerated: generated\\.text/);',
+              '  assert.match(recruitmentComponent, /setPreviewState\\(\\{[\\s\\S]*preview: event\\.target\\.value,[\\s\\S]*generatedText: generated\\.text/);',
+              '  assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);',
+              '',
+          ])
+          path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
           PY
 
       - name: Install locked dependencies
