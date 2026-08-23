@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   prepare-and-verify:
@@ -13,8 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out repository
+      - name: Check out maintenance branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
 
       - name: Use Node.js 22.19.0
         uses: actions/setup-node@v4
@@ -22,7 +24,7 @@ jobs:
           node-version: 22.19.0
           cache: npm
 
-      - name: Connect the production refresh scheduler to its tested helper
+      - name: Prepare maintenance changes
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -34,82 +36,221 @@ jobs:
 
           component_path = Path("app/components/P2PTradeTool.tsx")
           component = component_path.read_text(encoding="utf-8")
-          component = replace_once(
-              component,
-              'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n',
-              'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n'
-              'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";\n',
-              "market refresh import",
-          )
-          component = replace_once(
-              component,
-              'const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;\n'
-              'const MARKET_REFRESH_FALLBACK_MS = 16_000;\n',
-              '',
-              "duplicated market refresh constants",
-          )
-          component = replace_once(
-              component,
-              '  const marketRefreshIntervalMs = livePriceActive\n'
-              '    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS\n'
-              '    : MARKET_REFRESH_FALLBACK_MS;\n',
-              '  const marketRefreshIntervalMs = getMarketRefreshInterval(livePriceActive);\n',
-              "market refresh interval selection",
-          )
-          component = replace_once(
-              component,
-              '    const getRefreshDelay = () => {\n'
-              '      const lastRequestAt = lastMarketRefreshAtRef.current;\n'
-              '      if (!Number.isFinite(lastRequestAt) || lastRequestAt <= 0) return 0;\n'
-              '      const elapsed = Math.max(0, Date.now() - lastRequestAt);\n'
-              '      return Math.max(0, marketRefreshIntervalMs - elapsed);\n'
-              '    };\n',
-              '    const getRefreshDelay = () => getMarketRefreshDelay(\n'
-              '      lastMarketRefreshAtRef.current,\n'
-              '      marketRefreshIntervalMs,\n'
-              '    );\n',
-              "inline market refresh delay calculation",
-          )
-          component_path.write_text(component, encoding="utf-8")
+          if 'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";' not in component:
+              component = replace_once(
+                  component,
+                  'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n',
+                  'import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";\n'
+                  'import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";\n',
+                  "market refresh import",
+              )
+              component = replace_once(
+                  component,
+                  'const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;\n'
+                  'const MARKET_REFRESH_FALLBACK_MS = 16_000;\n',
+                  '',
+                  "duplicated market refresh constants",
+              )
+              component = replace_once(
+                  component,
+                  '  const marketRefreshIntervalMs = livePriceActive\n'
+                  '    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS\n'
+                  '    : MARKET_REFRESH_FALLBACK_MS;\n',
+                  '  const marketRefreshIntervalMs = getMarketRefreshInterval(livePriceActive);\n',
+                  "market refresh interval selection",
+              )
+              component = replace_once(
+                  component,
+                  '    const getRefreshDelay = () => {\n'
+                  '      const lastRequestAt = lastMarketRefreshAtRef.current;\n'
+                  '      if (!Number.isFinite(lastRequestAt) || lastRequestAt <= 0) return 0;\n'
+                  '      const elapsed = Math.max(0, Date.now() - lastRequestAt);\n'
+                  '      return Math.max(0, marketRefreshIntervalMs - elapsed);\n'
+                  '    };\n',
+                  '    const getRefreshDelay = () => getMarketRefreshDelay(\n'
+                  '      lastMarketRefreshAtRef.current,\n'
+                  '      marketRefreshIntervalMs,\n'
+                  '    );\n',
+                  "inline market refresh delay calculation",
+              )
+              component_path.write_text(component, encoding="utf-8")
 
           test_path = Path("tests/rendered-html.test.mjs")
           tests = test_path.read_text(encoding="utf-8")
-          tests = replace_once(
-              tests,
-              'import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";\n',
-              'import {\n'
-              '  getMarketRefreshDelay,\n'
-              '  getMarketRefreshInterval,\n'
-              '  MARKET_REFRESH_FALLBACK_MS,\n'
-              '  MARKET_REFRESH_WITH_LIVE_PRICE_MS,\n'
-              '} from "../app/lib/market-refresh.mjs";\n',
-              "market refresh test import",
-          )
-          tests = replace_once(
-              tests,
-              'test("schedules visible market refreshes just beyond the 15-second server cache", () => {\n'
-              '  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);\n'
-              '  assert.equal(getMarketRefreshDelay(0, 100_000), 0);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);\n'
-              '});\n',
-              'test("uses the tested fallback and live market refresh intervals", () => {\n'
-              '  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);\n'
-              '  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);\n'
-              '  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);\n'
-              '  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);\n'
-              '  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 16_000);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 115_999), 1);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 116_000), 0);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);\n'
-              '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);\n'
-              '});\n',
-              "market refresh timing test",
-          )
-          test_path.write_text(tests, encoding="utf-8")
+          if "MARKET_REFRESH_WITH_LIVE_PRICE_MS" not in tests:
+              tests = replace_once(
+                  tests,
+                  'import { getMarketRefreshDelay, MARKET_REFRESH_INTERVAL_MS } from "../app/lib/market-refresh.mjs";\n',
+                  'import {\n'
+                  '  getMarketRefreshDelay,\n'
+                  '  getMarketRefreshInterval,\n'
+                  '  MARKET_REFRESH_FALLBACK_MS,\n'
+                  '  MARKET_REFRESH_WITH_LIVE_PRICE_MS,\n'
+                  '} from "../app/lib/market-refresh.mjs";\n',
+                  "market refresh test import",
+              )
+              tests = replace_once(
+                  tests,
+                  'test("schedules visible market refreshes just beyond the 15-second server cache", () => {\n'
+                  '  assert.equal(MARKET_REFRESH_INTERVAL_MS, 16_000);\n'
+                  '  assert.equal(getMarketRefreshDelay(0, 100_000), 0);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, 100_000), 16_000);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, 115_999), 1);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, 116_000), 0);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, 120_000), 0);\n'
+                  '});\n',
+                  'test("uses the tested fallback and live market refresh intervals", () => {\n'
+                  '  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);\n'
+                  '  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);\n'
+                  '  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);\n'
+                  '  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);\n'
+                  '  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 16_000);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 115_999), 1);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 116_000), 0);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);\n'
+                  '  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);\n'
+                  '});\n',
+                  "market refresh timing test",
+              )
+              test_path.write_text(tests, encoding="utf-8")
+
+          recruitment_path = Path("app/components/TradeRecruitmentTool.tsx")
+          recruitment = recruitment_path.read_text(encoding="utf-8")
+          if "function RecruitmentPreview" not in recruitment:
+              recruitment = replace_once(
+                  recruitment,
+                  'import { useEffect, useMemo, useState } from "react";',
+                  'import { useMemo, useState } from "react";',
+                  "React hook import",
+              )
+
+              preview_component = '''function RecruitmentPreview({
+            generated,
+          }: {
+            generated: { text: string; error: string };
+          }) {
+            const [previewOverride, setPreviewOverride] = useState<string | null>(null);
+            const [copyFeedback, setCopyFeedback] = useState<{
+              generatedText: string;
+              previewText: string;
+              message: string;
+            } | null>(null);
+            const [sharing, setSharing] = useState(false);
+            const previewText = previewOverride ?? generated.text;
+            const previewDirty = previewOverride !== null && previewOverride !== generated.text;
+            const copyStatus = copyFeedback?.generatedText === generated.text
+              && copyFeedback.previewText === previewText
+              ? copyFeedback.message
+              : "";
+
+            function regeneratePreview() {
+              setPreviewOverride(null);
+              setCopyFeedback(null);
+            }
+
+            async function sharePreview() {
+              if (sharing) return;
+              const feedbackContext = {
+                generatedText: generated.text,
+                previewText,
+              };
+              setSharing(true);
+              setCopyFeedback(null);
+              const nativeShare = navigator.share
+                ? (value: string) => navigator.share({ title: "비트코인 P2P 거래 모집", text: value })
+                : null;
+              const clipboardWrite = navigator.clipboard?.writeText
+                ? navigator.clipboard.writeText.bind(navigator.clipboard)
+                : null;
+              const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
+              setSharing(false);
+              const message = outcome === "shared"
+                ? "모집글을 공유했습니다."
+                : outcome === "copied"
+                  ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
+                  : outcome === "empty"
+                    ? "공유할 모집글을 입력하세요."
+                    : outcome === "cancelled"
+                      ? "공유를 취소했습니다."
+                      : "자동 복사하지 못했습니다. 미리보기에서 직접 선택해 복사하세요.";
+              setCopyFeedback({ ...feedbackContext, message });
+            }
+
+            return (
+              <div className="recruitment-preview">
+                <label htmlFor="recruitment-preview">
+                  <span>편집 가능한 모집글 미리보기</span>
+                  <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
+                </label>
+                <textarea
+                  id="recruitment-preview"
+                  value={previewText}
+                  rows={5}
+                  maxLength={2_000}
+                  aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
+                  aria-invalid={Boolean(generated.error) || undefined}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setPreviewOverride(value === generated.text ? null : value);
+                    setCopyFeedback(null);
+                  }}
+                />
+                {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
+                <div className="recruitment-actions">
+                  <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
+                  <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
+                    {sharing ? "공유 중" : "모집글 공유"}
+                  </button>
+                </div>
+                <p
+                  className={`recruitment-copy-status ${copyStatus.includes("못") ? "is-error" : ""}`}
+                  id="recruitment-copy-status"
+                  aria-live="polite"
+                >
+                  {copyStatus}
+                </p>
+              </div>
+            );
+          }'''
+              recruitment = replace_once(
+                  recruitment,
+                  "export function TradeRecruitmentTool({",
+                  f"{preview_component}\n\nexport function TradeRecruitmentTool({{",
+                  "recruitment preview component insertion point",
+              )
+              recruitment = replace_once(
+                  recruitment,
+                  '  const [memo, setMemo] = useState("");\n'
+                  '  const [previewOverride, setPreviewOverride] = useState<string | null>(null);\n'
+                  '  const [copyStatus, setCopyStatus] = useState("");\n'
+                  '  const [sharing, setSharing] = useState(false);\n',
+                  '  const [memo, setMemo] = useState("");\n',
+                  "recruitment preview parent state",
+              )
+              preview_logic_start = recruitment.index('  const previewText = previewOverride ?? generated.text;')
+              preview_logic_end = recruitment.index('\n\n  return (\n', preview_logic_start)
+              parent_logic = '''  const returningPremiumInvalid = returningTraderEnabled
+            && generated.error.startsWith("기존 거래자");
+
+          function adjustReturningPremium(direction: -1 | 1) {
+            const current = Number.isFinite(returningPremiumPercent) ? returningPremiumPercent : null;
+            const next = stepPremiumPercent(current, direction);
+            if (next !== null) setReturningTraderPremiumInput(String(next));
+          }'''
+              recruitment = (
+                  recruitment[:preview_logic_start]
+                  + parent_logic
+                  + recruitment[preview_logic_end:]
+              )
+              preview_markup_start = recruitment.index('      <div className="recruitment-preview">')
+              parent_section_end = recruitment.index('\n    </section>\n  );\n}', preview_markup_start)
+              recruitment = (
+                  recruitment[:preview_markup_start]
+                  + '      <RecruitmentPreview key={structuredKey} generated={generated} />\n'
+                  + recruitment[parent_section_end:]
+              )
+              recruitment_path.write_text(recruitment, encoding="utf-8")
           PY
 
       - name: Regenerate the dependency lock
@@ -121,6 +262,7 @@ jobs:
           name: maintenance-generated-files
           path: |
             app/components/P2PTradeTool.tsx
+            app/components/TradeRecruitmentTool.tsx
             tests/rendered-html.test.mjs
             package-lock.json
           if-no-files-found: error
@@ -131,3 +273,14 @@ jobs:
 
       - name: Verify
         run: npm run verify
+
+      - name: Commit verified generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/components/P2PTradeTool.tsx app/components/TradeRecruitmentTool.tsx tests/rendered-html.test.mjs package-lock.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Connect maintenance logic to verified tests"
+          git push origin HEAD:${{ github.head_ref }}
