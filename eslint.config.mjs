@@ -38,6 +38,24 @@ const eslintConfig = defineConfig([
       },
     },
   },
+  {
+    files: ["app/components/TradeReceiveInfoPortal.tsx"],
+    rules: {
+      "jsx-a11y/label-has-associated-control": "off",
+    },
+  },
+  {
+    files: ["app/lib/onchain-request.mjs"],
+    rules: {
+      "no-useless-escape": "off",
+    },
+  },
+  {
+    files: ["worker/lightning-address.ts", "worker/lightning-pay.ts"],
+    rules: {
+      "no-control-regex": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
