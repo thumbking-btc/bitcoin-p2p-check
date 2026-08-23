@@ -965,7 +965,8 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(shareRenderer, /new Path2D\(BITCOIN_MARK_PATH\)/);
   assert.doesNotMatch(shareRenderer, /fillText\("[B₿]"|fillRect\(-25, -78|fillRect\(9, -78/);
 
-  assert.match(registration, /serviceWorker\.register\("\/sw\.js", \{ scope: "\/" \}\)/);
+  assert.match(registration, /serviceWorkerUrl =/);
+  assert.match(registration, /updateViaCache: "none"/);
   assert.match(installCta, /beforeinstallprompt/);
   assert.match(installCta, /event\.preventDefault\(\)/);
   assert.match(installCta, /await prompt\.prompt\(\)/);
@@ -979,7 +980,9 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-precache-v6/);
+  assert.match(serviceWorker, /WORKER_VERSION/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-precache-\$\{WORKER_VERSION\}/);
+  assert.match(serviceWorker, /matchCurrentCaches/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
