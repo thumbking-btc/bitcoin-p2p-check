@@ -65,7 +65,6 @@ async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
 }
 
 function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
-  const [open, setOpen] = useState(false);
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
@@ -142,7 +141,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
             "금액은 주소 QR에 고정되지 않습니다. 위 거래 금액을 확인한 뒤 송금하십시오.",
           ].join("\n"),
         });
-        setFeedback("라이트닝 주소와 주소 QR을 만들었습니다. 인보이스는 생성하지 않습니다.");
+        setFeedback("라이트닝 주소와 주소 QR을 만들었습니다.");
         return;
       }
 
@@ -202,63 +201,60 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   }
 
   return (
-    <section style={{ marginBottom: 12, border: "1px solid var(--control-line)", background: "#fff" }}>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        style={{ width: "100%", minHeight: 48, padding: "10px 12px", border: 0, background: "#fff", color: "var(--ink)", textAlign: "left", fontWeight: 820, cursor: "pointer" }}
-      >
-        {open ? "BTC 받을 정보 닫기" : "BTC 받을 정보 추가"}
-      </button>
-
-      {open ? (
-        <div className={styles.panel} style={{ borderTop: "1px solid var(--control-line)" }}>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--muted)" }}>구매자만 입력합니다. 현재 거래의 받을 금액은 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b>입니다.</p>
-
-          <fieldset className={styles.networkPicker}>
-            <legend>BTC 전송 방식</legend>
-            <label><input type="radio" name="embedded-receive-rail" checked={rail === "onchain"} onChange={() => { clear(); setRail("onchain"); }} /><span><b>온체인</b><small>비트코인 주소</small></span></label>
-            <label><input type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} /><span><b>라이트닝</b><small>주소 또는 인보이스</small></span></label>
-          </fieldset>
-
-          {rail === "onchain" ? (
-            <label className={styles.field}><span>온체인 수취 주소</span><input className={styles.textInput} value={onchain} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." /></label>
-          ) : (
-            <>
-              <div className={styles.modeSwitch}>
-                <span>{lightningMode === "address" ? "라이트닝 주소를 그대로 공유합니다." : "지갑에서 만든 인보이스의 금액과 만료를 확인합니다."}</span>
-                <button type="button" onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
-                  {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
-                </button>
-              </div>
-              {lightningMode === "address" ? (
-                <label className={styles.field}><span>라이트닝 주소</span><input className={styles.textInput} value={address} onChange={(event) => { clear(); setAddress(event.target.value); }} placeholder="username@example.com" /><small>주소와 주소 QR만 만듭니다. 금액 고정 인보이스를 자동 발급하지 않습니다.</small></label>
-              ) : (
-                <label className={styles.field}><span>BOLT11 인보이스</span><textarea className={styles.textarea} value={invoice} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc..." /><small>현재 거래의 받을 sats와 정확히 같은 인보이스만 통과합니다.</small></label>
-              )}
-            </>
-          )}
-
-          <div className={styles.primaryActions}><button className={styles.primaryButton} type="button" onClick={build}>QR 만들기</button><button className={styles.secondaryButton} type="button" onClick={() => { clear(); setOnchain(""); setAddress(""); setInvoice(""); }}>초기화</button></div>
-          {error ? <p className={`${styles.status} ${styles.statusError}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
-
-          {result ? (
-            <div className={styles.result}>
-              <div className={styles.resultSummary}>
-                <span>{result.kind === "onchain" ? "온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
-                <strong>{expectedSats ? formatSats(expectedSats) : "—"}</strong>
-                <dl>
-                  <div><dt>공유 내용</dt><dd>{result.kind === "lightning-invoice" ? "BOLT11 + QR" : result.kind === "lightning-address" ? "주소 + QR" : "BIP21 + QR"}</dd></div>
-                  {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)}{remaining === 0 ? " · 만료됨" : ""}</dd></div> : null}
-                </dl>
-                <button className={styles.primaryButton} type="button" onClick={() => void share()} style={{ minHeight: 44, marginTop: 8 }}>수취정보 공유</button>
-              </div>
-              <canvas ref={canvasRef} className={styles.qr} aria-label="BTC 수취정보 QR" />
-            </div>
-          ) : null}
+    <section style={{ marginBottom: 12, border: "2px solid var(--control-line)", background: "#fff" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", padding: "12px", borderBottom: "1px solid var(--control-line)", background: "#f7f3ea" }}>
+        <div>
+          <strong style={{ display: "block", fontSize: 15 }}>BTC 받을 정보</strong>
+          <small style={{ color: "var(--muted)" }}>거래 조건과 함께 받을 주소나 인보이스를 공유할 수 있습니다.</small>
         </div>
-      ) : null}
+        <span style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 800, color: "var(--orange-dark)" }}>선택 사항</span>
+      </div>
+
+      <div className={styles.panel}>
+        <p style={{ margin: 0, fontSize: 11, color: "var(--muted)" }}>구매자만 입력합니다. 현재 거래의 받을 금액은 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b>입니다. 입력하지 않으면 거래 조건만 공유됩니다.</p>
+
+        <fieldset className={styles.networkPicker}>
+          <legend>BTC 전송 방식</legend>
+          <label><input type="radio" name="embedded-receive-rail" checked={rail === "onchain"} onChange={() => { clear(); setRail("onchain"); }} /><span><b>온체인</b><small>비트코인 주소</small></span></label>
+          <label><input type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} /><span><b>라이트닝</b><small>주소 또는 인보이스</small></span></label>
+        </fieldset>
+
+        {rail === "onchain" ? (
+          <label className={styles.field}><span>온체인 수취 주소</span><input className={styles.textInput} value={onchain} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." /></label>
+        ) : (
+          <>
+            <div className={styles.modeSwitch}>
+              <span>{lightningMode === "address" ? "라이트닝 주소를 그대로 공유합니다." : "지갑에서 만든 인보이스의 금액과 만료를 확인합니다."}</span>
+              <button type="button" onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
+                {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
+              </button>
+            </div>
+            {lightningMode === "address" ? (
+              <label className={styles.field}><span>라이트닝 주소</span><input className={styles.textInput} value={address} onChange={(event) => { clear(); setAddress(event.target.value); }} placeholder="username@example.com" /><small>주소와 주소 QR만 만듭니다. 금액 고정 인보이스를 자동 발급하지 않습니다.</small></label>
+            ) : (
+              <label className={styles.field}><span>BOLT11 인보이스</span><textarea className={styles.textarea} value={invoice} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc..." /><small>현재 거래의 받을 sats와 정확히 같은 인보이스만 통과합니다.</small></label>
+            )}
+          </>
+        )}
+
+        <div className={styles.primaryActions}><button className={styles.primaryButton} type="button" onClick={build}>QR 만들기</button><button className={styles.secondaryButton} type="button" onClick={() => { clear(); setOnchain(""); setAddress(""); setInvoice(""); }}>초기화</button></div>
+        {error ? <p className={`${styles.status} ${styles.statusError}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
+
+        {result ? (
+          <div className={styles.result}>
+            <div className={styles.resultSummary}>
+              <span>{result.kind === "onchain" ? "온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
+              <strong>{expectedSats ? formatSats(expectedSats) : "—"}</strong>
+              <dl>
+                <div><dt>공유 내용</dt><dd>{result.kind === "lightning-invoice" ? "BOLT11 + QR" : result.kind === "lightning-address" ? "주소 + QR" : "BIP21 + QR"}</dd></div>
+                {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)}{remaining === 0 ? " · 만료됨" : ""}</dd></div> : null}
+              </dl>
+              <button className={styles.primaryButton} type="button" onClick={() => void share()} style={{ minHeight: 44, marginTop: 8 }}>수취정보 공유</button>
+            </div>
+            <canvas ref={canvasRef} className={styles.qr} aria-label="BTC 수취정보 QR" />
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
