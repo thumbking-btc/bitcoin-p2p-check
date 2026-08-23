@@ -208,7 +208,7 @@ export function TradeRecruitmentTool({
     <section className="trade-recruitment" aria-labelledby="trade-recruitment-title">
       <header className="recruitment-heading">
         <div>
-          <p className="section-label">공개 채널용 · v1</p>
+          <p className="section-label">공개 채널용</p>
           <h2 id="trade-recruitment-title">거래 모집글 만들기</h2>
         </div>
         <a href="#trade-amount">거래 조건 수정 ↑</a>

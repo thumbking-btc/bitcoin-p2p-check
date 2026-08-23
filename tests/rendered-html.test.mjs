@@ -942,7 +942,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(installCta, /showEntry = true/);
   assert.match(installCta, /"\/install\/#iphone"/);
   assert.match(installCta, /"\/install\/#android"/);
-  assert.match(serviceWorker, /bitcoin-p2p-check-v4/);
+  assert.match(serviceWorker, /bitcoin-p2p-check-v5/);
   assert.match(serviceWorker, /icon-192-v2\.png/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
@@ -956,12 +956,13 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
+  assert.match(html, /aria-label="버전 2\.0\.0">v2\.0\.0<\/span>/);
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
   assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
   assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
-  assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 한 화면에서 확인합니다\. 공유된 조건은 현재 시세로 다시 계산됩니다\."/);
+  assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 계산하고 거래 모집글 또는 조건 이미지로 공유합니다\."/);
   assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
   assert.match(html, /property="og:image:width" content="1200"/);
   assert.match(html, /property="og:image:height" content="630"/);
@@ -1044,6 +1045,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
   assert.match(wrangler, /"run_worker_first":\s*\["\/api\/market",\s*"\/api\/market\/"\]/);
   assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
+  assert.match(packageJson, /"version": "2\.0\.0"/);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.match(headers, /Content-Security-Policy:/);
