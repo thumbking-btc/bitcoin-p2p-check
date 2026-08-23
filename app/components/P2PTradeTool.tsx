@@ -7,6 +7,7 @@ import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs
 import { buildTradeIntent, formatTradeBitcoinAmount } from "../lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
+import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";
 import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
 
 type TradeRole = "buyer" | "seller";
@@ -29,8 +30,6 @@ type LivePrice = {
 const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
 const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
 const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
-const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;
-const MARKET_REFRESH_FALLBACK_MS = 16_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 
@@ -430,9 +429,7 @@ export function P2PTradeTool() {
     await refreshMarket("manual");
   }, [refreshMarket]);
 
-  const marketRefreshIntervalMs = livePriceActive
-    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS
-    : MARKET_REFRESH_FALLBACK_MS;
+  const marketRefreshIntervalMs = getMarketRefreshInterval(livePriceActive);
 
   useEffect(() => {
     let disposed = false;
@@ -444,12 +441,10 @@ export function P2PTradeTool() {
       timer = null;
     };
 
-    const getRefreshDelay = () => {
-      const lastRequestAt = lastMarketRefreshAtRef.current;
-      if (!Number.isFinite(lastRequestAt) || lastRequestAt <= 0) return 0;
-      const elapsed = Math.max(0, Date.now() - lastRequestAt);
-      return Math.max(0, marketRefreshIntervalMs - elapsed);
-    };
+    const getRefreshDelay = () => getMarketRefreshDelay(
+      lastMarketRefreshAtRef.current,
+      marketRefreshIntervalMs,
+    );
 
     const schedule = () => {
       clearTimer();
