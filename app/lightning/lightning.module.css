@@ -18,13 +18,16 @@
 
 .backLink:focus-visible,
 .panel button:focus-visible,
-.modePicker label:has(input:focus-visible),
 .field input:focus-visible,
 .field textarea:focus-visible,
 .invoiceDetails summary:focus-visible {
   outline: 3px solid var(--surface);
   outline-offset: 2px;
   box-shadow: 0 0 0 5px var(--ink);
+}
+
+.pageHeading h1 {
+  white-space: normal;
 }
 
 .intro {
@@ -77,64 +80,39 @@
   white-space: nowrap;
 }
 
-.modePicker {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--control-line);
+.modeSwitch {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
 }
 
-.modePicker legend {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-.modePicker label {
-  position: relative;
-  min-width: 0;
-  cursor: pointer;
-}
-
-.modePicker label + label {
-  border-left: 1px solid var(--control-line);
-}
-
-.modePicker input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-.modePicker span {
-  display: grid;
-  min-height: 58px;
-  place-items: center;
-  align-content: center;
-  gap: 2px;
-  padding: 7px;
+.modeSwitch span {
   color: var(--muted);
-  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
-.modePicker b {
-  font-size: 13px;
+.modeSwitch button {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--control-line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 780;
+  white-space: nowrap;
 }
 
-.modePicker small {
-  font-size: 10px;
-  font-weight: 680;
-}
-
-.modePicker label:has(input:checked) span {
-  background: var(--ink);
-  color: #fff;
+.modeSwitch button:hover {
+  border-color: var(--ink);
+  background: #f7f3ea;
 }
 
 .form {
@@ -392,6 +370,20 @@
 }
 
 @media (max-width: 640px) {
+  .pageHeading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pageHeading .backLink {
+    width: 100%;
+  }
+
+  .modeSwitch {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .backLink {
     min-height: 42px;
     padding-inline: 8px;
