@@ -35,17 +35,17 @@ jobs:
           grep -R -q "온체인 수취 주소" dist/client
           grep -R -q "라이트닝 주소" dist/client
 
-      - name: Verify deployed preview API
+      - name: Verify user's Corn Wallet address through deployed preview API
         run: |
           node - <<'NODE'
           const response = await fetch('https://e9f5acd6-bitcoin-p2p-check.thumbking-btc.workers.dev/api/lightning-address', {
             method: 'POST',
             headers: {'content-type': 'application/json'},
-            body: JSON.stringify({address: 'blankgrass886@walletofsatoshi.com', amountSats: 21}),
+            body: JSON.stringify({address: 'thumbking@oksu.su', amountSats: 21}),
           });
           const text = await response.text();
           console.log('status', response.status);
-          console.log(text.slice(0, 800));
+          console.log(text.slice(0, 1200));
           if (!response.ok) process.exit(1);
           const data = JSON.parse(text);
           if (!data.ok || typeof data.invoice !== 'string' || !data.invoice.toLowerCase().startsWith('lnbc')) process.exit(1);
