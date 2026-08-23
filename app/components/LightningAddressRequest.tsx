@@ -158,7 +158,6 @@ export function LightningAddressRequest() {
 
   useEffect(() => {
     if (!result) return;
-    setNowMs(Date.now());
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [result]);
