@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { APP_VERSION } from "../lib/app-version";
 
 export function PwaRegistration() {
   useEffect(() => {
@@ -12,7 +13,11 @@ export function PwaRegistration() {
 
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
 
-    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
+    const serviceWorkerUrl = `/sw.js?v=${encodeURIComponent(APP_VERSION)}`;
+    navigator.serviceWorker.register(serviceWorkerUrl, {
+      scope: "/",
+      updateViaCache: "none",
+    }).catch(() => {
       // 설치 지원이 없는 브라우저에서도 계산기는 그대로 동작합니다.
     });
   }, []);
