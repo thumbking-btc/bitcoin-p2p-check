@@ -780,6 +780,19 @@ export function P2PTradeTool() {
     "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
     "확인용: 원화 입금·BTC 수령 증빙 아님",
   ].join("\n") : "";
+  const tradeFragment = buildTradeFragment({
+    side: tradeRole === "buyer" ? "buy" : "sell",
+    amount: amount ?? "",
+    amountBasis,
+    premium: premiumPercent ?? "",
+    fundingSource,
+    displayUnit: bitcoinDisplayUnit,
+  });
+  const browserOrigin = typeof window === "undefined" ? "" : window.location.origin;
+  const tradeLink = tradeFragment && browserOrigin ? `${browserOrigin}/${tradeFragment}` : "";
+  const shareTextWithLink = shareText && tradeLink
+    ? `${shareText}\n\n거래 조건 검증하기: ${tradeLink}`
+    : shareText;
 
   const shareImageInput = useMemo<TradeShareImageInput | null>(() => {
     if (!quote || referencePrice === null || premiumPercent === null) return null;
@@ -851,24 +864,12 @@ export function P2PTradeTool() {
       setShareImageGeneration((value) => value + 1);
       return;
     }
-    if (!shareText || !preparedShareFile || isSharing) return;
+    if (!shareTextWithLink || !preparedShareFile || isSharing) return;
     if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
       setPriceExpired(true);
       setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
       return;
     }
-    const tradeFragment = buildTradeFragment({
-      side: tradeRole === "buyer" ? "buy" : "sell",
-      amount: amount ?? "",
-      amountBasis,
-      premium: premiumPercent ?? "",
-      fundingSource,
-      displayUnit: bitcoinDisplayUnit,
-    });
-    const tradeLink = tradeFragment ? `${window.location.origin}/${tradeFragment}` : "";
-    const textWithLink = tradeLink
-      ? `${shareText}\n\n거래 조건 검증하기: ${tradeLink}`
-      : shareText;
     setShareStatus("");
     isSharingRef.current = true;
     setIsSharing(true);
@@ -876,7 +877,7 @@ export function P2PTradeTool() {
       const outcome = await shareImageFile({
         file: preparedShareFile,
         title: tradeIntent,
-        text: textWithLink,
+        text: shareTextWithLink,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
         nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
         download: downloadTradeImage,
@@ -1216,6 +1217,17 @@ export function P2PTradeTool() {
       </section>
 
       <div className="output-panel" hidden={outputMode !== "trade-image"}>
+        <details className="trade-share-preview">
+          <summary>
+            <span>함께 공유되는 문구</span>
+            <small>읽기 전용 · 공유 전 확인</small>
+          </summary>
+          <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
+            {draftHydrated && shareTextWithLink
+              ? shareTextWithLink
+              : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
+          </pre>
+        </details>
         <div className="tool-actions">
           <button
             className={`share-button ${backgroundShareImagePreparing ? "is-background-preparing" : ""}`}

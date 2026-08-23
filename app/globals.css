@@ -132,6 +132,15 @@ a { color: inherit; }
 .share-status.is-idle { color: var(--muted); font-weight: 620; }
 .share-status.is-feedback { color: var(--green); font-weight: 720; }
 .share-status.is-error { color: var(--red); font-weight: 720; }
+.trade-share-preview { margin: 8px clamp(14px, 3vw, 22px); border: 1px solid var(--control-line); background: #fff; }
+.trade-share-preview summary { position: relative; display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 34px 9px 11px; color: var(--ink); cursor: pointer; list-style: none; }
+.trade-share-preview summary::-webkit-details-marker { display: none; }
+.trade-share-preview summary::after { content: "▼"; position: absolute; right: 11px; color: var(--orange-dark); font-size: 10px; transition: transform .16s ease; }
+.trade-share-preview[open] summary::after { transform: rotate(180deg); }
+.trade-share-preview summary span { font-size: 13px; font-weight: 820; }
+.trade-share-preview summary small { color: var(--muted); font-size: 10px; font-weight: 700; text-align: right; }
+.trade-share-preview:has(> summary:focus-visible) { outline: 3px solid var(--orange-dark); outline-offset: 2px; }
+.trade-share-preview pre { max-height: 280px; margin: 0; overflow: auto; padding: 12px; border-top: 1px solid var(--line); background: #f7f3ea; color: var(--ink-soft); font: 650 11px/1.65 var(--sans); overflow-wrap: anywhere; white-space: pre-wrap; }
 .output-picker { margin: 8px clamp(14px, 3vw, 22px) 0; padding: 12px; border: 1px solid var(--ink); background: #f7f3ea; }
 .output-picker fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .output-picker legend { margin-bottom: 8px; color: var(--ink); font-size: 15px; font-weight: 850; }
@@ -353,6 +362,7 @@ a { color: inherit; }
   .input-with-unit input { padding-inline: 7px; }
   .fund-source-field { grid-template-columns: minmax(142px, .9fr) minmax(0, 1.1fr); }
   .tool-actions { padding-inline: 12px; }
+  .trade-share-preview { margin-inline: 12px; }
   .output-picker { margin-inline: 12px; }
   .trade-recruitment { margin-inline: 12px; }
   .recruitment-option-list { grid-template-columns: 1fr; }

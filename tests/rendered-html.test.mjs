@@ -559,6 +559,8 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
   assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
   assert.match(html, /거래 조건 이미지 공유/);
+  assert.match(html, /함께 공유되는 문구/);
+  assert.match(html, /읽기 전용 · 공유 전 확인/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
   assert.match(html, /업비트 최근 체결가/);
@@ -685,6 +687,11 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /inputMode=\{amountBasis === "krw" \|\| bitcoinDisplayUnit === "sats" \? "numeric" : "decimal"\}/);
   assert.match(shareTransport, /files: \[file\]/);
   assert.match(component, /거래 조건 검증하기:/);
+  assert.match(component, /const shareTextWithLink = shareText && tradeLink/);
+  assert.match(component, /text: shareTextWithLink/);
+  assert.match(component, /draftHydrated && shareTextWithLink[\s\S]*?shareTextWithLink/);
+  assert.doesNotMatch(component, /const textWithLink/);
+  assert.match(css, /\.trade-share-preview pre[\s\S]*?white-space:\s*pre-wrap/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
   assert.match(component, /window\.history\.replaceState/);
   assert.match(component, /공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다/);
@@ -730,7 +737,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.match(component, /amount: amount \?\? ""/);
   assert.match(component, /premium: premiumPercent \?\? ""/);
-  assert.match(component, /tradeFragment \? `\$\{window\.location\.origin\}\/\$\{tradeFragment\}` : ""/);
+  assert.match(component, /const browserOrigin = typeof window === "undefined" \? "" : window\.location\.origin/);
+  assert.match(component, /tradeFragment && browserOrigin \? `\$\{browserOrigin\}\/\$\{tradeFragment\}` : ""/);
   assert.match(component, /aria-live="polite"/);
   assert.match(component, /aria-invalid/);
   assert.doesNotMatch(component, /setInterval|feeSats/);
