@@ -1,0 +1,1 @@
+Rebased onto current main UI; Lightning Address uses proven /api/lightning-address path; LNURL-pay uses /api/lightning-pay.
