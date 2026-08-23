@@ -30,6 +30,7 @@ type LivePrice = {
 const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
 const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
 const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
+const LIVE_PRICE_RECONNECT_MAX_DELAY_MS = 2 * 60_000;
 const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;
 const MARKET_REFRESH_FALLBACK_MS = 16_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
@@ -267,21 +268,30 @@ function LiveMarketTime({
 
   useEffect(() => {
     let timer: number | null = null;
+
+    const clearTimer = () => {
+      if (timer === null) return;
+      window.clearTimeout(timer);
+      timer = null;
+    };
+
     const tick = () => {
+      clearTimer();
+      if (document.visibilityState !== "visible") return;
       const now = Date.now();
       setCurrentTime(new Date(now).toISOString());
       timer = window.setTimeout(tick, 1_000 - (now % 1_000));
     };
+
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      if (timer !== null) window.clearTimeout(timer);
-      tick();
+      clearTimer();
+      if (document.visibilityState === "visible") tick();
     };
 
-    tick();
+    if (document.visibilityState === "visible") tick();
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      if (timer !== null) window.clearTimeout(timer);
+      clearTimer();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
@@ -489,6 +499,7 @@ export function P2PTradeTool() {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let renderTimer: number | null = null;
+    let reconnectAttempt = 0;
     let lastRenderedAt = 0;
     let queuedPrice: LivePrice | null = null;
 
@@ -509,16 +520,29 @@ export function P2PTradeTool() {
       renderTimer = null;
     };
 
+    const browserIsActive = () => document.visibilityState === "visible" && navigator.onLine !== false;
+
+    const disconnect = () => {
+      clearReconnectTimer();
+      clearRenderTimer();
+      queuedPrice = null;
+      setStreamActive(false);
+      const activeSocket = socket;
+      socket = null;
+      activeSocket?.close();
+    };
+
     const flushQueuedPrice = () => {
       clearRenderTimer();
       const price = queuedPrice;
       queuedPrice = null;
-      if (!price || disposed) return;
+      if (!price || disposed || !browserIsActive()) return;
       lastRenderedAt = Date.now();
       if (applyLivePrice(price)) setStreamActive(true);
     };
 
     const queuePrice = (price: LivePrice) => {
+      if (!browserIsActive()) return;
       if (queuedPrice && queuedPrice.observedAtMs > price.observedAtMs) return;
       queuedPrice = price;
       const elapsed = Date.now() - lastRenderedAt;
@@ -533,19 +557,24 @@ export function P2PTradeTool() {
 
     const scheduleReconnect = () => {
       clearReconnectTimer();
-      if (disposed) return;
-      reconnectTimer = window.setTimeout(connect, LIVE_PRICE_RECONNECT_DELAY_MS);
+      if (disposed || !browserIsActive()) return;
+      const delay = Math.min(
+        LIVE_PRICE_RECONNECT_DELAY_MS * (2 ** reconnectAttempt),
+        LIVE_PRICE_RECONNECT_MAX_DELAY_MS,
+      );
+      reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
+      reconnectTimer = window.setTimeout(connect, delay);
     };
 
     const connect = () => {
-      if (disposed) return;
+      if (disposed || !browserIsActive() || socket) return;
       clearReconnectTimer();
       const nextSocket = new WebSocket(UPBIT_TICKER_WEBSOCKET_URL);
       nextSocket.binaryType = "arraybuffer";
       socket = nextSocket;
 
       nextSocket.onopen = () => {
-        if (disposed || socket !== nextSocket) return;
+        if (disposed || socket !== nextSocket || !browserIsActive()) return;
         nextSocket.send(JSON.stringify([
           { ticket: `bitcoin-p2p-check-${Date.now()}` },
           { type: "ticker", codes: ["KRW-BTC"] },
@@ -554,7 +583,8 @@ export function P2PTradeTool() {
 
       nextSocket.onmessage = (event) => {
         void parseUpbitTickerMessage(event.data).then((price) => {
-          if (!price || disposed || socket !== nextSocket) return;
+          if (!price || disposed || socket !== nextSocket || !browserIsActive()) return;
+          reconnectAttempt = 0;
           queuePrice(price);
         });
       };
@@ -571,15 +601,35 @@ export function P2PTradeTool() {
       };
     };
 
-    connect();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        disconnect();
+        return;
+      }
+      reconnectAttempt = 0;
+      connect();
+    };
+
+    const handleOnline = () => {
+      if (document.visibilityState !== "visible") return;
+      reconnectAttempt = 0;
+      connect();
+    };
+
+    const handleOffline = () => {
+      disconnect();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    if (browserIsActive()) connect();
     return () => {
       disposed = true;
-      clearReconnectTimer();
-      clearRenderTimer();
-      setStreamActive(false);
-      const activeSocket = socket;
-      socket = null;
-      activeSocket?.close();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      disconnect();
     };
   }, [applyLivePrice]);
 
