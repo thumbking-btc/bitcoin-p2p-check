@@ -1,21 +1,22 @@
 name: Prepare v2.0.7
 
 on:
-  push:
-    branches: [release/v2.0.7]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   prepare:
+    if: github.head_ref == 'release/v2.0.7'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check out release branch
         uses: actions/checkout@v5
         with:
-          ref: release/v2.0.7
+          ref: ${{ github.head_ref }}
 
       - name: Use Node.js 22.19.0
         uses: actions/setup-node@v5
@@ -75,4 +76,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json app/lib/app-version.ts CHANGELOG.md
           git commit -m "Release v2.0.7"
-          git push origin HEAD:release/v2.0.7
+          git push origin HEAD:${{ github.head_ref }}
