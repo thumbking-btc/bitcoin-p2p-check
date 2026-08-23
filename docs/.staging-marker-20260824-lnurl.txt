@@ -1,0 +1,1 @@
+Lightning receive-info preview: fixed-amount invoice from Lightning Address or LNURL-pay; UI inset alignment revision.
