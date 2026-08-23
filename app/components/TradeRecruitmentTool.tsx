@@ -6,6 +6,7 @@ import {
   shareTradeRecruitmentText,
   syncTradeRecruitmentPreview,
 } from "../lib/trade-recruitment.mjs";
+import { stepPremiumPercent } from "../lib/p2p-quote.mjs";
 
 type TradeRole = "buyer" | "seller";
 type AmountUnit = "krw" | "sats" | "btc";
@@ -73,12 +74,17 @@ export function TradeRecruitmentTool({
 }: TradeRecruitmentToolProps) {
   const [network, setNetwork] = useState<TransferNetwork>("onchain");
   const [returningTraderEnabled, setReturningTraderEnabled] = useState(false);
-  const [returningTraderPremiumInput, setReturningTraderPremiumInput] = useState("");
+  const [returningTraderPremiumOverride, setReturningTraderPremiumInput] = useState<string | null>(null);
   const [canShareKrwSource, setCanShareKrwSource] = useState(false);
   const [canVerifyIdentity, setCanVerifyIdentity] = useState(false);
   const [memo, setMemo] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [sharing, setSharing] = useState(false);
+  const returningTraderPremiumInput = returningTraderPremiumOverride
+    ?? suggestedReturningPremium(sellerPremiumInput);
+  const returningPremiumPercent = returningTraderPremiumInput === "" || returningTraderPremiumInput === "-"
+    ? null
+    : Number(returningTraderPremiumInput);
 
   const generated = useMemo(() => buildTradeRecruitmentPost({
     tradeRole,
@@ -169,6 +175,12 @@ export function TradeRecruitmentTool({
     setCopyStatus("");
   }
 
+  function adjustReturningPremium(direction: -1 | 1) {
+    const current = Number.isFinite(returningPremiumPercent) ? returningPremiumPercent : null;
+    const next = stepPremiumPercent(current, direction);
+    if (next !== null) setReturningTraderPremiumInput(String(next));
+  }
+
   async function sharePreview() {
     if (sharing) return;
     setSharing(true);
@@ -236,37 +248,48 @@ export function TradeRecruitmentTool({
               : "여러 개 선택 가능"}</small>
           </summary>
           <div className="recruitment-option-list">
-            <div className={`returning-option${returningTraderEnabled ? " is-enabled" : ""}`}>
+            <div className="returning-option">
               <label className="recruitment-check">
                 <input
                   type="checkbox"
                   checked={returningTraderEnabled}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setReturningTraderEnabled(checked);
-                    if (checked && !returningTraderPremiumInput) {
-                      setReturningTraderPremiumInput(suggestedReturningPremium(sellerPremiumInput));
-                    }
-                  }}
+                  onChange={(event) => setReturningTraderEnabled(event.target.checked)}
                 />
                 <span>기존 거래자 우대</span>
               </label>
-              {returningTraderEnabled ? (
-                <label className="returning-premium" htmlFor="returning-trader-premium">
-                  <span>우대 프리미엄</span>
-                  <span className="input-with-unit">
-                    <input
-                      id="returning-trader-premium"
-                      inputMode="decimal"
-                      value={returningTraderPremiumInput}
-                      onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
-                      aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
-                      aria-invalid={returningPremiumInvalid || undefined}
-                    />
+              <label className="returning-premium" htmlFor="returning-trader-premium">
+                <span className="input-with-unit">
+                  <input
+                    id="returning-trader-premium"
+                    inputMode="decimal"
+                    value={returningTraderPremiumInput}
+                    onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                    aria-label="기존 거래자 우대 프리미엄"
+                    aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
+                    aria-invalid={returningPremiumInvalid || undefined}
+                  />
+                  <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
                     <b aria-hidden="true">%</b>
+                    <button
+                      type="button"
+                      onClick={() => adjustReturningPremium(1)}
+                      aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
+                      title="0.1% 올리기"
+                    >
+                      <span aria-hidden="true">▲</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustReturningPremium(-1)}
+                      disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
+                      aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
+                      title="0.1% 내리기"
+                    >
+                      <span aria-hidden="true">▼</span>
+                    </button>
                   </span>
-                </label>
-              ) : null}
+                </span>
+              </label>
             </div>
             {tradeRole === "buyer" ? (
               <label className="recruitment-check">
