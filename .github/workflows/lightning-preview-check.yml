@@ -38,3 +38,5 @@ jobs:
 
       - name: Verify Worker bundle
         run: npx wrangler deploy --dry-run --config wrangler.jsonc
+
+# Preview-only verification. Do not merge without mobile testing.
