@@ -690,6 +690,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /const shareTextWithLink = shareText && tradeLink/);
   assert.match(component, /text: shareTextWithLink/);
   assert.match(component, /draftHydrated && shareTextWithLink[\s\S]*?shareTextWithLink/);
+  assert.match(component, /<details className="trade-share-preview" open>/);
   assert.doesNotMatch(component, /const textWithLink/);
   assert.match(css, /\.trade-share-preview pre[\s\S]*?white-space:\s*pre-wrap/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
@@ -964,7 +965,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
-  assert.match(html, /aria-label="버전 2\.0\.1">v2\.0\.1<\/span>/);
+  assert.match(html, /aria-label="버전 2\.0\.2">v2\.0\.2<\/span>/);
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
@@ -1053,7 +1054,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
   assert.match(wrangler, /"run_worker_first":\s*\["\/api\/market",\s*"\/api\/market\/"\]/);
   assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
-  assert.match(packageJson, /"version": "2\.0\.1"/);
+  assert.match(packageJson, /"version": "2\.0\.2"/);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.match(headers, /Content-Security-Policy:/);

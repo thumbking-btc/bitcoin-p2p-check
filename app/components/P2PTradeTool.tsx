@@ -1217,7 +1217,7 @@ export function P2PTradeTool() {
       </section>
 
       <div className="output-panel" hidden={outputMode !== "trade-image"}>
-        <details className="trade-share-preview">
+        <details className="trade-share-preview" open>
           <summary>
             <span>함께 공유되는 문구</span>
             <small>읽기 전용 · 공유 전 확인</small>
