@@ -21,6 +21,13 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/market" || url.pathname === "/api/market/") {
+      const receiveMode = url.searchParams.get("receive");
+      if (request.method === "POST" && receiveMode === "lightning-address") {
+        return handleLightningAddressRequest(request);
+      }
+      if (request.method === "POST" && receiveMode === "lightning-pay") {
+        return handleLightningPayRequest(request);
+      }
       return handleMarketRequest(request, context);
     }
 
