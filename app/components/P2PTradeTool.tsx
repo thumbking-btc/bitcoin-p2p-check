@@ -30,7 +30,6 @@ type LivePrice = {
 const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
 const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
 const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
-const LIVE_PRICE_RECONNECT_MAX_DELAY_MS = 2 * 60_000;
 const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 60_000;
 const MARKET_REFRESH_FALLBACK_MS = 16_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
@@ -499,7 +498,6 @@ export function P2PTradeTool() {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let renderTimer: number | null = null;
-    let reconnectAttempt = 0;
     let lastRenderedAt = 0;
     let queuedPrice: LivePrice | null = null;
 
@@ -558,12 +556,7 @@ export function P2PTradeTool() {
     const scheduleReconnect = () => {
       clearReconnectTimer();
       if (disposed || !browserIsActive()) return;
-      const delay = Math.min(
-        LIVE_PRICE_RECONNECT_DELAY_MS * (2 ** reconnectAttempt),
-        LIVE_PRICE_RECONNECT_MAX_DELAY_MS,
-      );
-      reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
-      reconnectTimer = window.setTimeout(connect, delay);
+      reconnectTimer = window.setTimeout(connect, LIVE_PRICE_RECONNECT_DELAY_MS);
     };
 
     const connect = () => {
@@ -584,7 +577,6 @@ export function P2PTradeTool() {
       nextSocket.onmessage = (event) => {
         void parseUpbitTickerMessage(event.data).then((price) => {
           if (!price || disposed || socket !== nextSocket || !browserIsActive()) return;
-          reconnectAttempt = 0;
           queuePrice(price);
         });
       };
@@ -606,13 +598,11 @@ export function P2PTradeTool() {
         disconnect();
         return;
       }
-      reconnectAttempt = 0;
       connect();
     };
 
     const handleOnline = () => {
       if (document.visibilityState !== "visible") return;
-      reconnectAttempt = 0;
       connect();
     };
 
