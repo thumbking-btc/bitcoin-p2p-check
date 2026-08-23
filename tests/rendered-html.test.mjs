@@ -523,7 +523,7 @@ test("hydrates a local draft once and lets an imported share link win", async ()
   assert.ok(hydrationBlock.indexOf("if (imported)") < hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)"));
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
-  assert.match(component, /shareImageAllowed = Boolean\(shareImageInput\)[\s\S]*?&& draftHydrated/);
+  assert.match(component, /shareImageAllowed = Boolean\(quote\)[\s\S]*?&& draftHydrated/);
   assert.match(component, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
@@ -631,8 +631,14 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
   assert.match(component, /pendingMarketSnapshotRef\.current = nextData/);
   assert.match(component, /applyMarketSnapshot\(pendingSnapshot, true\)/);
-  assert.match(component, /preparedShareFormKeyRef\.current !== shareFormKey/);
-  assert.match(component, /setShareStatus\(\(current\) => formChanged/);
+  const shareTradeBlock = component.slice(
+    component.indexOf("async function shareTrade()"),
+    component.indexOf("function changeBitcoinDisplayUnit", component.indexOf("async function shareTrade()")),
+  );
+  assert.doesNotMatch(component, /preparedShareImage|preparedShareFormKeyRef|shareFormKey|shareImageGeneration|shareImagePreparing|backgroundShareImagePreparing/);
+  assert.match(shareTradeBlock, /await import\("\.\.\/lib\/trade-share-image"\)/);
+  assert.match(shareTradeBlock, /await createTradeShareImage\(\{/);
+  assert.ok(shareTradeBlock.indexOf("setIsSharing(true)") < shareTradeBlock.indexOf('await import("../lib/trade-share-image")'));
   assert.doesNotMatch(component, /<dl aria-live="polite" aria-label="mempool\.space/);
   assert.doesNotMatch(component, /manualReferencePrice|기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.match(component, /navigator\.share/);
@@ -699,7 +705,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
-  assert.match(component, /거래 조건 이미지 준비 중/);
+  assert.doesNotMatch(component, /거래 조건 이미지 준비 중/);
+  assert.match(component, /거래 조건 이미지 공유 중/);
   assert.match(component, /PNG 이미지를 저장했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
@@ -843,7 +850,9 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
-  assert.match(recruitmentComponent, /setPreviewDirty\(value !== generated\.text\)/);
+  assert.match(recruitmentComponent, /const previewText = previewOverride \?\? generated\.text/);
+  assert.match(recruitmentComponent, /setPreviewOverride\(value === generated\.text \? null : value\)/);
+  assert.doesNotMatch(recruitmentComponent, /setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef|syncTradeRecruitmentPreview/);
   assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
   assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
   assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
@@ -965,7 +974,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
-  assert.match(html, /aria-label="버전 2\.0\.2">v2\.0\.2<\/span>/);
+  assert.match(html, /aria-label="버전 2\.0\.4">v2\.0\.4<\/span>/);
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
@@ -1054,7 +1063,7 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
   assert.match(wrangler, /"run_worker_first":\s*\["\/api\/market",\s*"\/api\/market\/"\]/);
   assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
-  assert.match(packageJson, /"version": "2\.0\.2"/);
+  assert.match(packageJson, /"version": "2\.0\.4"/);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.match(headers, /Content-Security-Policy:/);
