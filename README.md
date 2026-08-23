@@ -51,7 +51,7 @@
 Node.js 22.19.0을 사용합니다.
 
 ```bash
-npm ci
+npm install
 npm run dev
 npm test
 npm run build
