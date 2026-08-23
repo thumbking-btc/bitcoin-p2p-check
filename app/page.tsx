@@ -1,3 +1,4 @@
+import { LightningAddressRequest } from "./components/LightningAddressRequest";
 import { P2PTradeTool } from "./components/P2PTradeTool";
 import { SupportPanel } from "./components/SupportPanel";
 import { InstallCta } from "./components/InstallCta";
@@ -10,6 +11,10 @@ export default function Home() {
     <>
       <main className="site-main">
         <P2PTradeTool />
+
+        <section id="lightning-preview" className="trade-tool lightning-preview-shell" aria-label="라이트닝 주소 결제 요청 실험 프리뷰">
+          <LightningAddressRequest />
+        </section>
 
         <details className="reference-details">
           <summary>
