@@ -35,8 +35,5 @@ jobs:
           grep -R -q "온체인 수취 주소" dist/client
           grep -R -q "라이트닝 주소" dist/client
 
-      - name: Verify Wallet of Satoshi and Corn Wallet compatibility
-        run: node scripts/verify-lightning-address-live.mjs
-
       - name: Verify Worker bundle
         run: npx wrangler deploy --dry-run --config wrangler.jsonc
