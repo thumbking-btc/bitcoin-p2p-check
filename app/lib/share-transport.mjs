@@ -20,6 +20,25 @@ async function materializeShareFile(file) {
   return materializeTradeShareImage(file);
 }
 
+function compactTradeShareText(text) {
+  if (typeof text !== "string") return text;
+  const marker = "\n[가격 계산]\n";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return text;
+  const verificationMarker = "\n\n거래 조건 검증하기:";
+  const verificationIndex = text.indexOf(verificationMarker, markerIndex + marker.length);
+  const head = text.slice(0, markerIndex).trimEnd();
+  if (verificationIndex < 0) return head;
+  return `${head}${text.slice(verificationIndex)}`;
+}
+
+function prepareShareText(text) {
+  if (typeof document === "undefined") return text;
+  return document.documentElement.dataset.includePriceDetails === "false"
+    ? compactTradeShareText(text)
+    : text;
+}
+
 export async function shareImageFile({
   file,
   title,
@@ -29,6 +48,7 @@ export async function shareImageFile({
   download,
 }) {
   file = await materializeShareFile(file);
+  text = prepareShareText(text);
   let canShareFile = false;
   if (typeof nativeShare === "function" && typeof nativeCanShare === "function") {
     try {
