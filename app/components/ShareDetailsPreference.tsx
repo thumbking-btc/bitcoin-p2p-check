@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { decodeQrSymbols } from "../lib/verified-qr.mjs";
 
+type TransformWindow = Window & {
+  __p2pTransformTradeShareFile?: (file: File) => Promise<File>;
+};
+
 function compactShareText(text: string) {
   const marker = "\n[가격 계산]\n";
   const markerIndex = text.indexOf(marker);
@@ -28,9 +32,16 @@ function withPremium(text: string) {
   const premium = formatPremium();
   if (!premium || !text) return text;
   const lines = text.split("\n");
-  if (!lines[0] || /\s·\sP\s[+-]?\d/u.test(lines[0])) return text;
+  if (!lines[0]) return text;
+  lines[0] = lines[0].replace(/\s·\sP\s[+-]?[\d,.]+%$/u, "");
   lines[0] = `${lines[0]} · ${premium}`;
   return lines.join("\n");
+}
+
+function visibleValue(selector: string) {
+  const field = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+  if (!field || field.offsetParent === null) return "";
+  return field.value.trim();
 }
 
 function readReceiveQrPayload() {
@@ -49,34 +60,24 @@ function readReceiveQrPayload() {
 }
 
 function receiveShareLines() {
-  const resultCanvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label='BTC 수취정보 QR']");
-  if (resultCanvas) {
-    const payload = readReceiveQrPayload();
-    if (payload) {
-      if (payload.toLowerCase().startsWith("bitcoin:")) {
-        const address = document.querySelector<HTMLInputElement>("#receive-onchain")?.value.trim() ?? "";
-        return [address ? `온체인 주소: ${address}` : "", `금액 지정 요청(BIP21): ${payload}`].filter(Boolean);
-      }
-      if (payload.toLowerCase().startsWith("lnbc") || payload.toLowerCase().startsWith("lightning:lnbc")) {
-        return [`BOLT11: ${payload.replace(/^lightning:/iu, "")}`];
-      }
+  const payload = readReceiveQrPayload();
+  if (payload) {
+    const lower = payload.toLowerCase();
+    if (lower.startsWith("bitcoin:")) {
+      const address = visibleValue("#receive-onchain");
+      return [address ? `온체인 주소: ${address}` : "", `금액 지정 요청(BIP21): ${payload}`].filter(Boolean);
+    }
+    if (lower.startsWith("lnbc") || lower.startsWith("lightning:lnbc")) {
+      return [`BOLT11: ${payload.replace(/^lightning:/iu, "")}`];
     }
   }
 
-  const onchain = document.querySelector<HTMLInputElement>("#receive-onchain");
-  if (onchain && onchain.offsetParent !== null && onchain.value.trim()) {
-    return [`온체인 주소: ${onchain.value.trim()}`];
-  }
+  const onchain = visibleValue("#receive-onchain");
+  if (onchain) return [`온체인 주소: ${onchain}`];
 
-  const lightning = document.querySelector<HTMLInputElement>("#receive-lightning");
-  if (lightning && lightning.offsetParent !== null && lightning.value.trim()) {
-    const value = lightning.value.trim();
-    return [`${value.includes("@") ? "라이트닝 주소" : "LNURL-pay"}: ${value}`];
-  }
-
-  const invoice = document.querySelector<HTMLTextAreaElement>("#receive-invoice");
-  if (invoice && invoice.offsetParent !== null && invoice.value.trim()) {
-    return [`BOLT11: ${invoice.value.trim().replace(/^lightning:/iu, "")}`];
+  const lightning = visibleValue("#receive-lightning");
+  if (lightning) {
+    return [`${lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay"}: ${lightning}`];
   }
 
   return [];
@@ -100,7 +101,7 @@ async function imageFromFile(file: File) {
     image.decoding = "async";
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
-      image.onerror = () => reject(new Error("QR 이미지를 읽지 못했습니다."));
+      image.onerror = () => reject(new Error("거래 조건 이미지를 읽지 못했습니다."));
       image.src = url;
     });
     return image;
@@ -109,42 +110,110 @@ async function imageFromFile(file: File) {
   }
 }
 
-async function makeFourByThreeQrCard(file: File) {
+function drawFittedText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maximumWidth: number,
+  preferredSize: number,
+  minimumSize: number,
+  weight = 700,
+) {
+  let size = preferredSize;
+  context.font = `${weight} ${size}px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif`;
+  while (size > minimumSize && context.measureText(text).width > maximumWidth) {
+    size -= 1;
+    context.font = `${weight} ${size}px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif`;
+  }
+  context.fillText(text, x, y);
+}
+
+function receiveImageSummary(hasQr: boolean) {
+  const onchain = visibleValue("#receive-onchain");
+  if (onchain) {
+    return {
+      label: "온체인",
+      value: onchain,
+      note: hasQr ? "QR에는 거래 금액이 포함된 BIP21 요청이 들어 있습니다." : "주소는 함께 공유되는 문구에 포함됩니다.",
+    };
+  }
+
+  const lightning = visibleValue("#receive-lightning");
+  if (lightning) {
+    return {
+      label: hasQr ? "라이트닝 인보이스" : "라이트닝 주소",
+      value: hasQr ? "BOLT11 인보이스 · QR 또는 함께 공유되는 문구 사용" : lightning,
+      note: hasQr ? `원래 주소 · ${lightning}` : "주소는 함께 공유되는 문구에 포함됩니다.",
+    };
+  }
+
+  if (hasQr) {
+    return {
+      label: "라이트닝 인보이스",
+      value: "BOLT11 인보이스 · QR 또는 함께 공유되는 문구 사용",
+      note: "검증된 결제 요청입니다.",
+    };
+  }
+
+  return {
+    label: "수취정보 미입력",
+    value: "거래 조건만 공유됩니다.",
+    note: "",
+  };
+}
+
+async function makeFourByThreeTradeCard(file: File) {
   const image = await imageFromFile(file);
   const canvas = document.createElement("canvas");
-  canvas.width = 1200;
+  canvas.width = 1_200;
   canvas.height = 900;
   const context = canvas.getContext("2d");
   if (!context) return file;
 
   context.fillStyle = "#f5f0e3";
-  context.fillRect(0, 0, 1200, 900);
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight, 0, 0, 1_200, 675);
+
   context.strokeStyle = "#101619";
-  context.lineWidth = 4;
-  context.strokeRect(30, 30, 1140, 840);
-  context.fillStyle = "#101619";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(26, 676);
+  context.lineTo(1_174, 676);
+  context.stroke();
+
+  const receiveCanvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label='BTC 수취정보 QR']");
+  const hasQr = Boolean(receiveCanvas && receiveCanvas.width > 0 && receiveCanvas.height > 0);
+  const summary = receiveImageSummary(hasQr);
+  const textWidth = hasQr ? 820 : 1_070;
+
   context.textAlign = "left";
   context.textBaseline = "middle";
-  context.font = '800 48px "Pretendard Variable", Pretendard, sans-serif';
-  context.fillText("BTC 수취정보", 72, 92);
+  context.fillStyle = "#101619";
+  context.font = '800 28px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText("BTC 받을 정보", 48, 716);
 
-  const amount = document.querySelector<HTMLElement>("[class*='amountNote'] b")?.textContent?.trim() ?? "";
-  const maxQr = 560;
-  const scale = Math.min(maxQr / image.naturalWidth, maxQr / image.naturalHeight, 1);
-  const width = Math.round(image.naturalWidth * scale);
-  const height = Math.round(image.naturalHeight * scale);
-  const x = Math.round((1200 - width) / 2);
-  const y = 175;
-  context.fillStyle = "#fff";
-  context.fillRect(x - 20, y - 20, width + 40, height + 40);
-  context.imageSmoothingEnabled = false;
-  context.drawImage(image, x, y, width, height);
+  context.fillStyle = "#a94d00";
+  context.font = '800 19px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText(summary.label, 48, 755);
 
-  if (amount) {
-    context.fillStyle = "#101619";
-    context.textAlign = "center";
-    context.font = '800 34px "SFMono-Regular", Consolas, monospace';
-    context.fillText(amount, 600, 825);
+  context.fillStyle = "#101619";
+  drawFittedText(context, summary.value, 48, 798, textWidth, 23, 14, 700);
+  if (summary.note) {
+    context.fillStyle = "#5f665f";
+    drawFittedText(context, summary.note, 48, 837, textWidth, 17, 12, 600);
+  }
+
+  if (hasQr && receiveCanvas) {
+    const qrSize = 170;
+    const qrX = 982;
+    const qrY = 700;
+    context.fillStyle = "#ffffff";
+    context.fillRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(receiveCanvas, qrX, qrY, qrSize, qrSize);
   }
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -162,6 +231,8 @@ export function ShareDetailsPreference() {
 
   useEffect(() => {
     document.documentElement.dataset.includePriceDetails = includeDetails ? "true" : "false";
+    const transformWindow = window as TransformWindow;
+    transformWindow.__p2pTransformTradeShareFile = makeFourByThreeTradeCard;
 
     const sync = () => {
       scheduledRef.current = null;
@@ -188,11 +259,6 @@ export function ShareDetailsPreference() {
       renderedTextRef.current = desired;
       document.documentElement.dataset.currentTradeShareText = desired;
       if (current !== desired) pre.textContent = desired;
-
-      const receiveSection = document.querySelector<HTMLElement>("[data-receive-info-portal] section");
-      receiveSection?.querySelectorAll("button").forEach((button) => {
-        if (button.textContent?.trim() === "주소 공유" && !button.hidden) button.hidden = true;
-      });
     };
 
     const scheduleSync = () => {
@@ -206,41 +272,13 @@ export function ShareDetailsPreference() {
     document.addEventListener("change", scheduleSync, true);
     scheduleSync();
 
-    const nativeShare = navigator.share?.bind(navigator);
-    let restoreShare: (() => void) | null = null;
-    if (nativeShare) {
-      const wrappedShare = async (data?: ShareData) => {
-        if (data?.title === "BTC 수취정보" && data.files?.length === 1 && data.files[0]?.type === "image/png") {
-          try {
-            const card = await makeFourByThreeQrCard(data.files[0]);
-            return nativeShare({ ...data, files: [card] });
-          } catch {
-            return nativeShare(data);
-          }
-        }
-        return nativeShare(data);
-      };
-      try {
-        Object.defineProperty(navigator, "share", { configurable: true, value: wrappedShare });
-        restoreShare = () => {
-          try {
-            delete (navigator as Navigator & { share?: Navigator["share"] }).share;
-          } catch {
-            return;
-          }
-        };
-      } catch {
-        restoreShare = null;
-      }
-    }
-
     return () => {
       observer.disconnect();
       document.removeEventListener("input", scheduleSync, true);
       document.removeEventListener("change", scheduleSync, true);
       if (scheduledRef.current !== null) window.cancelAnimationFrame(scheduledRef.current);
       scheduledRef.current = null;
-      restoreShare?.();
+      delete transformWindow.__p2pTransformTradeShareFile;
       delete document.documentElement.dataset.includePriceDetails;
       delete document.documentElement.dataset.currentTradeShareText;
     };
