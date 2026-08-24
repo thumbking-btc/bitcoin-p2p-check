@@ -158,11 +158,13 @@ export function ShareDetailsPreference() {
   const [includeDetails, setIncludeDetails] = useState(false);
   const baseTextRef = useRef("");
   const renderedTextRef = useRef("");
+  const scheduledRef = useRef<number | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.includePriceDetails = includeDetails ? "true" : "false";
 
     const sync = () => {
+      scheduledRef.current = null;
       const details = document.querySelector<HTMLElement>(".trade-share-preview");
       const pre = details?.querySelector<HTMLPreElement>("pre[aria-label='거래 조건 이미지와 함께 공유되는 문구']");
       if (!details || !pre) {
@@ -189,18 +191,20 @@ export function ShareDetailsPreference() {
 
       const receiveSection = document.querySelector<HTMLElement>("[data-receive-info-portal] section");
       receiveSection?.querySelectorAll("button").forEach((button) => {
-        if (button.textContent?.trim() === "주소 공유") button.hidden = true;
+        if (button.textContent?.trim() === "주소 공유" && !button.hidden) button.hidden = true;
       });
     };
 
-    const observer = new MutationObserver(() => {
-      sync();
-      window.setTimeout(sync, 60);
-    });
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["value", "hidden"] });
-    document.addEventListener("input", sync, true);
-    document.addEventListener("change", sync, true);
-    sync();
+    const scheduleSync = () => {
+      if (scheduledRef.current !== null) return;
+      scheduledRef.current = window.requestAnimationFrame(sync);
+    };
+
+    const observer = new MutationObserver(scheduleSync);
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    document.addEventListener("input", scheduleSync, true);
+    document.addEventListener("change", scheduleSync, true);
+    scheduleSync();
 
     const nativeShare = navigator.share?.bind(navigator);
     let restoreShare: (() => void) | null = null;
@@ -232,8 +236,10 @@ export function ShareDetailsPreference() {
 
     return () => {
       observer.disconnect();
-      document.removeEventListener("input", sync, true);
-      document.removeEventListener("change", sync, true);
+      document.removeEventListener("input", scheduleSync, true);
+      document.removeEventListener("change", scheduleSync, true);
+      if (scheduledRef.current !== null) window.cancelAnimationFrame(scheduledRef.current);
+      scheduledRef.current = null;
       restoreShare?.();
       delete document.documentElement.dataset.includePriceDetails;
       delete document.documentElement.dataset.currentTradeShareText;
