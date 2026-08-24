@@ -1,4 +1,4 @@
-name: Apply share premium UI
+name: Apply compact share and receive fixes
 
 on:
   push:
@@ -19,20 +19,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Apply UI changes
+      - name: Apply focused changes
         shell: python
         run: |
           from pathlib import Path
 
+          # 1) Compact shared trade copy + premium in first line + polished detail toggle.
           p = Path('app/components/P2PTradeTool.tsx')
           s = p.read_text()
-
-          state_anchor = '  const [isSharing, setIsSharing] = useState(false);\n'
+          anchor = '  const [isSharing, setIsSharing] = useState(false);\n'
           if 'includePriceDetails' not in s:
-              if state_anchor not in s: raise SystemExit('state anchor not found')
-              s = s.replace(state_anchor, state_anchor + '  const [includePriceDetails, setIncludePriceDetails] = useState(false);\n', 1)
+              if anchor not in s: raise SystemExit('sharing state anchor missing')
+              s = s.replace(anchor, anchor + '  const [includePriceDetails, setIncludePriceDetails] = useState(false);\n', 1)
 
-          intent_anchor = '''  const tradeIntent = quote ? buildTradeIntent({
+          intent = '''  const tradeIntent = quote ? buildTradeIntent({
     tradeRole,
     amountBasis,
     paymentKrw: quote.paymentKrw,
@@ -41,14 +41,14 @@ jobs:
   }) : "";
 '''
           if 'const premiumShareLabel' not in s:
-              if intent_anchor not in s: raise SystemExit('trade intent anchor not found')
-              s = s.replace(intent_anchor, intent_anchor + '''  const premiumShareLabel = premiumPercent === null
+              if intent not in s: raise SystemExit('trade intent anchor missing')
+              s = s.replace(intent, intent + '''  const premiumShareLabel = premiumPercent === null
     ? ""
     : `P ${premiumPercent > 0 ? "+" : ""}${premiumPercent.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
   const compactTradeIntent = tradeIntent && premiumShareLabel ? `${tradeIntent} · ${premiumShareLabel}` : tradeIntent;
 ''', 1)
 
-          old = '''  const shareText = quote && multiplier !== null && tradeIntent ? [
+          old_share = '''  const shareText = quote && multiplier !== null && tradeIntent ? [
     tradeIntent,
     `계산 시각: ${formatTime(referenceTime)}`,
     `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
@@ -65,7 +65,7 @@ jobs:
     "확인용: 원화 입금·BTC 수령 증빙 아님",
   ].join("\\n") : "";
 '''
-          new = '''  const shareText = quote && multiplier !== null && compactTradeIntent ? [
+          new_share = '''  const shareText = quote && multiplier !== null && compactTradeIntent ? [
     compactTradeIntent,
     `계산 시각: ${formatTime(referenceTime)}`,
     `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
@@ -84,12 +84,12 @@ jobs:
     ] : []),
   ].join("\\n") : "";
 '''
-          if old in s:
-              s = s.replace(old, new, 1)
+          if old_share in s:
+              s = s.replace(old_share, new_share, 1)
           elif 'compactTradeIntent ? [' not in s:
-              raise SystemExit('share text anchor not found')
+              raise SystemExit('share text anchor missing')
 
-          old_preview = '''          <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
+          preview = '''          <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
             {draftHydrated && shareTextWithLink
               ? shareTextWithLink
               : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
@@ -108,9 +108,8 @@ jobs:
           </label>
 '''
           if 'className="share-detail-option"' not in s:
-              if old_preview not in s: raise SystemExit('preview anchor not found')
-              s = s.replace(old_preview, old_preview + option, 1)
-
+              if preview not in s: raise SystemExit('share preview anchor missing')
+              s = s.replace(preview, preview + option, 1)
           p.write_text(s)
 
           css = Path('app/globals.css')
@@ -123,42 +122,25 @@ jobs:
   align-items: center;
   gap: 10px;
   margin: 0;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border);
+  padding: 11px 13px;
+  border-top: 1px solid var(--line);
+  background: #f7f3ea;
   cursor: pointer;
 }
-
-.share-detail-option input {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  flex: 0 0 auto;
-  accent-color: var(--accent);
-}
-
-.share-detail-option > span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.share-detail-option strong {
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.share-detail-option small {
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.35;
-}
+.share-detail-option:hover { background: #eee8dc; }
+.share-detail-option input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: var(--orange); }
+.share-detail-option > span { display: grid; gap: 2px; min-width: 0; }
+.share-detail-option strong { color: var(--ink); font-size: 12px; font-weight: 800; }
+.share-detail-option small { color: var(--muted); font-size: 10px; line-height: 1.35; }
 '''
           css.write_text(c)
 
+          # 2) Collapse creator/support section.
           page = Path('app/page.tsx')
           ps = page.read_text()
-          old_support = '        <SupportPanel />\n'
-          new_support = '''        <details className="reference-details">
+          if '<span>제작자 보기</span>' not in ps:
+              old = '        <SupportPanel />\n'
+              new = '''        <details className="reference-details">
           <summary>
             <span>제작자 보기</span>
             <small>제작자 정보와 후원</small>
@@ -168,17 +150,188 @@ jobs:
           </div>
         </details>
 '''
-          if '<span>제작자 보기</span>' not in ps:
-              if old_support not in ps: raise SystemExit('support anchor not found')
-              ps = ps.replace(old_support, new_support, 1)
+              if old not in ps: raise SystemExit('support panel anchor missing')
+              ps = ps.replace(old, new, 1)
           page.write_text(ps)
+
+          # 3) Address sharing without QR + 4:3 QR attachment card.
+          rp = Path('app/components/TradeReceiveInfoPortal.tsx')
+          r = rp.read_text()
+
+          old_qr_file = '''async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("QR 생성 실패")), "image/png");
+  });
+  return new File([blob], name, { type: "image/png", lastModified: Date.now() });
+}
+'''
+          new_qr_file = '''async function qrShareFile(
+  canvas: HTMLCanvasElement,
+  name: string,
+  result: Result,
+  amountSats: number,
+): Promise<File> {
+  const card = document.createElement("canvas");
+  card.width = 1_200;
+  card.height = 900;
+  const context = card.getContext("2d");
+  if (!context) throw new Error("QR 공유 이미지를 만들지 못했습니다.");
+
+  context.fillStyle = "#f5f0e3";
+  context.fillRect(0, 0, card.width, card.height);
+  context.strokeStyle = "#101619";
+  context.lineWidth = 4;
+  context.strokeRect(30, 30, card.width - 60, card.height - 60);
+
+  context.fillStyle = "#101619";
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.font = '800 48px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText("BTC 수취정보", 72, 92);
+  context.font = '750 23px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillStyle = "#a94d00";
+  context.fillText(result.kind === "onchain" ? "온체인" : "라이트닝 인보이스", 72, 142);
+
+  const qrWidth = canvas.width;
+  const qrHeight = canvas.height;
+  const qrX = Math.round((card.width - qrWidth) / 2);
+  const qrY = Math.round((card.height - qrHeight) / 2) + 8;
+  context.fillStyle = "#ffffff";
+  context.fillRect(qrX - 18, qrY - 18, qrWidth + 36, qrHeight + 36);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(canvas, qrX, qrY);
+
+  context.textAlign = "center";
+  context.fillStyle = "#101619";
+  context.font = '800 34px "SFMono-Regular", Consolas, monospace';
+  context.fillText(formatSats(amountSats), card.width / 2, 835);
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    card.toBlob((value) => value ? resolve(value) : reject(new Error("QR 공유 이미지 생성 실패")), "image/png");
+  });
+  card.width = 1;
+  card.height = 1;
+  return new File([blob], name, { type: "image/png", lastModified: Date.now() });
+}
+'''
+          if old_qr_file in r:
+              r = r.replace(old_qr_file, new_qr_file, 1)
+          elif 'async function qrShareFile(' not in r:
+              raise SystemExit('qr file anchor missing')
+
+          remaining_anchor = '''  const remainingSeconds = useMemo(() => {
+    if (!result?.expiresAt) return null;
+    return Math.max(0, result.expiresAt - nowSeconds);
+  }, [nowSeconds, result?.expiresAt]);
+'''
+          raw_share = '''  const rawAddressShareText = useMemo(() => {
+    if (!expectedSats) return "";
+    if (rail === "onchain") {
+      if (!onchain.trim()) return "";
+      try {
+        const request = createOnchainRequest(onchain.trim(), BigInt(expectedSats));
+        return [
+          "[BTC 수취정보 · 온체인]",
+          `거래 금액: ${formatSats(expectedSats)}`,
+          `주소: ${request.address}`,
+        ].join("\\n");
+      } catch {
+        return "";
+      }
+    }
+    if (lightningMode !== "address" || !lightningSource.trim()) return "";
+    const source = lightningSource.trim();
+    return [
+      "[BTC 수취정보 · 라이트닝]",
+      `거래 금액: ${formatSats(expectedSats)}`,
+      `${lightningAddressLike(source) ? "라이트닝 주소" : "LNURL-pay"}: ${source}`,
+    ].join("\\n");
+  }, [expectedSats, lightningMode, lightningSource, onchain, rail]);
+'''
+          if 'const rawAddressShareText = useMemo' not in r:
+              if remaining_anchor not in r: raise SystemExit('remaining anchor missing')
+              r = r.replace(remaining_anchor, remaining_anchor + raw_share, 1)
+
+          share_anchor = '''  async function share() {
+'''
+          address_share_fn = '''  async function shareAddressOnly() {
+    if (!rawAddressShareText) {
+      setError(rail === "onchain" ? "공유할 온체인 주소를 확인하십시오." : "공유할 라이트닝 주소 또는 LNURL-pay를 입력하십시오.");
+      return;
+    }
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "BTC 수취정보", text: rawAddressShareText });
+        setFeedback("주소와 거래 금액을 공유했습니다.");
+        return;
+      }
+      await navigator.clipboard.writeText(rawAddressShareText);
+      setFeedback("주소와 거래 금액을 복사했습니다.");
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError("수취 주소를 공유하지 못했습니다.");
+    }
+  }
+
+'''
+          if 'async function shareAddressOnly()' not in r:
+              if share_anchor not in r: raise SystemExit('share function anchor missing')
+              r = r.replace(share_anchor, address_share_fn + share_anchor, 1)
+
+          old_file_call = '''      const file = await qrFile(
+        canvasRef.current,
+        result.kind === "onchain" ? "onchain-qr.png" : "lightning-invoice-qr.png",
+      );
+'''
+          new_file_call = '''      const file = await qrShareFile(
+        canvasRef.current,
+        result.kind === "onchain" ? "onchain-qr.png" : "lightning-invoice-qr.png",
+        result,
+        expectedSats,
+      );
+'''
+          if old_file_call in r:
+              r = r.replace(old_file_call, new_file_call, 1)
+
+          actions_old = '''      <div className={styles.actions}>
+        <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+      </div>
+'''
+          actions_new = '''      <div
+        className={styles.actions}
+        style={{ gridTemplateColumns: rail === "onchain" || lightningMode === "address" ? "minmax(0, 1fr) auto auto" : undefined }}
+      >
+        <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+        {rail === "onchain" || lightningMode === "address" ? (
+          <button className={styles.secondary} type="button" disabled={busy || !rawAddressShareText} onClick={() => void shareAddressOnly()}>주소 공유</button>
+        ) : null}
+        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+      </div>
+'''
+          if actions_old in r:
+              r = r.replace(actions_old, actions_new, 1)
+          elif 'void shareAddressOnly()' not in r:
+              raise SystemExit('actions anchor missing')
+
+          # Make BIP21 wallet behavior clear without implying universal amount autofill.
+          onchain_input = '''          <div style={inputRowStyle}>
+            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
+            <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
+          </div>
+'''
+          if 'BIP21 금액 자동 입력은 지갑' not in r and onchain_input in r:
+              r = r.replace(onchain_input, onchain_input + '          <small>BIP21 금액 자동 입력은 지갑과 입력 방식에 따라 다릅니다. QR 스캔 또는 bitcoin: 링크 열기가 가장 호환성이 좋습니다.</small>\n', 1)
+
+          rp.write_text(r)
+
       - name: Verify
         run: npm ci && npm run verify
       - name: Commit changes
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/components/P2PTradeTool.tsx app/globals.css app/page.tsx
+          git add app/components/P2PTradeTool.tsx app/components/TradeReceiveInfoPortal.tsx app/globals.css app/page.tsx
           git diff --cached --quiet && exit 0
-          git commit -m "Simplify share copy and show premium upfront"
+          git commit -m "Simplify sharing and allow address-only receive shares"
           git push origin HEAD:feature/receive-info-current-main-final
