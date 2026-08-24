@@ -25,12 +25,19 @@ export function formatSatsAsBtcAmount(sats) {
   return `${whole}.${remainder.toString().padStart(8, "0").replace(/0+$/u, "")}`;
 }
 
+function hasForbiddenAddressCharacter(value) {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x20 || code === 0x7f || ":?#[]\\".includes(character);
+  });
+}
+
 export function createOnchainRequest(addressInput, sats) {
   if (
     typeof addressInput !== "string"
     || addressInput.length === 0
     || addressInput !== addressInput.trim()
-    || /[\s:?#\[\]\\]/u.test(addressInput)
+    || hasForbiddenAddressCharacter(addressInput)
   ) {
     fail("ADDRESS_FORMAT", "bitcoin: URI가 아닌 메인넷 수취 주소 한 개를 공백 없이 입력하십시오.");
   }
