@@ -26,6 +26,29 @@ test("keeps the PWA cache tied to the app release and precaches rendered assets"
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
 });
 
+test("keeps compact, balanced spacing around the reference cards", async () => {
+  const home = await source("../app/page.tsx");
+
+  assert.match(home, /const REFERENCE_SECTION_GAP = 16;/);
+  assert.match(home, /const MAIN_STYLE = \{ paddingBottom: REFERENCE_SECTION_GAP \} as const;/);
+  assert.match(home, /gap: REFERENCE_SECTION_GAP/);
+  assert.match(home, /marginTop: REFERENCE_SECTION_GAP/);
+  assert.match(home, /const REFERENCE_CARD_STYLE = \{ marginTop: 0 \} as const;/);
+  assert.equal((home.match(/style=\{REFERENCE_CARD_STYLE\}/g) ?? []).length, 2);
+  assert.doesNotMatch(home, /paddingBottom:\s*0/);
+});
+
+test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
+  const installCta = await source("../app/components/InstallCta.tsx");
+
+  assert.match(installCta, /SamsungBrowser/);
+  assert.match(installCta, /if \(isSamsungInternet\(\)\)/);
+  assert.match(installCta, /event\.preventDefault\(\)/);
+  assert.match(installCta, /setDeferredPrompt\(null\)/);
+  assert.match(installCta, /setMode\("android"\)/);
+  assert.match(installCta, /Chrome으로 연 뒤 브라우저 메뉴에서 설치/);
+});
+
 test("keeps the Upbit live path lightweight and realtime only", async () => {
   const calculator = await source("../app/components/P2PTradeTool.tsx");
 
@@ -47,6 +70,18 @@ test("does not rerender the hidden recruitment editor for live price-only change
   assert.match(calculator, /active=\{outputMode === "recruitment"\}/);
   assert.match(recruitment, /memo\(TradeRecruitmentToolComponent, recruitmentPropsEqual\)/);
   assert.match(recruitment, /if \(!next\.active\) return true/);
+});
+
+test("renders the final 4:3 trade card directly from the lightweight share request", async () => {
+  const transport = await source("../app/lib/share-transport.mjs");
+
+  assert.match(transport, /TRADE_SHARE_REQUEST_TYPE/);
+  assert.match(transport, /directlyTransformed\s*=\s*await runTradeImageTransform\(file, transform\)/);
+  assert.match(transport, /if \(directlyTransformed\) return directlyTransformed/);
+
+  const directTransformIndex = transport.indexOf("directlyTransformed = await runTradeImageTransform(file, transform)");
+  const materializeIndex = transport.indexOf("file = await materializeShareFile(file)");
+  assert.ok(directTransformIndex >= 0 && materializeIndex > directTransformIndex);
 });
 
 test("shares premium upstream work and caches the result independently", async () => {
