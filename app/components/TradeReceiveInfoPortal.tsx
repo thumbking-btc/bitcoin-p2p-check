@@ -9,6 +9,7 @@ import styles from "./trade-receive-info.module.css";
 
 type Rail = "onchain" | "lightning";
 type LightningMode = "address" | "invoice";
+type PasteTarget = "onchain" | "lightning" | "invoice";
 type QrArtifact = { data: Uint8ClampedArray; height: number; width: number; payload: string };
 type Result = {
   kind: "onchain" | "lightning-generated" | "lightning-invoice";
@@ -138,6 +139,50 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     setResult(null);
     setError("");
     setFeedback("");
+  }
+
+  function changeLightningSource(value: string) {
+    if (invoiceLike(value)) {
+      clear();
+      setInvoice(value.slice(0, MAX_BOLT11_LENGTH));
+      setLightningSource("");
+      setLightningMode("invoice");
+      setFeedback("BOLT11 인보이스로 인식하여 직접 입력 방식으로 전환했습니다.");
+      return;
+    }
+    clear();
+    setLightningSource(value.slice(0, 2_048));
+  }
+
+  async function pasteFromClipboard(target: PasteTarget) {
+    if (busy) return;
+    if (!navigator.clipboard?.readText) {
+      setError("이 브라우저는 붙여넣기 버튼을 지원하지 않습니다. 입력칸을 길게 눌러 붙여넣으십시오.");
+      return;
+    }
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (!text) {
+        setError("클립보드에 붙여넣을 텍스트가 없습니다.");
+        return;
+      }
+      if (target === "onchain") {
+        clear();
+        setOnchain(text.slice(0, 220));
+        setFeedback("클립보드의 온체인 주소를 붙여넣었습니다.");
+        return;
+      }
+      if (target === "lightning") {
+        changeLightningSource(text);
+        if (!invoiceLike(text)) setFeedback("클립보드의 라이트닝 수취정보를 붙여넣었습니다.");
+        return;
+      }
+      clear();
+      setInvoice(text.slice(0, MAX_BOLT11_LENGTH));
+      setFeedback("클립보드의 BOLT11 인보이스를 붙여넣었습니다.");
+    } catch {
+      setError("클립보드를 읽지 못했습니다. 입력칸을 길게 눌러 붙여넣으십시오.");
+    }
   }
 
   function makeLightningInvoiceResult(rawInvoice: string, amountSats: number, generated: boolean): Result {
@@ -295,24 +340,13 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     }
   }
 
-  function changeLightningSource(value: string) {
-    if (invoiceLike(value)) {
-      clear();
-      setInvoice(value);
-      setLightningSource("");
-      setLightningMode("invoice");
-      setFeedback("BOLT11 인보이스로 인식하여 직접 입력 방식으로 전환했습니다.");
-      return;
-    }
-    clear();
-    setLightningSource(value.slice(0, 2_048));
-  }
-
   const buildLabel = rail === "onchain"
     ? "QR 만들기"
     : lightningMode === "address"
       ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제 직전 인보이스 만들기"
       : "인보이스 확인 및 QR 만들기";
+
+  const inputRowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px", alignItems: "stretch" } as const;
 
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
@@ -335,10 +369,13 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       </fieldset>
 
       {rail === "onchain" ? (
-        <label className={styles.field}>
-          <span>온체인 수취 주소</span>
-          <input className={styles.input} value={onchain} disabled={busy} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
-        </label>
+        <div className={styles.field}>
+          <label htmlFor="receive-onchain">온체인 수취 주소</label>
+          <div style={inputRowStyle}>
+            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
+            <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
+          </div>
+        </div>
       ) : (
         <>
           <div className={styles.modeRow}>
@@ -350,17 +387,23 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
             </button>
           </div>
           {lightningMode === "address" ? (
-            <label className={styles.field}>
-              <span>라이트닝 주소 / LNURL-pay</span>
-              <input className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
+            <div className={styles.field}>
+              <label htmlFor="receive-lightning">라이트닝 주소 / LNURL-pay</label>
+              <div style={inputRowStyle}>
+                <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
+                <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
+              </div>
               <small>Lightning Address는 결제 직전에 새 BOLT11을 요청합니다. 추가 결제자 정보를 필수로 요구하는 주소는 자동 생성을 중단하고 직접 인보이스 입력을 안내합니다.</small>
-            </label>
+            </div>
           ) : (
-            <label className={styles.field}>
-              <span>BOLT11 인보이스</span>
-              <textarea className={styles.textarea} value={invoice} disabled={busy} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+            <div className={styles.field}>
+              <label htmlFor="receive-invoice">BOLT11 인보이스</label>
+              <div style={inputRowStyle}>
+                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+                <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("invoice")}>붙여넣기</button>
+              </div>
               <small>메인넷·서명·만료시간과 현재 거래의 받을 sats가 정확히 같은지 확인합니다.</small>
-            </label>
+            </div>
           )}
         </>
       )}
