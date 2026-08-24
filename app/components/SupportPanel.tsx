@@ -35,7 +35,7 @@ export function SupportPanel() {
           <h2 id="support-title">라이트닝으로 후원하기</h2>
           <p>이 계산기가 도움이 되었다면 지속적인 검증과 다음 버전 제작을 후원해 주세요.</p>
           <p className="support-note">
-            후원 전 지갑의 수신 주소가 아래 주소와 같은지 확인해 주세요.
+            후원하기 전, 라이트닝 지갑에 표시된 수신 주소가 아래 주소와 같은지 확인해 주세요.
           </p>
         </div>
 
