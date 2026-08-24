@@ -26,6 +26,10 @@ function isAppleMobileBrowser() {
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+function isSamsungInternet() {
+  return /SamsungBrowser/i.test(navigator.userAgent);
+}
+
 function isMobileBrowser() {
   return isAppleMobileBrowser()
     || /Android|Mobile/i.test(navigator.userAgent)
@@ -77,6 +81,20 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
     };
     const handleBeforeInstallPrompt = (event: Event) => {
       if (isInstalledDisplayMode()) return;
+
+      // Samsung Internet exposed an install path that did not behave consistently
+      // in device testing. Keep the product flow deterministic: Android users on
+      // Samsung Internet are sent to the tested Chrome installation guide instead
+      // of being offered a browser-specific direct WebAPK prompt.
+      if (isSamsungInternet()) {
+        promptReceived = true;
+        event.preventDefault();
+        setDeferredPrompt(null);
+        setMode("android");
+        if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
+        return;
+      }
+
       promptReceived = true;
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
@@ -154,7 +172,7 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
     : mode === "ios"
       ? "공유 메뉴에서 홈 화면에 추가할 수 있습니다."
       : mode === "android"
-        ? "Chrome 메뉴에서 홈 화면에 추가할 수 있습니다."
+        ? "Chrome으로 연 뒤 브라우저 메뉴에서 설치할 수 있습니다."
         : "설치 안내에서 브라우저별 방법을 확인할 수 있습니다.";
 
   return (
