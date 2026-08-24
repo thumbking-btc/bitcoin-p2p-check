@@ -946,6 +946,9 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(css, /\.recruitment-check\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
   assert.match(css, /\.share-tools > summary\s*\{[^}]*min-height:\s*54px/s);
+  assert.match(css, /\.share-tools > summary small\s*\{[^}]*font-size:\s*11px;[^}]*font-weight:\s*740/s);
+  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.share-tools > summary\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 12px/s);
+  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.share-tools > summary small\s*\{[^}]*grid-row:\s*2;[^}]*font-size:\s*12px;[^}]*text-align:\s*left/s);
   assert.match(css, /\.recruitment-customization > summary\s*\{[^}]*min-height:\s*44px/s);
   assert.doesNotMatch(shareDetailsPreference, /offsetParent/);
   assert.match(receiveInfoPortal, /\.output-panel:not\(\[hidden\]\) \.trade-share-preview/);
