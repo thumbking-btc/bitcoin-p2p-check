@@ -117,10 +117,61 @@ function lightningAddressLike(value: string) {
   return /^[^\s@]+@[^\s@]+$/u.test(value.trim());
 }
 
-async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
+async function qrShareFile(
+  canvas: HTMLCanvasElement,
+  name: string,
+  result: Result,
+  amountSats: number,
+): Promise<File> {
+  const card = document.createElement("canvas");
+  card.width = 1_200;
+  card.height = 900;
+  const context = card.getContext("2d");
+  if (!context) throw new Error("QR 공유 이미지를 만들지 못했습니다.");
+
+  context.fillStyle = "#f5f0e3";
+  context.fillRect(0, 0, card.width, card.height);
+  context.strokeStyle = "#101619";
+  context.lineWidth = 4;
+  context.strokeRect(30, 30, card.width - 60, card.height - 60);
+
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillStyle = "#101619";
+  context.font = '800 48px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText("BTC 수취정보", 72, 92);
+  context.fillStyle = "#a94d00";
+  context.font = '750 23px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText(result.kind === "onchain" ? "온체인" : "라이트닝 인보이스", 72, 142);
+
+  const maxQrSize = 560;
+  const qrScale = Math.min(1, maxQrSize / Math.max(canvas.width, canvas.height));
+  const qrWidth = Math.round(canvas.width * qrScale);
+  const qrHeight = Math.round(canvas.height * qrScale);
+  const qrX = Math.round((card.width - qrWidth) / 2);
+  const qrY = 188;
+  context.fillStyle = "#fff";
+  context.fillRect(qrX - 18, qrY - 18, qrWidth + 36, qrHeight + 36);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(canvas, qrX, qrY, qrWidth, qrHeight);
+
+  context.textAlign = "center";
+  context.fillStyle = "#101619";
+  context.font = '800 34px "SFMono-Regular", Consolas, monospace';
+  context.fillText(formatSats(amountSats), card.width / 2, 815);
+  context.fillStyle = "#5f6a74";
+  context.font = '650 20px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
+  context.fillText(
+    result.kind === "onchain" ? "QR을 스캔하면 주소와 거래 금액을 함께 불러옵니다." : "BOLT11 인보이스 QR",
+    card.width / 2,
+    854,
+  );
+
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("QR 생성 실패")), "image/png");
+    card.toBlob((value) => value ? resolve(value) : reject(new Error("QR 공유 이미지 생성 실패")), "image/png");
   });
+  card.width = 1;
+  card.height = 1;
   return new File([blob], name, { type: "image/png", lastModified: Date.now() });
 }
 
@@ -155,6 +206,30 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     if (!result?.expiresAt) return null;
     return Math.max(0, result.expiresAt - nowSeconds);
   }, [nowSeconds, result?.expiresAt]);
+
+  const rawAddressShareText = useMemo(() => {
+    if (!expectedSats) return "";
+    if (rail === "onchain") {
+      if (!onchain.trim()) return "";
+      try {
+        const request = createOnchainRequest(onchain.trim(), BigInt(expectedSats));
+        return [
+          "[BTC 수취정보 · 온체인]",
+          `거래 금액: ${formatSats(expectedSats)}`,
+          `주소: ${request.address}`,
+        ].join("\n");
+      } catch {
+        return "";
+      }
+    }
+    if (lightningMode !== "address" || !lightningSource.trim()) return "";
+    const source = lightningSource.trim();
+    return [
+      "[BTC 수취정보 · 라이트닝]",
+      `거래 금액: ${formatSats(expectedSats)}`,
+      `${lightningAddressLike(source) ? "라이트닝 주소" : "LNURL-pay"}: ${source}`,
+    ].join("\n");
+  }, [expectedSats, lightningMode, lightningSource, onchain, rail]);
 
   useEffect(() => {
     if (!result?.expiresAt) return;
@@ -374,8 +449,27 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     }
   }
 
+  async function shareAddressOnly() {
+    if (!rawAddressShareText) {
+      setError(rail === "onchain" ? "공유할 온체인 주소를 확인하십시오." : "공유할 라이트닝 주소 또는 LNURL-pay를 입력하십시오.");
+      return;
+    }
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "BTC 수취정보", text: rawAddressShareText });
+        setFeedback("주소와 거래 금액을 공유했습니다.");
+        return;
+      }
+      await navigator.clipboard.writeText(rawAddressShareText);
+      setFeedback("주소와 거래 금액을 복사했습니다.");
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError("수취 주소를 공유하지 못했습니다.");
+    }
+  }
+
   async function share() {
-    if (!result || !canvasRef.current) return;
+    if (!result || !canvasRef.current || !expectedSats) return;
     if (!qrReady) {
       setError("로고가 포함된 QR을 확인하는 중입니다. 잠시 후 다시 시도하십시오.");
       return;
@@ -385,15 +479,17 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       return;
     }
     try {
-      const file = await qrFile(
+      const file = await qrShareFile(
         canvasRef.current,
         result.kind === "onchain" ? "onchain-qr.png" : "lightning-invoice-qr.png",
+        result,
+        expectedSats,
       );
       if (navigator.share) {
         const canFile = typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
         if (canFile) {
           await navigator.share({ title: "BTC 수취정보", text: result.shareText, files: [file] });
-          setFeedback("수취정보 문구와 QR 이미지를 공유했습니다.");
+          setFeedback("수취정보 문구와 4:3 QR 이미지를 공유했습니다.");
           return;
         }
         await navigator.share({ title: "BTC 수취정보", text: result.shareText });
@@ -448,7 +544,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         <>
           <div className={styles.modeRow}>
             <p>{lightningMode === "address"
-              ? "주소는 그대로 두고, 실제 결제·공유 직전에 새 고정금액 인보이스를 만듭니다."
+              ? "주소는 그대로 공유할 수 있고, 실제 결제 직전에는 새 고정금액 인보이스를 만들 수 있습니다."
               : "지갑에서 직접 만든 인보이스를 거래 금액과 대조합니다."}</p>
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
@@ -461,7 +557,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
                 <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
-              <small>Lightning Address는 결제 직전에 새 BOLT11을 요청합니다. 추가 결제자 정보를 필수로 요구하는 주소는 자동 생성을 중단하고 직접 인보이스 입력을 안내합니다.</small>
+              <small>주소만 공유할 수도 있습니다. 인보이스를 만들면 현재 거래 금액과 일치하는 BOLT11 원문과 QR을 함께 공유합니다.</small>
             </div>
           ) : (
             <div className={styles.field}>
@@ -478,8 +574,17 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
 
       <div className={styles.actions}>
         <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
-        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+        {rawAddressShareText ? (
+          <button className={styles.secondary} type="button" disabled={busy} onClick={() => void shareAddressOnly()}>주소 공유</button>
+        ) : (
+          <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+        )}
       </div>
+      {rawAddressShareText ? (
+        <div className={styles.actions}>
+          <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+        </div>
+      ) : null}
 
       {error ? <p className={`${styles.status} ${styles.error}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
 
@@ -489,7 +594,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
             <span className={styles.resultBadge}>{result.kind === "onchain" ? "온체인" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{expectedSats ? formatSats(expectedSats) : "—"}</strong>
             <dl>
-              <div><dt>공유 내용</dt><dd>{result.kind === "onchain" ? "BIP21 + QR" : "BOLT11 + QR"}</dd></div>
+              <div><dt>공유 내용</dt><dd>{result.kind === "onchain" ? "주소 + BIP21 + 4:3 QR" : "BOLT11 텍스트 + 4:3 QR"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
             <button className={styles.primary} type="button" onClick={() => void share()} disabled={!qrReady || (remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS)}>수취정보 공유</button>
