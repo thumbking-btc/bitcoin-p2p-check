@@ -23,6 +23,14 @@ const MAX_SAFE_SATS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
 const USERNAME_PATTERN = /^[a-z0-9._+-]{1,128}$/u;
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
+const PAYER_DATA_LABELS: Record<string, string> = {
+  name: "이름",
+  pubkey: "공개키",
+  identifier: "라이트닝 주소",
+  email: "이메일",
+  auth: "인증정보",
+};
+
 class LightningAddressRequestError extends Error {
   code: string;
   status: number;
@@ -89,9 +97,7 @@ function safeHttpsUrl(input: string | URL, base?: URL): URL {
 }
 
 function normalizeLightningAddress(value: unknown): { address: string; username: string; domain: string } {
-  if (typeof value !== "string") {
-    fail("INVALID_ADDRESS", "라이트닝 주소를 확인하십시오.");
-  }
+  if (typeof value !== "string") fail("INVALID_ADDRESS", "라이트닝 주소를 확인하십시오.");
 
   const address = value.trim().toLowerCase();
   if (!address || address.length > MAX_LIGHTNING_ADDRESS_LENGTH || address.includes(" ")) {
@@ -138,6 +144,14 @@ function parseAmountSats(value: unknown): number {
 function finiteSafeInteger(value: unknown): number | null {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function mandatoryPayerData(discovery: Record<string, unknown>): string[] {
+  if (!isRecord(discovery.payerData)) return [];
+  return Object.entries(discovery.payerData)
+    .filter(([, config]) => isRecord(config) && config.mandatory === true)
+    .map(([key]) => PAYER_DATA_LABELS[key] ?? key)
+    .slice(0, 8);
 }
 
 async function readLimitedJson(request: Request): Promise<unknown> {
@@ -272,6 +286,15 @@ export async function handleLightningAddressRequest(request: Request): Promise<R
     }
     if (discovery.tag !== "payRequest") {
       fail("UNSUPPORTED_ADDRESS", "이 주소는 LNURL-pay 라이트닝 주소가 아닙니다.", 422);
+    }
+
+    const requiredPayerData = mandatoryPayerData(discovery);
+    if (requiredPayerData.length > 0) {
+      fail(
+        "PAYER_DATA_REQUIRED",
+        `이 라이트닝 주소는 결제자 추가 정보(${requiredPayerData.join(", ")})를 필수로 요구합니다. 자동 인보이스 대신 지갑에서 인보이스를 직접 만들어 입력하십시오.`,
+        422,
+      );
     }
 
     const minSendable = finiteSafeInteger(discovery.minSendable);
