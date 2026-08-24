@@ -72,16 +72,18 @@ test("does not rerender the hidden recruitment editor for live price-only change
   assert.match(recruitment, /if \(!next\.active\) return true/);
 });
 
-test("renders the final 4:3 trade card directly from the lightweight share request", async () => {
+test("materializes the final 4:3 trade card without DOM transform bridges", async () => {
   const transport = await source("../app/lib/share-transport.mjs");
 
   assert.match(transport, /TRADE_SHARE_REQUEST_TYPE/);
-  assert.match(transport, /directlyTransformed\s*=\s*await runTradeImageTransform\(file, transform\)/);
-  assert.match(transport, /if \(directlyTransformed\) return directlyTransformed/);
+  assert.match(transport, /await import\("\.\/trade-share-image"\)/);
+  assert.match(transport, /materializeTradeShareImage\(file\)/);
+  assert.match(transport, /return normalizePngFilename\(file\)/);
+  assert.doesNotMatch(transport, /runTradeImageTransform|__p2pTransformTradeShareFile|dataset|querySelector|document\./);
 
-  const directTransformIndex = transport.indexOf("directlyTransformed = await runTradeImageTransform(file, transform)");
   const materializeIndex = transport.indexOf("file = await materializeShareFile(file)");
-  assert.ok(directTransformIndex >= 0 && materializeIndex > directTransformIndex);
+  const normalizeIndex = transport.indexOf("return normalizePngFilename(file)");
+  assert.ok(materializeIndex >= 0 && normalizeIndex > materializeIndex);
 });
 
 test("shares premium upstream work and caches the result independently", async () => {

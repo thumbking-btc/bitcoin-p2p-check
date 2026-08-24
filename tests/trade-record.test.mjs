@@ -1,0 +1,350 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import { createOnchainRequest } from "../app/lib/onchain-request.mjs";
+import {
+  canonicalizeTradeRecordApiSuccess,
+  TRADE_RECORD_RETENTION_SECONDS,
+} from "../app/lib/trade-record.ts";
+import {
+  TRADE_RECORD_PUBLIC_KEYS,
+  verifyTradeRecordSignature,
+} from "../app/lib/trade-record-verification.ts";
+import { fetchTradeRecord } from "../app/lib/trade-record-client.ts";
+import { handleTradeRecordRequest } from "../worker/trade-record.ts";
+
+const ADDRESS = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+
+class MemoryKv {
+  values = new Map();
+  puts = [];
+
+  async get(key) {
+    return this.values.get(key) ?? null;
+  }
+
+  async put(key, value, options) {
+    this.values.set(key, value);
+    this.puts.push({ key, value, options });
+  }
+}
+
+class MemoryRateLimit {
+  calls = [];
+  success = true;
+
+  async limit(options) {
+    this.calls.push(options);
+    return { success: this.success };
+  }
+}
+
+function upbitPriceFetcher(priceKrw = 100_000_000, tradeTimestamp = Date.now()) {
+  return async (input, init) => {
+    assert.equal(String(input), "https://api.upbit.com/v1/ticker?markets=KRW-BTC");
+    assert.equal(init?.redirect, "error");
+    return Response.json([{
+      market: "KRW-BTC",
+      trade_price: priceKrw,
+      trade_timestamp: tradeTimestamp,
+    }]);
+  };
+}
+
+async function signingEnvironment() {
+  const kid = "trade-record-test-key-1";
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+  const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  privateJwk.kid = kid;
+  publicJwk.kid = kid;
+  publicJwk.key_ops = ["verify"];
+  const records = new MemoryKv();
+  const publicKeys = { [kid]: publicJwk };
+  const rateLimiter = new MemoryRateLimit();
+  const fetcher = upbitPriceFetcher();
+  const environment = {
+    TRADE_RECORDS: records,
+    TRADE_RECORD_CREATE_RATE_LIMITER: rateLimiter,
+    TRADE_RECORD_SIGNING_KEY: JSON.stringify(privateJwk),
+  };
+  return {
+    environment,
+    fetcher,
+    handle: (request, environmentOverride = environment, optionsOverride = {}) => handleTradeRecordRequest(
+      request,
+      environmentOverride,
+      { publicKeys, fetcher, ...optionsOverride },
+    ),
+    publicKeys,
+    rateLimiter,
+    records,
+  };
+}
+
+function validDraft(payment = null) {
+  return {
+    condition: {
+      role: "buyer",
+      amountBasis: "krw",
+      bitcoinDisplayUnit: "sats",
+      paymentKrw: 1_000_000,
+      sats: 1_000_000,
+      referencePriceKrw: 100_000_000,
+      marketObservedAt: new Date().toISOString(),
+      koreaPremiumRatio: 0.0213,
+      sellerPremiumBps: 0,
+      fundingSource: "근로소득",
+    },
+    payment,
+  };
+}
+
+function createRequest(draft, path = "/api/trade-record") {
+  return new Request(`https://records.example${path}`, {
+    method: "POST",
+    headers: {
+      "CF-Connecting-IP": "203.0.113.10",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(draft),
+  });
+}
+
+test("creates, stores, fetches, and independently verifies a signed trade record", async () => {
+  const { handle, publicKeys, records } = await signingEnvironment();
+  const createResponse = await handle(createRequest(validDraft()));
+  assert.equal(createResponse.status, 201);
+  assert.equal(createResponse.headers.get("cache-control"), "no-store");
+
+  const created = canonicalizeTradeRecordApiSuccess(await createResponse.json());
+  assert.match(created.id, /^[A-Za-z0-9_-]{16}$/u);
+  assert.equal(created.id, created.record.id);
+  assert.equal(created.verificationUrl, `https://records.example/verify/?id=${created.id}`);
+  assert.equal(records.puts.length, 1);
+  assert.equal(records.puts[0].options.expirationTtl, TRADE_RECORD_RETENTION_SECONDS);
+
+  const verified = await verifyTradeRecordSignature(created, { publicKeys });
+  assert.equal(verified.status, "valid");
+  assert.equal(verified.record.condition.fundingSource, "근로소득");
+  assert.equal(verified.record.payment, null);
+
+  const getResponse = await handle(
+    new Request(`https://records.example/api/trade-record/${created.id}`, { headers: { Accept: "application/json" } }),
+  );
+  assert.equal(getResponse.status, 200);
+  const fetched = canonicalizeTradeRecordApiSuccess(await getResponse.json());
+  assert.deepEqual(fetched.record, created.record);
+  assert.equal(fetched.signature, created.signature);
+});
+
+test("binds one exact canonical BIP21 payment target to the signed sats", async () => {
+  const { handle, publicKeys } = await signingEnvironment();
+  const request = createOnchainRequest(ADDRESS, 1_000_000n);
+  const response = await handle(createRequest(validDraft({
+    rail: "onchain",
+    address: ADDRESS,
+    payload: request.uri,
+  })));
+  assert.equal(response.status, 201);
+  const created = canonicalizeTradeRecordApiSuccess(await response.json());
+  assert.deepEqual(created.record.payment, {
+    rail: "onchain",
+    payload: request.uri,
+    address: ADDRESS,
+  });
+  assert.equal((await verifyTradeRecordSignature(created, { publicKeys })).status, "valid");
+
+  const wrongAmount = request.uri.replace("amount=0.01", "amount=0.02");
+  const rejected = await handle(createRequest(validDraft({
+    rail: "onchain",
+    address: ADDRESS,
+    payload: wrongAmount,
+  })));
+  assert.equal(rejected.status, 400);
+  assert.equal((await rejected.json()).code, "PAYMENT_AMOUNT_MISMATCH");
+});
+
+test("rejects inconsistent or expanded condition schemas before signing", async () => {
+  const { handle, records } = await signingEnvironment();
+  const inconsistent = validDraft();
+  inconsistent.condition.sats += 1;
+  const inconsistentResponse = await handle(createRequest(inconsistent));
+  assert.equal(inconsistentResponse.status, 400);
+  assert.equal((await inconsistentResponse.json()).code, "INCONSISTENT_CONDITION");
+
+  const expanded = validDraft();
+  expanded.condition.memo = "must not be signed";
+  const expandedResponse = await handle(createRequest(expanded));
+  assert.equal(expandedResponse.status, 400);
+  assert.equal((await expandedResponse.json()).code, "INVALID_CONDITION");
+  assert.equal(records.puts.length, 0);
+});
+
+test("detects logical record tampering while accepting the original", async () => {
+  const { handle, publicKeys } = await signingEnvironment();
+  const response = await handle(createRequest(validDraft()));
+  const created = canonicalizeTradeRecordApiSuccess(await response.json());
+  const tampered = structuredClone(created);
+  tampered.record.condition.fundingSource = "사업소득";
+
+  const originalResult = await verifyTradeRecordSignature(created, { publicKeys });
+  const tamperedResult = await verifyTradeRecordSignature(tampered, { publicKeys });
+  assert.equal(originalResult.status, "valid");
+  assert.equal(tamperedResult.status, "invalid-signature");
+});
+
+test("fails closed for unknown keys, unavailable bindings, oversized bodies, and wrong methods", async () => {
+  const { environment, handle } = await signingEnvironment();
+  const response = await handle(createRequest(validDraft()));
+  const created = canonicalizeTradeRecordApiSuccess(await response.json());
+  assert.equal((await verifyTradeRecordSignature(created, { publicKeys: {} })).status, "unknown-key");
+
+  const noStorage = await handle(createRequest(validDraft()), {
+    ...environment,
+    TRADE_RECORDS: undefined,
+  });
+  assert.equal(noStorage.status, 503);
+  assert.equal((await noStorage.json()).code, "STORAGE_UNAVAILABLE");
+
+  const noRateLimiter = await handleTradeRecordRequest(createRequest(validDraft()), {
+    TRADE_RECORDS: environment.TRADE_RECORDS,
+    TRADE_RECORD_SIGNING_KEY: environment.TRADE_RECORD_SIGNING_KEY,
+  });
+  assert.equal(noRateLimiter.status, 503);
+  assert.equal((await noRateLimiter.json()).code, "RATE_LIMIT_UNAVAILABLE");
+
+  const oversized = await handle(new Request("https://records.example/api/trade-record", {
+    method: "POST",
+    headers: { "CF-Connecting-IP": "203.0.113.10", "Content-Type": "application/json" },
+    body: JSON.stringify({ padding: "x".repeat(8_500) }),
+  }));
+  assert.equal(oversized.status, 413);
+
+  const wrongMethod = await handle(new Request("https://records.example/api/trade-record"));
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.get("allow"), "POST");
+
+  const misleadingContentType = createRequest(validDraft());
+  misleadingContentType.headers.set("Content-Type", "application/jsonp");
+  const wrongContentType = await handle(misleadingContentType);
+  assert.equal(wrongContentType.status, 415);
+});
+
+test("refuses to store records when the signing secret does not match the committed public key", async () => {
+  const { environment, records } = await signingEnvironment();
+  const privateJwk = JSON.parse(environment.TRADE_RECORD_SIGNING_KEY);
+  privateJwk.kid = "p2p-trade-record-2026-08-25";
+  const response = await handleTradeRecordRequest(createRequest(validDraft()), {
+    ...environment,
+    TRADE_RECORD_SIGNING_KEY: JSON.stringify(privateJwk),
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "SIGNING_UNAVAILABLE");
+  assert.equal(records.puts.length, 0);
+});
+
+test("independently checks the submitted reference against fresh Upbit REST data", async () => {
+  const { handle, records } = await signingEnvironment();
+  const mismatch = await handle(createRequest(validDraft()), undefined, {
+    fetcher: upbitPriceFetcher(102_000_001),
+  });
+  assert.equal(mismatch.status, 409);
+  assert.equal((await mismatch.json()).code, "REFERENCE_PRICE_MISMATCH");
+  assert.equal(records.puts.length, 0);
+
+  const staleUpbit = await handle(createRequest(validDraft()), undefined, {
+    fetcher: upbitPriceFetcher(100_000_000, Date.now() - 3 * 60_000),
+  });
+  assert.equal(staleUpbit.status, 503);
+  assert.equal((await staleUpbit.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+  assert.equal(records.puts.length, 0);
+});
+
+test("rate-limits create calls by Cloudflare connecting IP before external work or KV writes", async () => {
+  const { handle, rateLimiter, records } = await signingEnvironment();
+  rateLimiter.success = false;
+  const response = await handle(createRequest(validDraft()));
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "60");
+  assert.equal((await response.json()).code, "RATE_LIMITED");
+  assert.deepEqual(rateLimiter.calls, [{ key: "trade-record:create:203.0.113.10" }]);
+  assert.equal(records.puts.length, 0);
+});
+
+test("retries a fresh-record 404 and lets AbortSignal stop propagation waiting", async () => {
+  const { handle } = await signingEnvironment();
+  const createResponse = await handle(createRequest(validDraft()));
+  const created = canonicalizeTradeRecordApiSuccess(await createResponse.json());
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  try {
+    globalThis.fetch = async () => {
+      attempts += 1;
+      return attempts === 1
+        ? Response.json({ ok: false, code: "RECORD_NOT_FOUND", message: "not propagated" }, { status: 404 })
+        : Response.json(created);
+    };
+    const retried = await fetchTradeRecord(created.id, {
+      endpointBase: "https://records.example/api/trade-record",
+      retryNotFound: true,
+    });
+    assert.equal(retried.id, created.id);
+    assert.equal(attempts, 2);
+
+    globalThis.fetch = async () => Response.json(
+      { ok: false, code: "RECORD_NOT_FOUND", message: "not propagated" },
+      { status: 404 },
+    );
+    const controller = new AbortController();
+    const pending = fetchTradeRecord(created.id, {
+      endpointBase: "https://records.example/api/trade-record",
+      retryNotFound: true,
+      signal: controller.signal,
+    });
+    queueMicrotask(() => controller.abort());
+    await assert.rejects(pending, (error) => error?.name === "AbortError");
+
+    globalThis.fetch = async () => new Response("x".repeat(17_000), { status: 200 });
+    await assert.rejects(
+      fetchTradeRecord(created.id, { endpointBase: "https://records.example/api/trade-record" }),
+      /응답이 너무 큽니다/u,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("committed deployment public JWK is structurally valid and verification route is wired in both entries", async () => {
+  const [deploymentPublicKey] = Object.values(TRADE_RECORD_PUBLIC_KEYS);
+  const imported = await crypto.subtle.importKey(
+    "jwk",
+    deploymentPublicKey,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"],
+  );
+  assert.equal(imported.type, "public");
+
+  const [worker, prerender, page, verifier, wrangler] = await Promise.all([
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/prerender.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/verify/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/verify/TradeRecordVerifier.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
+  ]);
+  assert.match(worker, /isTradeRecordApiPath/);
+  assert.match(prerender, /isTradeRecordApiPath/);
+  assert.match(page, /images:\s*\[\]/);
+  assert.match(page, /robots:\s*\{\s*index:\s*false/);
+  assert.match(verifier, /실제 업비트 관측 여부/);
+  assert.match(verifier, /retryNotFound:\s*true/);
+  assert.match(wrangler, /"ratelimits"/);
+  assert.match(wrangler, /"name":\s*"TRADE_RECORD_CREATE_RATE_LIMITER"/);
+});

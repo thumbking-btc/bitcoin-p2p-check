@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { calculateP2PQuote, SATS_PER_BTC, stepPremiumPercent } from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
-import { buildTradeIntent, formatTradeBitcoinAmount } from "../lib/trade-share-copy.mjs";
-import { buildTradeFragment, parseTradeFragment } from "../lib/trade-link.mjs";
+import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
+import { parseTradeFragment } from "../lib/trade-link.mjs";
 import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
 import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";
+import { createTradeRecord } from "../lib/trade-record-client";
+import { deriveAppliedPriceKrw } from "../lib/trade-record";
 import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
+import { TradeReceiveInfoPortal, type VerifiedReceiveInfo } from "./TradeReceiveInfoPortal";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
@@ -343,12 +346,14 @@ export function P2PTradeTool() {
   const [resultAnnouncement, setResultAnnouncement] = useState("");
   const [shareStatus, setShareStatus] = useState("");
   const [isSharing, setIsSharing] = useState(false);
+  const [verifiedReceiveInfo, setVerifiedReceiveInfo] = useState<VerifiedReceiveInfo | null>(null);
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
   const lastMarketRefreshAtRef = useRef(0);
   const attemptedInitialMarketLoadRef = useRef(false);
   const livePriceActiveRef = useRef(false);
   const isSharingRef = useRef(false);
+  const paymentLockRef = useRef(false);
   const pendingMarketSnapshotRef = useRef<MarketSnapshot | null>(null);
   const suppressNextResultAnnouncementRef = useRef(false);
 
@@ -360,7 +365,7 @@ export function P2PTradeTool() {
           observedAtMs: new Date(current.priceObservedAt).getTime(),
         })
       : data;
-    if (isSharingRef.current) {
+    if (isSharingRef.current || paymentLockRef.current) {
       pendingMarketSnapshotRef.current = nextData;
       return;
     }
@@ -380,7 +385,7 @@ export function P2PTradeTool() {
     if (Number.isFinite(currentObservedAt) && currentObservedAt > price.observedAtMs) return true;
 
     const nextData = withLivePrice(current, price);
-    if (isSharingRef.current) {
+    if (isSharingRef.current || paymentLockRef.current) {
       pendingMarketSnapshotRef.current = nextData;
       return true;
     }
@@ -431,8 +436,20 @@ export function P2PTradeTool() {
   }, [applyMarketSnapshot]);
 
   const loadMarket = useCallback(async () => {
+    if (paymentLockRef.current) return;
     await refreshMarket("manual");
   }, [refreshMarket]);
+
+  const handleVerifiedReceiveInfo = useCallback((info: VerifiedReceiveInfo | null) => {
+    const wasLocked = paymentLockRef.current;
+    paymentLockRef.current = Boolean(info);
+    setVerifiedReceiveInfo(info);
+    if (!wasLocked || info) return;
+    const pendingSnapshot = pendingMarketSnapshotRef.current;
+    if (!pendingSnapshot) return;
+    pendingMarketSnapshotRef.current = null;
+    applyMarketSnapshot(pendingSnapshot, true);
+  }, [applyMarketSnapshot]);
 
   const marketRefreshIntervalMs = getMarketRefreshInterval(livePriceActive);
 
@@ -714,7 +731,7 @@ export function P2PTradeTool() {
     ? "내 구매 자금 출처"
     : "구매자가 제공한 자금 출처";
   const fundingSourceNote = tradeRole === "buyer"
-    ? "거래 조건 이미지에만 포함됩니다."
+    ? "거래 기록 카드에만 포함됩니다."
     : "구매자가 알려준 내용만 선택해 주세요.";
   const amountBasis = amountBasisByRole[tradeRole];
   const krwAmount = krwAmounts[tradeRole];
@@ -800,35 +817,18 @@ export function P2PTradeTool() {
     sats: quote.sats,
     bitcoinDisplayUnit,
   }) : "";
-  const shareText = quote && multiplier !== null && tradeIntent ? [
-    tradeIntent,
-    `계산 시각: ${formatTime(referenceTime)}`,
-    `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
-    `판매자 → 구매자: ${formatTradeBitcoinAmount({ sats: quote.sats, bitcoinDisplayUnit })}`,
-    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
-    "",
-    "[가격 계산]",
-    `금액 기준: ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"}`,
-    `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
-    `판매자 프리미엄: ${premiumPercent}%`,
-    `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
-    `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
-    "수수료: 판매자 부담 · 구매자 수령량 차감 없음",
-    "확인용: 원화 입금·BTC 수령 증빙 아님",
-  ].join("\n") : "";
-  const tradeFragment = buildTradeFragment({
-    side: tradeRole === "buyer" ? "buy" : "sell",
-    amount: amount ?? "",
-    amountBasis,
-    premium: premiumPercent ?? "",
-    fundingSource,
-    displayUnit: bitcoinDisplayUnit,
-  });
-  const browserOrigin = typeof window === "undefined" ? "" : window.location.origin;
-  const tradeLink = tradeFragment && browserOrigin ? `${browserOrigin}/${tradeFragment}` : "";
-  const shareTextWithLink = shareText && tradeLink
-    ? `${shareText}\n\n거래 조건 검증하기: ${tradeLink}`
-    : shareText;
+  // A payment request is bound to its receiver role and exact BTC amount.
+  // Live market timestamps and non-payment annotations must not invalidate it
+  // while those two facts remain unchanged.
+  const receiveConditionKey = JSON.stringify({ tradeRole, sats: quote?.sats ?? null });
+  const paymentForRecord = verifiedReceiveInfo && quote && verifiedReceiveInfo.amountSats === quote.sats
+    ? {
+        rail: verifiedReceiveInfo.rail,
+        payload: verifiedReceiveInfo.payload,
+        address: verifiedReceiveInfo.address,
+        expiresAt: verifiedReceiveInfo.expiresAt,
+      }
+    : null;
   const shareImageAllowed = Boolean(quote)
     && referencePrice !== null
     && premiumPercent !== null
@@ -836,10 +836,10 @@ export function P2PTradeTool() {
     && !stalePrice
     && marketState === "ready";
   const shareStatusIsError = Boolean(shareStatus)
-    && (shareStatus.includes("못") || shareStatus.includes("다시"));
+    && (shareStatus.startsWith("오류:") || shareStatus.includes("못") || shareStatus.includes("다시"));
 
   async function shareTrade() {
-    if (!shareTextWithLink || !shareImageAllowed || !quote || referencePrice === null || premiumPercent === null || isSharing) return;
+    if (!shareImageAllowed || !quote || referencePrice === null || referenceTime === null || premiumPercent === null || isSharing) return;
     if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
       setPriceExpired(true);
       setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
@@ -849,44 +849,88 @@ export function P2PTradeTool() {
     isSharingRef.current = true;
     setIsSharing(true);
     try {
+      const signed = await createTradeRecord({
+        condition: {
+          role: tradeRole,
+          amountBasis,
+          bitcoinDisplayUnit,
+          paymentKrw: quote.paymentKrw,
+          sats: quote.sats,
+          referencePriceKrw: referencePrice,
+          marketObservedAt: new Date(referenceTime).toISOString(),
+          koreaPremiumRatio: effectiveKoreaPremium,
+          sellerPremiumBps: Math.round(premiumPercent * 100),
+          fundingSource: fundingSource === "기재하지 않음" ? null : fundingSource,
+        },
+        payment: paymentForRecord
+          ? paymentForRecord.rail === "onchain" && paymentForRecord.address
+            ? { rail: "onchain", payload: paymentForRecord.payload, address: paymentForRecord.address }
+            : paymentForRecord.rail === "lightning"
+              ? { rail: "lightning", payload: paymentForRecord.payload }
+              : null
+          : null,
+      });
+      const signedCondition = signed.record.condition;
       const { createTradeShareImage } = await import("../lib/trade-share-image");
       const shareFile = await createTradeShareImage({
-        tradeRole,
-        amountBasis,
-        bitcoinDisplayUnit,
+        tradeRole: signedCondition.role,
+        amountBasis: signedCondition.amountBasis,
+        bitcoinDisplayUnit: signedCondition.bitcoinDisplayUnit,
         referenceLabel,
-        referencePriceKrw: referencePrice,
-        referenceTime,
-        koreaPremiumRatio: effectiveKoreaPremium,
-        sellerPremiumPercent: premiumPercent,
-        buyerFundingSource: fundingSource,
-        paymentKrw: quote.paymentKrw,
-        sats: quote.sats,
-        btcAmount: quote.sats / SATS_PER_BTC,
-        appliedPriceKrw: quote.appliedPrice,
+        referencePriceKrw: signedCondition.referencePriceKrw,
+        referenceTime: signedCondition.marketObservedAt,
+        koreaPremiumRatio: signedCondition.koreaPremiumRatio,
+        sellerPremiumPercent: signedCondition.sellerPremiumBps / 100,
+        buyerFundingSource: signedCondition.fundingSource ?? "기재하지 않음",
+        paymentKrw: signedCondition.paymentKrw,
+        sats: signedCondition.sats,
+        btcAmount: signedCondition.sats / SATS_PER_BTC,
+        appliedPriceKrw: deriveAppliedPriceKrw(signedCondition),
+        payment: signed.record.payment?.rail === "onchain"
+          ? signed.record.payment
+          : signed.record.payment
+            ? {
+                rail: "lightning",
+                payload: signed.record.payment.payload,
+                expiresAt: Math.floor(Date.parse(signed.record.payment.expiresAt) / 1_000),
+              }
+            : null,
+        record: {
+          id: signed.id,
+          createdAt: signed.record.createdAt,
+          verificationUrl: signed.verificationUrl,
+        },
       });
+      const shareText = [
+        "비트코인 P2P 거래 기록 카드",
+        signed.record.payment ? "확인된 결제정보가 카드의 QR에 포함되어 있습니다." : "결제정보를 포함하지 않은 조건 기록입니다.",
+        `원본 확인: ${signed.verificationUrl}`,
+        "사이트가 만든 원본과 내용 일치 여부만 확인하며, 거래 완료 증명은 아닙니다.",
+      ].join("\n");
       const outcome = await shareImageFile({
         file: shareFile,
         title: tradeIntent,
-        text: shareTextWithLink,
+        text: shareText,
         nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
         nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
         download: downloadTradeImage,
       });
       if (outcome === "shared") {
-        setShareStatus("거래 조건 이미지를 공유했습니다.");
+        setShareStatus("거래 기록 카드와 원본 확인 링크를 공유했습니다.");
       } else if (outcome === "downloaded") {
         setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
       } else if (outcome === "downloaded-after-error") {
         setShareStatus("공유 창을 열지 못해 PNG 이미지를 저장했습니다.");
       }
-    } catch {
-      setShareStatus("거래 조건을 공유하거나 이미지를 저장하지 못했습니다. 다시 시도해 주세요.");
+    } catch (reason) {
+      setShareStatus(reason instanceof Error
+        ? `오류: ${reason.message}`
+        : "오류: 거래 기록 카드를 만들거나 공유하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       isSharingRef.current = false;
       setIsSharing(false);
       const pendingSnapshot = pendingMarketSnapshotRef.current;
-      if (pendingSnapshot) {
+      if (pendingSnapshot && !paymentLockRef.current) {
         pendingMarketSnapshotRef.current = null;
         applyMarketSnapshot(pendingSnapshot, true);
       }
@@ -948,11 +992,13 @@ export function P2PTradeTool() {
           <button
             className="refresh-button"
             type="button"
-            aria-label={marketState === "loading" ? "업비트 시세와 온체인 수수료율 조회 중" : "업비트 시세와 온체인 수수료율 새로고침"}
+            aria-label={verifiedReceiveInfo
+              ? "결제 QR 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
+              : marketState === "loading" ? "업비트 시세와 온체인 수수료율 조회 중" : "업비트 시세와 온체인 수수료율 새로고침"}
             onClick={() => void loadMarket()}
-            disabled={marketState === "loading" || isSharing}
+            disabled={marketState === "loading" || isSharing || Boolean(verifiedReceiveInfo)}
           >
-            {marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
+            {verifiedReceiveInfo ? "금액 고정 중" : marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
           </button>
         </header>
 
@@ -961,7 +1007,9 @@ export function P2PTradeTool() {
             <span>{referenceLabel}</span>
             <strong>{formatKrw(referencePrice)} <small>/ BTC</small></strong>
             <small className="live-market-time">
-              <LiveMarketTime active={livePriceActive} tradeObservedAt={referenceTime} />
+              {verifiedReceiveInfo
+                ? <>결제 QR 금액 고정 · {formatTime(referenceTime)}</>
+                : <LiveMarketTime active={livePriceActive} tradeObservedAt={referenceTime} />}
             </small>
           </div>
           <div className="market-cell">
@@ -1109,18 +1157,18 @@ export function P2PTradeTool() {
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
-                  <dt>구매자 → 판매자{tradeRole === "seller" ? <small className="result-badge">내가 받음</small> : null}</dt>
+                  <dt>{tradeRole === "buyer" ? "내가 보낼 원화" : "내가 받을 원화"}</dt>
                   <dd>{formatKrw(quote.paymentKrw)}<small className="result-spacer" aria-hidden="true">&nbsp;</small></dd>
                 </div>
                 <div className={`result-row transfer-row ${tradeRole === "buyer" ? "primary" : ""}`}>
-                  <dt>판매자 → 구매자{tradeRole === "buyer" ? <small className="result-badge">내가 받음</small> : null}</dt>
+                  <dt>{tradeRole === "buyer" ? "내가 받을 BTC" : "내가 보낼 BTC"}</dt>
                   <dd>
                     {bitcoinDisplayUnit === "btc" ? formatBtc(quote.sats) : formatSats(quote.sats)}
                     <small>{bitcoinDisplayUnit === "btc" ? formatSats(quote.sats) : formatBtc(quote.sats)}</small>
                   </dd>
                 </div>
                 <div className="result-row">
-                  <dt>판매자가 파는 BTC 가격</dt>
+                  <dt>적용 BTC 단가</dt>
                   <dd>{formatKrw(quote.appliedPrice)}<small>{referenceLabel} {formatKrw(referencePrice)} × {multiplier.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</small></dd>
                 </div>
               </dl>
@@ -1165,14 +1213,14 @@ export function P2PTradeTool() {
       <details className="share-tools">
         <summary>
           <span>상대 찾기·공유하기</span>
-          <small>모집글과 거래 조건 이미지</small>
+          <small>모집글과 거래 기록 카드</small>
         </summary>
         <div className="share-tools-body">
           <section className="output-picker" aria-labelledby="output-picker-title">
             <fieldset>
               <legend className="visually-hidden" id="output-picker-title">만들 결과 선택</legend>
               <div className="output-options">
-                <label htmlFor="output-mode-recruitment" aria-label="거래 상대 찾기. 공개 채널에 올릴 모집글을 만듭니다.">
+                <label htmlFor="output-mode-recruitment" aria-label="모집글. 공개 채널에서 거래 상대를 찾습니다.">
                   <input
                     id="output-mode-recruitment"
                     type="radio"
@@ -1181,9 +1229,9 @@ export function P2PTradeTool() {
                     checked={outputMode === "recruitment"}
                     onChange={() => setOutputMode("recruitment")}
                   />
-                  <span><strong>거래 상대 찾기</strong><small>공개 채널에 올릴 모집글</small></span>
+                  <span><strong>모집글</strong><small>공개 채널에서 상대 찾기</small></span>
                 </label>
-                <label htmlFor="output-mode-trade-image" aria-label="거래 조건 공유하기. 합의한 조건을 담은 이미지를 만듭니다.">
+                <label htmlFor="output-mode-trade-image" aria-label="거래 기록 카드. 합의 조건과 선택한 결제 QR의 사이트 원본을 만듭니다.">
                   <input
                     id="output-mode-trade-image"
                     type="radio"
@@ -1192,13 +1240,17 @@ export function P2PTradeTool() {
                     checked={outputMode === "trade-image"}
                     onChange={() => setOutputMode("trade-image")}
                   />
-                  <span><strong>거래 조건 공유하기</strong><small>합의한 조건을 담은 이미지</small></span>
+                  <span><strong>거래 기록 카드</strong><small>합의 조건·결제 QR·원본 확인</small></span>
                 </label>
               </div>
             </fieldset>
           </section>
 
           <div className="output-panel" hidden={outputMode !== "trade-image"}>
+            <div className="record-card-intro">
+              <strong>합의한 조건을 한 장의 원본 기록으로 만듭니다.</strong>
+              <p>결제 QR은 선택 사항이며, 생성 시각과 원본 확인 ID가 카드에 함께 표시됩니다.</p>
+            </div>
             <div className="trade-image-funding">
               <label className="fund-source-field" htmlFor="buyer-funding-source">
                 <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
@@ -1213,17 +1265,20 @@ export function P2PTradeTool() {
               </label>
               <p className="fund-source-note" id="fund-source-note">{fundingSourceNote}</p>
             </div>
-            <details className="trade-share-preview">
-              <summary>
-                <span>함께 공유되는 문구</span>
-                <small>읽기 전용 · 공유 전 확인</small>
-              </summary>
-              <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
-                {draftHydrated && shareTextWithLink
-                  ? shareTextWithLink
-                  : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
-              </pre>
-            </details>
+            {outputMode === "trade-image" ? (
+              <TradeReceiveInfoPortal
+                expectedSats={quote?.sats ?? null}
+                conditionKey={receiveConditionKey}
+                ownerRole={tradeRole}
+                onResultChange={handleVerifiedReceiveInfo}
+              />
+            ) : null}
+            <p className={`record-payment-state ${paymentForRecord ? "is-ready" : ""}`} role="status">
+              <strong>{paymentForRecord ? "결제 QR 포함 준비됨" : "결제 QR 미포함"}</strong>
+              <span>{paymentForRecord
+                ? "확인된 고정금액 결제정보가 기록 카드에 들어갑니다."
+                : "지금 공유하면 원본 확인 QR이 대신 들어갑니다."}</span>
+            </p>
             <div className="tool-actions">
               <button
                 className="share-button"
@@ -1233,17 +1288,17 @@ export function P2PTradeTool() {
                 aria-busy={isSharing}
               >
                 {isSharing
-                  ? "거래 조건 이미지 공유 중"
+                  ? "거래 기록 카드 만드는 중"
                   : stalePrice
                     ? "시세 새로고침 후 공유"
-                    : "거래 조건 이미지 공유"}
+                    : "거래 기록 카드 공유"}
               </button>
               <p
                 className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
+                {shareStatus || (!isSharing ? "원본 확인을 위해 서명된 검증 기록을 180일 보관합니다. 거래 완료 증명은 아닙니다." : "")}
               </p>
             </div>
           </div>

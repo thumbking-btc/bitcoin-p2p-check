@@ -165,11 +165,11 @@ export function buildTradeRecruitmentPost(input) {
 
   const canShareKrwSource = input.tradeRole === "buyer" && input.canShareKrwSource;
   if (canShareKrwSource && input.canVerifyIdentity) {
-    lines.push("원화 출처 설명과 상호 신원확인 협의 가능합니다.");
+    lines.push("원화 자금 출처 설명과 거래 전 상호 신원 확인 가능합니다.");
   } else if (canShareKrwSource) {
-    lines.push("원화 출처 설명 가능합니다.");
+    lines.push("원화 자금 출처 설명 가능합니다.");
   } else if (input.canVerifyIdentity) {
-    lines.push("상호 신원확인 협의 가능합니다.");
+    lines.push("거래 전 상호 신원 확인 가능합니다.");
   }
 
   const memo = normalizeMemo(input.memo);

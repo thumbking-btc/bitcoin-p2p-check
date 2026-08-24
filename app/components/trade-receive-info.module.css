@@ -1,5 +1,5 @@
 .section {
-  margin: 12px clamp(14px, 3vw, 22px);
+  margin: 10px;
   padding: 10px;
   border: 1px solid var(--line);
   background: #f7f3ea;
@@ -15,7 +15,7 @@
 .header h3 {
   margin: 0;
   color: var(--ink);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 820;
   line-height: 1.3;
 }
@@ -29,7 +29,7 @@
 .intro {
   margin: 0 0 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -39,7 +39,7 @@
   gap: 4px 7px;
   margin: 0 0 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
@@ -91,7 +91,7 @@
 
 .railPicker span {
   display: flex;
-  min-height: 48px;
+  min-height: 52px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
@@ -108,7 +108,7 @@
 
 .railPicker small {
   color: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 620;
 }
 
@@ -135,19 +135,19 @@
 .modeRow p {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
 .modeButton {
-  min-height: 40px;
+  min-height: 44px;
   padding: 7px 10px;
   border: 1px solid var(--control-line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 780;
   white-space: nowrap;
 }
@@ -163,16 +163,16 @@
   gap: 5px;
 }
 
-.field > span {
+.field > label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 780;
   line-height: 1.3;
 }
 
 .field > small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -186,23 +186,24 @@
   border-radius: 0;
   background: #fff;
   color: var(--ink);
-  font: 720 14px/1.3 var(--mono);
+  font: 720 16px/1.3 var(--mono);
 }
 
 .textarea {
   min-height: 104px;
   resize: vertical;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 16px;
 }
 
 .input:disabled,
 .textarea:disabled,
 .modeButton:disabled,
-.actions button:disabled {
+.actions button:disabled,
+.result button:disabled {
   background: #ece7dd;
   color: #77716a;
-  cursor: wait;
+  cursor: not-allowed;
 }
 
 .input:focus-visible,
@@ -229,7 +230,7 @@
   border: 1px solid var(--ink);
   border-radius: 0;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 820;
 }
 
@@ -254,7 +255,7 @@
   border-left: 3px solid var(--orange-dark);
   background: #fff0db;
   color: var(--ink);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 680;
   line-height: 1.4;
 }
@@ -282,18 +283,32 @@
   gap: 7px;
 }
 
+.resultActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
 .resultBadge {
   width: max-content;
   padding: 2px 5px;
   background: var(--orange);
   color: #241303;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 850;
 }
 
 .resultAmount {
   color: #ffc46f;
   font: 780 clamp(16px, 5vw, 22px)/1.25 var(--mono);
+}
+
+.lockNote {
+  margin: 0;
+  color: #cbd3da;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
 }
 
 .result dl {
@@ -312,7 +327,7 @@
 
 .result dt {
   color: #b6c0c8;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 720;
 }
 
@@ -321,8 +336,45 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: #fff;
-  font: 680 10px/1.4 var(--mono);
+  font: 680 12px/1.4 var(--mono);
   text-align: right;
+}
+
+.resultTarget {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid #35414b;
+  background: #0c141b;
+}
+
+.resultTarget span {
+  color: #b6c0c8;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.resultTarget code {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: #fff;
+  font: 650 12px/1.45 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.stale {
+  margin: 0;
+  padding: 7px 8px;
+  border-left: 3px solid var(--orange);
+  background: #fff0db;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .qr {
@@ -333,9 +385,14 @@
   background: #fff;
 }
 
+.qrUnavailable {
+  opacity: 0;
+  pointer-events: none;
+}
+
 @media (max-width: 620px) {
   .section {
-    margin: 10px clamp(14px, 3vw, 22px);
+    margin: 10px;
     padding: 9px;
   }
 
@@ -349,6 +406,10 @@
   }
 
   .result {
+    grid-template-columns: 1fr;
+  }
+
+  .resultActions {
     grid-template-columns: 1fr;
   }
 

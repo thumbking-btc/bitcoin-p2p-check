@@ -171,7 +171,7 @@ function RecruitmentPreview({ generated, structuredKey, customizationSummary, ch
       </p>
       <details className="recruitment-customization">
         <summary>
-          내용 추가·수정
+          모집글 세부 설정
           <small>{generated.error ? "입력 확인" : previewDirty ? "직접 수정됨" : customizationSummary}</small>
         </summary>
         <div className="recruitment-customization-body">
@@ -195,9 +195,6 @@ function RecruitmentPreview({ generated, structuredKey, customizationSummary, ch
               }}
             />
           </label>
-          <p className="recruitment-privacy-note">
-            주소·인보이스 같은 결제정보는 공개 모집글에 넣지 마세요.
-          </p>
           <button className="recruitment-reset" type="button" onClick={regeneratePreview} disabled={!generated.text}>
             자동 문구로 되돌리기
           </button>
@@ -350,43 +347,51 @@ function TradeRecruitmentToolComponent({
                   <input
                     type="checkbox"
                     checked={returningTraderEnabled}
+                    aria-controls="returning-trader-premium-field"
+                    aria-expanded={returningTraderEnabled}
                     onChange={(event) => setReturningTraderEnabled(event.target.checked)}
                   />
                   <span>기존 거래자 우대</span>
                 </label>
-                <label className="returning-premium" htmlFor="returning-trader-premium">
-                  <span className="input-with-unit">
-                    <input
-                      id="returning-trader-premium"
-                      inputMode="decimal"
-                      value={returningTraderPremiumInput}
-                      onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
-                      aria-label="기존 거래자 우대 프리미엄"
-                      aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
-                      aria-invalid={returningPremiumInvalid || undefined}
-                    />
-                    <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
-                      <b aria-hidden="true">%</b>
-                      <button
-                        type="button"
-                        onClick={() => adjustReturningPremium(1)}
-                        aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
-                        title="0.1% 올리기"
-                      >
-                        <span aria-hidden="true">▲</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => adjustReturningPremium(-1)}
-                        disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
-                        aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
-                        title="0.1% 내리기"
-                      >
-                        <span aria-hidden="true">▼</span>
-                      </button>
+                {returningTraderEnabled ? (
+                  <label
+                    className="returning-premium"
+                    htmlFor="returning-trader-premium"
+                    id="returning-trader-premium-field"
+                  >
+                    <span className="input-with-unit">
+                      <input
+                        id="returning-trader-premium"
+                        inputMode="decimal"
+                        value={returningTraderPremiumInput}
+                        onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                        aria-label="기존 거래자 우대 프리미엄"
+                        aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
+                        aria-invalid={returningPremiumInvalid || undefined}
+                      />
+                      <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
+                        <b aria-hidden="true">%</b>
+                        <button
+                          type="button"
+                          onClick={() => adjustReturningPremium(1)}
+                          aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
+                          title="0.1% 올리기"
+                        >
+                          <span aria-hidden="true">▲</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => adjustReturningPremium(-1)}
+                          disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
+                          aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
+                          title="0.1% 내리기"
+                        >
+                          <span aria-hidden="true">▼</span>
+                        </button>
+                      </span>
                     </span>
-                  </span>
-                </label>
+                  </label>
+                ) : null}
               </div>
               {tradeRole === "buyer" ? (
                 <label className="recruitment-check">
@@ -395,7 +400,7 @@ function TradeRecruitmentToolComponent({
                     checked={canShareKrwSource}
                     onChange={(event) => setCanShareKrwSource(event.target.checked)}
                   />
-                  <span>원화 출처 설명 가능</span>
+                  <span>원화 자금 출처 설명 가능</span>
                 </label>
               ) : null}
               <label className="recruitment-check">
@@ -404,7 +409,7 @@ function TradeRecruitmentToolComponent({
                   checked={canVerifyIdentity}
                   onChange={(event) => setCanVerifyIdentity(event.target.checked)}
                 />
-                <span>상호 신원확인 협의 가능</span>
+                <span>거래 전 상호 신원 확인 가능</span>
               </label>
             </div>
           </fieldset>

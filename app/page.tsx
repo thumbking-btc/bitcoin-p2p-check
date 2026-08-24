@@ -1,6 +1,4 @@
 import { P2PTradeTool } from "./components/P2PTradeTool";
-import { TradeReceiveInfoPortal } from "./components/TradeReceiveInfoPortal";
-import { ShareDetailsPreference } from "./components/ShareDetailsPreference";
 import { SupportPanel } from "./components/SupportPanel";
 import { SiteRouteNav } from "./components/SiteRouteNav";
 
@@ -20,8 +18,6 @@ export default function Home() {
     <>
       <main className="site-main" style={MAIN_STYLE}>
         <P2PTradeTool />
-        <TradeReceiveInfoPortal />
-        <ShareDetailsPreference />
 
         <div className="reference-stack" style={REFERENCE_STACK_STYLE}>
           <details className="reference-details" style={REFERENCE_CARD_STYLE}>

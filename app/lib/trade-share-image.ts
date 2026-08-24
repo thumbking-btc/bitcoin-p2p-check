@@ -1,4 +1,18 @@
-import { formatTradeBitcoinAmount, getTradeRecipientLabel } from "./trade-share-copy.mjs";
+import { createVerifiedTextQr } from "./verified-qr.mjs";
+import { formatTradeBitcoinAmount } from "./trade-share-copy.mjs";
+
+export type TradeSharePayment = {
+  rail: "onchain" | "lightning";
+  payload: string;
+  address?: string;
+  expiresAt?: number;
+};
+
+export type TradeRecordReceipt = {
+  id: string;
+  createdAt: string;
+  verificationUrl: string;
+};
 
 export type TradeShareImageInput = {
   tradeRole: "buyer" | "seller";
@@ -7,7 +21,6 @@ export type TradeShareImageInput = {
   referenceLabel: string;
   referencePriceKrw: number;
   referenceTime: string | number | Date | null;
-  /** Decimal ratio: 0.02 means 2%. This is shown only as a market reference. */
   koreaPremiumRatio: number | null;
   sellerPremiumPercent: number;
   buyerFundingSource: string;
@@ -15,28 +28,23 @@ export type TradeShareImageInput = {
   sats: number;
   btcAmount: number;
   appliedPriceKrw: number;
+  payment: TradeSharePayment | null;
+  record: TradeRecordReceipt;
 };
 
-const WIDTH = 1_600;
-const HEIGHT = 900;
+const WIDTH = 1_440;
+const HEIGHT = 1_080;
 const INK = "#101619";
 const PAPER = "#f5f0e3";
 const MUTED_PAPER = "#d9d1c1";
 const ORANGE = "#f7931a";
-const DARK_PANEL_HEIGHT = 652;
-const INNER_PANEL_TOP = 204;
-const INNER_PANEL_HEIGHT = 604;
-const INNER_PANEL_VERTICAL_PADDING = 35;
 const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const TRADE_SHARE_REQUEST_TYPE = "application/x-bitcoin-p2p-trade-image+json";
 // Canonical white mark from bitcoin.org/img/icons/logotop.svg.
-// The vector already contains Bitcoin's characteristic 13.88° clockwise tilt.
 const BITCOIN_MARK_PATH = "m241.91 70.689c0.637-4.258-2.605-6.547-7.038-8.074l1.438-5.768-3.511-0.875-1.4 5.616c-0.923-0.23-1.871-0.447-2.813-0.662l1.41-5.653-3.509-0.875-1.439 5.766c-0.764-0.174-1.514-0.346-2.242-0.527l0.004-0.018-4.842-1.209-0.934 3.75c0 0 2.605 0.597 2.55 0.634 1.422 0.355 1.679 1.296 1.636 2.042l-1.638 6.571c0.098 0.025 0.225 0.061 0.365 0.117-0.117-0.029-0.242-0.061-0.371-0.092l-2.296 9.205c-0.174 0.432-0.615 1.08-1.609 0.834 0.035 0.051-2.552-0.637-2.552-0.637l-1.743 4.019 4.569 1.139c0.85 0.213 1.683 0.436 2.503 0.646l-1.453 5.834 3.507 0.875 1.439-5.772c0.958 0.26 1.888 0.5 2.798 0.726l-1.434 5.745 3.511 0.875 1.453-5.823c5.987 1.133 10.489 0.676 12.384-4.739 1.527-4.36-0.076-6.875-3.226-8.515 2.294-0.529 4.022-2.038 4.483-5.155zm-8.022 11.249c-1.085 4.36-8.426 2.003-10.806 1.412l1.928-7.729c2.38 0.594 10.012 1.77 8.878 6.317zm1.086-11.312c-0.99 3.966-7.1 1.951-9.082 1.457l1.748-7.01c1.982 0.494 8.365 1.416 7.334 5.553z";
 
 function assertFinitePositive(value: number, name: string) {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new RangeError(`${name} must be a finite positive number.`);
-  }
+  if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be positive.`);
 }
 
 function validateInput(input: TradeShareImageInput) {
@@ -46,29 +54,23 @@ function validateInput(input: TradeShareImageInput) {
   assertFinitePositive(input.btcAmount, "btcAmount");
   assertFinitePositive(input.appliedPriceKrw, "appliedPriceKrw");
   if (!Number.isFinite(input.sellerPremiumPercent) || input.sellerPremiumPercent <= -100) {
-    throw new RangeError("sellerPremiumPercent must be finite and greater than -100.");
+    throw new RangeError("sellerPremiumPercent must be greater than -100.");
   }
-  if (!input.buyerFundingSource.trim()) {
-    throw new RangeError("buyerFundingSource must not be empty.");
+  if (!input.record?.id || !input.record.createdAt || !input.record.verificationUrl) {
+    throw new RangeError("A signed trade record is required.");
   }
-  if (input.bitcoinDisplayUnit !== "btc" && input.bitcoinDisplayUnit !== "sats") {
-    throw new RangeError("bitcoinDisplayUnit must be btc or sats.");
-  }
-  if (input.amountBasis !== "krw" && input.amountBasis !== "bitcoin") {
-    throw new RangeError("amountBasis must be krw or bitcoin.");
+  if (input.payment && (!input.payment.payload || !["onchain", "lightning"].includes(input.payment.rail))) {
+    throw new RangeError("The payment request is invalid.");
   }
 }
 
-function roundedRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) {
+function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.min(radius, width / 2, height / 2);
   context.beginPath();
+  if (typeof context.roundRect === "function") {
+    context.roundRect(x, y, width, height, r);
+    return;
+  }
   context.moveTo(x + r, y);
   context.lineTo(x + width - r, y);
   context.quadraticCurveTo(x + width, y, x + width, y + r);
@@ -81,32 +83,29 @@ function roundedRect(
   context.closePath();
 }
 
-function setFont(context: CanvasRenderingContext2D, size: number, weight = 700) {
-  context.font = `${weight} ${size}px ${FONT_FAMILY}`;
+function setFont(context: CanvasRenderingContext2D, size: number, weight = 700, mono = false) {
+  context.font = `${weight} ${size}px ${mono ? '"SFMono-Regular", Consolas, monospace' : FONT_FAMILY}`;
 }
 
-function fitText(
-  context: CanvasRenderingContext2D,
-  text: string,
-  maximumWidth: number,
-  preferredSize: number,
-  minimumSize: number,
-  weight = 700,
-) {
+function fitText(context: CanvasRenderingContext2D, text: string, maximumWidth: number, preferredSize: number, minimumSize: number, weight = 700, mono = false) {
   let size = preferredSize;
-  setFont(context, size, weight);
+  setFont(context, size, weight, mono);
   while (size > minimumSize && context.measureText(text).width > maximumWidth) {
     size -= 1;
-    setFont(context, size, weight);
+    setFont(context, size, weight, mono);
   }
-  return size;
 }
 
 function formatKrw(value: number) {
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
 
-function formatPercentFromRatio(value: number | null) {
+function formatPercent(value: number) {
+  const sign = value > 0 ? "+" : value < 0 ? "" : "±";
+  return `${sign}${value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
+}
+
+function formatRatio(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "조회 불가";
   return new Intl.NumberFormat("ko-KR", {
     style: "percent",
@@ -116,15 +115,10 @@ function formatPercentFromRatio(value: number | null) {
   }).format(value);
 }
 
-function formatPercent(value: number) {
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
-}
-
-function formatReferenceTime(value: TradeShareImageInput["referenceTime"]) {
-  if (value === null) return "조회 시각 없음";
+function formatTime(value: TradeShareImageInput["referenceTime"] | string) {
+  if (value === null) return "시각 없음";
   const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "조회 시각 없음";
+  if (Number.isNaN(date.getTime())) return "시각 없음";
   return `${new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul",
     year: "numeric",
@@ -140,11 +134,10 @@ function formatReferenceTime(value: TradeShareImageInput["referenceTime"]) {
 function drawPaperTexture(context: CanvasRenderingContext2D) {
   context.fillStyle = PAPER;
   context.fillRect(0, 0, WIDTH, HEIGHT);
-
   context.save();
-  context.globalAlpha = 0.045;
+  context.globalAlpha = 0.035;
   context.fillStyle = INK;
-  for (let index = 0; index < 1_500; index += 1) {
+  for (let index = 0; index < 1_200; index += 1) {
     const x = (index * 97) % WIDTH;
     const y = (index * 53 + (index % 17) * 19) % HEIGHT;
     context.fillRect(x, y, index % 5 === 0 ? 2 : 1, 1);
@@ -156,96 +149,109 @@ function drawPersonIcon(context: CanvasRenderingContext2D, centerX: number, cent
   context.save();
   context.fillStyle = PAPER;
   context.beginPath();
-  context.arc(centerX, centerY, 31, 0, Math.PI * 2);
+  context.arc(centerX, centerY, 29, 0, Math.PI * 2);
   context.fill();
-
   context.fillStyle = INK;
   context.beginPath();
-  context.arc(centerX, centerY - 9, 8, 0, Math.PI * 2);
+  context.arc(centerX, centerY - 8, 7, 0, Math.PI * 2);
   context.fill();
   context.beginPath();
-  context.arc(centerX, centerY + 17, 17, Math.PI, 0);
-  context.lineTo(centerX + 17, centerY + 22);
-  context.lineTo(centerX - 17, centerY + 22);
+  context.arc(centerX, centerY + 16, 15, Math.PI, 0);
+  context.lineTo(centerX + 15, centerY + 21);
+  context.lineTo(centerX - 15, centerY + 21);
   context.closePath();
   context.fill();
   context.restore();
 }
 
-function drawBitcoinMark(context: CanvasRenderingContext2D, centerX: number, centerY: number) {
+function drawTransferRow(context: CanvasRenderingContext2D, options: { y: number; label: string; value: string; highlighted: boolean; badge?: string }) {
+  drawPersonIcon(context, 125, options.y);
+  if (options.highlighted) {
+    context.fillStyle = ORANGE;
+    roundedRect(context, 166, options.y - 38, 8, 76, 4);
+    context.fill();
+  }
+  context.fillStyle = PAPER;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  setFont(context, 30, 750);
+  context.fillText(options.label, 200, options.badge ? options.y - 13 : options.y);
+  if (options.badge) {
+    setFont(context, 18, 800);
+    const width = Math.ceil(context.measureText(options.badge).width) + 28;
+    context.fillStyle = ORANGE;
+    roundedRect(context, 200, options.y + 13, width, 32, 16);
+    context.fill();
+    context.fillStyle = INK;
+    context.textAlign = "center";
+    context.fillText(options.badge, 200 + width / 2, options.y + 29);
+  }
+  context.fillStyle = options.highlighted ? ORANGE : PAPER;
+  context.textAlign = "right";
+  fitText(context, options.value, 330, 38, 27, 820);
+  context.fillText(options.value, 840, options.y);
+}
+
+function drawRule(context: CanvasRenderingContext2D, y: number) {
+  context.save();
+  context.strokeStyle = "rgba(245, 240, 227, 0.27)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(90, y);
+  context.lineTo(855, y);
+  context.stroke();
+  context.restore();
+}
+
+function drawBitcoinMark(context: CanvasRenderingContext2D, centerX: number, centerY: number, radius: number) {
   context.save();
   context.fillStyle = ORANGE;
   context.beginPath();
-  context.arc(centerX, centerY, 104, 0, Math.PI * 2);
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
   context.fill();
-
   context.translate(centerX, centerY);
-  context.fillStyle = "#ffffff";
-  context.scale(3.25, 3.25);
+  context.fillStyle = "#fff";
+  const scale = 2.9 * (radius / 92);
+  context.scale(scale, scale);
   context.translate(-227.806, -75.247);
   context.fill(new Path2D(BITCOIN_MARK_PATH));
   context.restore();
 }
 
-function drawRule(context: CanvasRenderingContext2D, y: number) {
-  context.save();
-  context.strokeStyle = "rgba(245, 240, 227, 0.28)";
-  context.lineWidth = 2;
-  context.beginPath();
-  context.moveTo(145, y);
-  context.lineTo(1_255, y);
-  context.stroke();
-  context.restore();
+function drawQr(context: CanvasRenderingContext2D, payload: string, maximumLength: number) {
+  const qr = createVerifiedTextQr(payload, { maximumLength, maximumPixelSize: 460, level: "M" });
+  const canvas = document.createElement("canvas");
+  canvas.width = qr.width;
+  canvas.height = qr.height;
+  const qrContext = canvas.getContext("2d");
+  if (!qrContext) {
+    qr.data.fill(0);
+    throw new Error("QR canvas is unavailable.");
+  }
+  const image = qrContext.createImageData(qr.width, qr.height);
+  image.data.set(qr.data);
+  qrContext.putImageData(image, 0, 0);
+  image.data.fill(0);
+  qr.data.fill(0);
+  const x = 1_130 - canvas.width / 2;
+  const y = 438 - canvas.height / 2;
+  context.fillStyle = "#fff";
+  roundedRect(context, x - 18, y - 18, canvas.width + 36, canvas.height + 36, 18);
+  context.fill();
+  context.imageSmoothingEnabled = false;
+  context.drawImage(canvas, x, y);
+  canvas.width = 1;
+  canvas.height = 1;
 }
 
-function drawFlowRow(
-  context: CanvasRenderingContext2D,
-  options: {
-    y: number;
-    label: string;
-    value: string;
-    subvalue?: string;
-    recipientLabel?: string;
-    highlighted: boolean;
-  },
-) {
-  const { y, label, value, subvalue, recipientLabel, highlighted } = options;
-  drawPersonIcon(context, 175, y);
+function compactId(id: string) {
+  return id.slice(0, 12).toUpperCase().match(/.{1,4}/gu)?.join("-") ?? id.toUpperCase();
+}
 
-  if (highlighted) {
-    context.fillStyle = ORANGE;
-    roundedRect(context, 220, y - 39, 9, 78, 5);
-    context.fill();
-  }
-
-  context.fillStyle = PAPER;
-  context.textAlign = "left";
-  context.textBaseline = "middle";
-  setFont(context, 38, 700);
-  context.fillText(label, 260, recipientLabel ? y - 15 : y);
-
-  if (recipientLabel) {
-    setFont(context, 20, 800);
-    const badgeWidth = Math.ceil(context.measureText(recipientLabel).width) + 32;
-    context.fillStyle = ORANGE;
-    roundedRect(context, 260, y + 11, badgeWidth, 34, 17);
-    context.fill();
-    context.fillStyle = INK;
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(recipientLabel, 260 + badgeWidth / 2, y + 28);
-  }
-
-  context.fillStyle = highlighted ? ORANGE : PAPER;
-  context.textAlign = "right";
-  fitText(context, value, 515, 48, 33, 800);
-  context.fillText(value, 1_205, subvalue ? y - 11 : y);
-
-  if (subvalue) {
-    context.fillStyle = MUTED_PAPER;
-    setFont(context, 21, 500);
-    context.fillText(subvalue, 1_205, y + 28);
-  }
+function compactTarget(payment: TradeSharePayment) {
+  if (payment.rail === "lightning") return "고정금액 BOLT11 인보이스";
+  const address = payment.address ?? payment.payload.replace(/^bitcoin:/iu, "").split("?")[0];
+  return address.length > 30 ? `${address.slice(0, 16)}…${address.slice(-12)}` : address;
 }
 
 function makeFilename(role: TradeShareImageInput["tradeRole"]) {
@@ -259,22 +265,12 @@ function makeFilename(role: TradeShareImageInput["tradeRole"]) {
     hour12: false,
   }).formatToParts(new Date());
   const part = (type: Intl.DateTimeFormatPartTypes) => dateParts.find((item) => item.type === type)?.value ?? "00";
-  const stamp = `${part("year")}${part("month")}${part("day")}-${part("hour")}${part("minute")}`;
-  const action = role === "buyer" ? "buy" : "sell";
-  return `bitcoin-p2p-${action}-trade-${stamp}.png`;
+  return `bitcoin-p2p-${role === "buyer" ? "buy" : "sell"}-record-${part("year")}${part("month")}${part("day")}-${part("hour")}${part("minute")}.png`;
 }
 
-function makeRequestFilename(role: TradeShareImageInput["tradeRole"]) {
-  return `bitcoin-p2p-${role === "buyer" ? "buy" : "sell"}-trade.request`;
-}
-
-/**
- * Prepares only the tiny trade payload. The expensive 1600×900 canvas render and
- * PNG encoding are deferred until the user actually presses the share button.
- */
 export async function createTradeShareImage(input: TradeShareImageInput): Promise<File> {
   validateInput(input);
-  return new File([JSON.stringify(input)], makeRequestFilename(input.tradeRole), {
+  return new File([JSON.stringify(input)], `bitcoin-p2p-${input.tradeRole}-record.request`, {
     type: TRADE_SHARE_REQUEST_TYPE,
     lastModified: Date.now(),
   });
@@ -288,10 +284,7 @@ export async function materializeTradeShareImage(file: File): Promise<File> {
 }
 
 async function renderTradeShareImage(input: TradeShareImageInput): Promise<File> {
-  if (typeof document === "undefined") {
-    throw new Error("Trade share images can only be created in a browser.");
-  }
-
+  if (typeof document === "undefined") throw new Error("Trade record cards require a browser.");
   await document.fonts.ready;
 
   const canvas = document.createElement("canvas");
@@ -301,135 +294,144 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   if (!context) throw new Error("Canvas 2D is unavailable.");
 
   drawPaperTexture(context);
-
   context.strokeStyle = INK;
-  context.lineWidth = 5;
-  context.strokeRect(34, 34, WIDTH - 68, HEIGHT - 68);
-
+  context.lineWidth = 4;
+  context.strokeRect(1, 1, WIDTH - 2, HEIGHT - 2);
   context.fillStyle = INK;
   context.textAlign = "left";
   context.textBaseline = "alphabetic";
-  setFont(context, 68, 800);
-  context.fillText("비트코인 P2P 거래 조건", 78, 136);
+  setFont(context, 54, 820);
+  context.fillText("비트코인 P2P 거래 기록", 56, 92);
+  drawBitcoinMark(context, 1_075, 74, 30);
 
   context.fillStyle = ORANGE;
-  roundedRect(context, 1_302, 78, 220, 62, 31);
+  roundedRect(context, 1_123, 42, 261, 64, 32);
   context.fill();
   context.fillStyle = INK;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  setFont(context, 24, 800);
-  context.fillText(input.tradeRole === "buyer" ? "비트코인 구매" : "비트코인 판매", 1_412, 109);
+  setFont(context, 23, 820);
+  context.fillText("사이트 생성 원본", 1_253, 74);
 
   context.fillStyle = INK;
-  roundedRect(context, 72, 180, 1_456, DARK_PANEL_HEIGHT, 10);
+  roundedRect(context, 40, 138, 1_360, 900, 14);
   context.fill();
-
-  context.strokeStyle = "rgba(245, 240, 227, 0.3)";
+  context.strokeStyle = "rgba(245, 240, 227, 0.34)";
   context.lineWidth = 2;
-  roundedRect(context, 96, INNER_PANEL_TOP, 1_408, INNER_PANEL_HEIGHT, 6);
+  roundedRect(context, 64, 164, 1_312, 846, 7);
   context.stroke();
 
   context.fillStyle = MUTED_PAPER;
   context.textAlign = "left";
-  context.textBaseline = "middle";
-  setFont(context, 21, 600);
-  context.fillText("비트코인 기준 가격", 130, INNER_PANEL_TOP + INNER_PANEL_VERTICAL_PADDING);
+  setFont(context, 23, 650);
+  context.fillText("비트코인 기준 가격", 90, 204);
   context.fillStyle = PAPER;
-  fitText(context, input.referenceLabel, 410, 29, 21, 700);
-  context.fillText(input.referenceLabel, 130, 276);
-
-  const referencePriceText = `${formatKrw(input.referencePriceKrw)} / BTC`;
+  fitText(context, input.referenceLabel, 360, 34, 25, 760);
+  context.fillText(input.referenceLabel, 90, 250);
   context.textAlign = "right";
-  context.fillStyle = PAPER;
-  fitText(context, referencePriceText, 700, 48, 34, 800);
-  context.fillText(referencePriceText, 1_425, 253);
+  fitText(context, `${formatKrw(input.referencePriceKrw)} / BTC`, 430, 40, 29, 820);
+  context.fillText(`${formatKrw(input.referencePriceKrw)} / BTC`, 850, 220);
   context.fillStyle = MUTED_PAPER;
-  setFont(context, 20, 500);
-  context.fillText(
-    `조회 시각 ${formatReferenceTime(input.referenceTime)}`,
-    1_425,
-    292,
-  );
+  setFont(context, 18, 560);
+  context.fillText(`시세 ${formatTime(input.referenceTime)}`, 850, 262);
+  drawRule(context, 300);
 
-  drawRule(context, 322);
-  const recipientLabel = getTradeRecipientLabel(input.tradeRole);
-  drawFlowRow(context, {
-    y: 390,
+  drawTransferRow(context, {
+    y: 376,
     label: "구매자 → 판매자",
     value: formatKrw(input.paymentKrw),
-    recipientLabel: input.tradeRole === "seller" ? recipientLabel : undefined,
     highlighted: input.tradeRole === "seller",
+    badge: input.tradeRole === "seller" ? "판매자가 받음" : undefined,
   });
-  drawRule(context, 458);
-  drawFlowRow(context, {
+  drawRule(context, 452);
+  drawTransferRow(context, {
     y: 528,
     label: "판매자 → 구매자",
     value: formatTradeBitcoinAmount({ sats: input.sats, bitcoinDisplayUnit: input.bitcoinDisplayUnit }),
-    recipientLabel: input.tradeRole === "buyer" ? recipientLabel : undefined,
     highlighted: input.tradeRole === "buyer",
+    badge: input.tradeRole === "buyer" ? "구매자가 받음" : undefined,
   });
-  drawRule(context, 598);
+  drawRule(context, 604);
 
-  context.fillStyle = PAPER;
   context.textAlign = "left";
-  context.textBaseline = "middle";
-  setFont(context, 25, 700);
-  context.fillText("판매자 프리미엄", 145, 644);
-  context.fillStyle = ORANGE;
-  fitText(context, formatPercent(input.sellerPremiumPercent), 190, 39, 24, 800);
-  context.fillText(formatPercent(input.sellerPremiumPercent), 385, 644);
-
-  context.fillStyle = MUTED_PAPER;
-  setFont(context, 21, 600);
-  context.fillText("적용 단가", 620, 644);
   context.fillStyle = PAPER;
-  setFont(context, 27, 700);
-  context.fillText(`${formatKrw(input.appliedPriceKrw)} / BTC`, 742, 644);
-
-  context.fillStyle = MUTED_PAPER;
-  const fundingSourceLine = `구매자 자금 출처 · ${input.buyerFundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
-  fitText(context, fundingSourceLine, 1_080, 19, 15, 600);
-  context.fillText(fundingSourceLine, 145, 688);
-
-  context.fillStyle = MUTED_PAPER;
-  setFont(context, 18, 500);
-  const premiumReference = `시장 참고 · 업비트 프리미엄 ${formatPercentFromRatio(input.koreaPremiumRatio)}`;
-  fitText(context, premiumReference, 1_080, 18, 14, 500);
-  context.fillText(premiumReference, 145, 716);
-  const amountBasisLabel = input.amountBasis === "krw" ? "원화 금액" : "비트코인 수량";
-  const calculationNote = `금액 기준 · ${amountBasisLabel} · 기준가 × (1 + 판매자 프리미엄) · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음`;
-  fitText(context, calculationNote, 1_080, 18, 14, 500);
-  context.fillText(calculationNote, 145, 744);
+  setFont(context, 25, 720);
+  context.fillText("판매자 프리미엄", 90, 660);
   context.fillStyle = ORANGE;
-  const evidenceNote = "확인용 · 원화 입금·BTC 수령 증빙 아님";
-  fitText(context, evidenceNote, 1_080, 17, 14, 700);
-  context.fillText(
-    evidenceNote,
-    145,
-    INNER_PANEL_TOP + INNER_PANEL_HEIGHT - INNER_PANEL_VERTICAL_PADDING,
-  );
+  fitText(context, formatPercent(input.sellerPremiumPercent), 150, 36, 27, 840);
+  context.fillText(formatPercent(input.sellerPremiumPercent), 326, 660);
+  context.fillStyle = MUTED_PAPER;
+  setFont(context, 21, 630);
+  context.fillText("적용 BTC 단가", 477, 660);
+  context.fillStyle = PAPER;
+  fitText(context, formatKrw(input.appliedPriceKrw), 220, 27, 20, 760);
+  context.fillText(formatKrw(input.appliedPriceKrw), 650, 660);
+
+  const sourceIncluded = input.buyerFundingSource && input.buyerFundingSource !== "기재하지 않음" && input.buyerFundingSource !== "포함하지 않음";
+  context.fillStyle = MUTED_PAPER;
+  setFont(context, 20, 590);
+  const detailLines = [
+    sourceIncluded ? `구매자 자금 출처 · ${input.buyerFundingSource} · 구매자 제공 정보` : "구매자 자금 출처 · 포함하지 않음",
+    `시장 참고 · 업비트 프리미엄 ${formatRatio(input.koreaPremiumRatio)}`,
+    `계산 기준 · ${input.amountBasis === "krw" ? "원화 금액" : "비트코인 수량"} · 수수료 판매자 부담`,
+  ];
+  detailLines.forEach((line, index) => {
+    fitText(context, line, 755, 20, 17, 590);
+    context.fillText(line, 90, 724 + index * 42);
+  });
 
   context.save();
   context.strokeStyle = "rgba(245, 240, 227, 0.38)";
   context.lineWidth = 2;
   context.setLineDash([8, 10]);
   context.beginPath();
-  context.moveTo(1_270, 338);
-  context.lineTo(1_270, 690);
+  context.moveTo(900, 190);
+  context.lineTo(900, 844);
   context.stroke();
   context.restore();
-  drawBitcoinMark(context, 1_385, 500);
+
+  const qrPayload = input.payment?.payload ?? input.record.verificationUrl;
+  drawQr(context, qrPayload, input.payment ? 1_300 : 700);
+  context.textAlign = "center";
+  context.fillStyle = ORANGE;
+  setFont(context, 27, 800);
+  context.fillText(input.payment ? (input.payment.rail === "onchain" ? "금액 포함 온체인 결제 QR" : "고정금액 라이트닝 결제 QR") : "원본 확인 QR", 1_130, 718);
+  context.fillStyle = PAPER;
+  setFont(context, 23, 740);
+  context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : `기록 ID ${compactId(input.record.id)}`, 1_130, 762);
+  context.fillStyle = MUTED_PAPER;
+  const target = input.payment ? compactTarget(input.payment) : "결제정보는 이 기록에 포함되지 않았습니다.";
+  fitText(context, target, 390, 18, 14, 560, Boolean(input.payment));
+  context.fillText(target, 1_130, 800);
+
+  context.strokeStyle = "rgba(245, 240, 227, 0.28)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(90, 862);
+  context.lineTo(1_350, 862);
+  context.stroke();
+
+  context.textAlign = "left";
+  context.fillStyle = PAPER;
+  setFont(context, 22, 780);
+  context.fillText(`원본 확인 ID  ${compactId(input.record.id)}`, 90, 910);
+  context.fillStyle = MUTED_PAPER;
+  setFont(context, 17, 560);
+  context.fillText(`생성 ${formatTime(input.record.createdAt)}`, 90, 946);
+  fitText(context, input.record.verificationUrl, 690, 16, 13, 560, true);
+  context.fillText(input.record.verificationUrl, 90, 978);
+  context.textAlign = "right";
+  context.fillStyle = ORANGE;
+  setFont(context, 19, 760);
+  context.fillText("사이트 원본 내용 일치 여부 확인 가능", 1_350, 916);
+  context.fillStyle = MUTED_PAPER;
+  setFont(context, 16, 560);
+  context.fillText("거래 합의·원화 입금·BTC 수령 완료 증명 아님", 1_350, 952);
 
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) resolve(result);
-      else reject(new Error("PNG encoding failed."));
-    }, "image/png");
+    canvas.toBlob((result) => result ? resolve(result) : reject(new Error("PNG encoding failed.")), "image/png");
   });
-
-  return new File([blob], makeFilename(input.tradeRole), {
-    type: "image/png",
-    lastModified: Date.now(),
-  });
+  canvas.width = 1;
+  canvas.height = 1;
+  return new File([blob], makeFilename(input.tradeRole), { type: "image/png", lastModified: Date.now() });
 }

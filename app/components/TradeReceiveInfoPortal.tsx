@@ -1,22 +1,30 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
 import { createVerifiedTextQr, verifyQrRasterPayload } from "../lib/verified-qr.mjs";
 import styles from "./trade-receive-info.module.css";
 
-type Rail = "onchain" | "lightning";
+export type ReceiveRail = "onchain" | "lightning";
+type Rail = ReceiveRail;
 type LightningMode = "address" | "invoice";
 type PasteTarget = "onchain" | "lightning" | "invoice";
 type QrArtifact = { data: Uint8ClampedArray; height: number; width: number; payload: string };
-type Result = {
+export type VerifiedReceiveInfo = Readonly<{
   kind: "onchain" | "lightning-generated" | "lightning-invoice";
+  rail: Rail;
+  amountSats: number;
   payload: string;
+  copyTarget: string;
+  address?: string;
+  expiresAt?: number;
+}>;
+type Result = VerifiedReceiveInfo & {
+  conditionKey: string;
+  ownerRole: "buyer" | "seller";
   shareText: string;
   qr: QrArtifact;
-  expiresAt?: number;
 };
 type LightningPayResponse = {
   ok?: boolean;
@@ -74,16 +82,6 @@ async function drawVerifiedQrLogo(canvas: HTMLCanvasElement, payload: string) {
   branded.data.fill(0);
 }
 
-function findExpectedSats(): number | null {
-  const rows = Array.from(document.querySelectorAll<HTMLElement>(".trade-result .transfer-row"));
-  const row = rows.find((item) => item.textContent?.includes("판매자 → 구매자"));
-  const text = row?.querySelector("dd")?.textContent ?? "";
-  const match = text.match(/([\d,]+)\s*sats/i);
-  if (!match) return null;
-  const sats = Number(match[1].replace(/,/g, ""));
-  return Number.isSafeInteger(sats) && sats > 0 ? sats : null;
-}
-
 function formatSats(value: number) {
   return `${value.toLocaleString("ko-KR")} sats`;
 }
@@ -117,6 +115,59 @@ function lightningAddressLike(value: string) {
   return /^[^\s@]+@[^\s@]+$/u.test(value.trim());
 }
 
+function parseBip21AmountSats(value: string) {
+  const match = /^(0|[1-9]\d*)(?:\.(\d{1,8}))?$/u.exec(value);
+  if (!match) throw new Error("BIP21 금액은 소수점 아래 8자리 이내의 BTC 수량이어야 합니다.");
+  return BigInt(match[1]) * BigInt(100_000_000) + BigInt((match[2] ?? "").padEnd(8, "0"));
+}
+
+function onchainAddressFromInput(value: string, amountSats: number) {
+  const trimmed = value.trim();
+  if (!/^bitcoin:/iu.test(trimmed)) return trimmed;
+  if (/^bitcoin:\/\//iu.test(trimmed) || trimmed.includes("#")) {
+    throw new Error("bitcoin: 뒤에 메인넷 주소 한 개가 있는 BIP21만 사용할 수 있습니다.");
+  }
+
+  const body = trimmed.slice("bitcoin:".length);
+  const separator = body.indexOf("?");
+  const address = separator < 0 ? body : body.slice(0, separator);
+  const query = separator < 0 ? "" : body.slice(separator + 1);
+  if (!address || address.includes("%")) {
+    throw new Error("BIP21의 비트코인 주소 형식을 확인하지 못했습니다.");
+  }
+
+  const parameters = new URLSearchParams(query);
+  if ([...parameters.keys()].some((key) => key.toLowerCase().startsWith("req-"))) {
+    throw new Error("지원하지 않는 필수 항목이 있는 BIP21은 사용할 수 없습니다.");
+  }
+  const amounts = parameters.getAll("amount");
+  if (amounts.length > 1) throw new Error("BIP21에는 금액을 한 번만 넣을 수 있습니다.");
+
+  const request = createOnchainRequest(address, BigInt(amountSats));
+  if (amounts.length === 1 && parseBip21AmountSats(amounts[0]) !== BigInt(amountSats)) {
+    throw new Error("BIP21 금액이 현재 거래에서 받을 금액과 정확히 일치하지 않습니다.");
+  }
+  return request.address;
+}
+
+async function copyPlainText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.inset = "-9999px auto auto -9999px";
+  document.body.append(field);
+  field.select();
+  const copied = document.execCommand("copy");
+  field.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
 async function qrFile(canvas: HTMLCanvasElement, name: string): Promise<File> {
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((value) => value ? resolve(value) : reject(new Error("QR 생성 실패")), "image/png");
@@ -136,7 +187,14 @@ async function readLightningPayResponse(response: Response): Promise<LightningPa
   }
 }
 
-function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
+export type TradeReceiveInfoProps = {
+  expectedSats: number | null;
+  conditionKey: string;
+  ownerRole: "buyer" | "seller";
+  onResultChange: (info: VerifiedReceiveInfo | null) => void;
+};
+
+export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange }: TradeReceiveInfoProps) {
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
@@ -150,11 +208,55 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1_000));
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const generationRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
+  const onResultChangeRef = useRef(onResultChange);
 
   const remainingSeconds = useMemo(() => {
     if (!result?.expiresAt) return null;
     return Math.max(0, result.expiresAt - nowSeconds);
   }, [nowSeconds, result?.expiresAt]);
+
+  const resultStale = Boolean(result && (
+    expectedSats !== result.amountSats
+    || conditionKey !== result.conditionKey
+    || ownerRole !== result.ownerRole
+  ));
+  const resultExpiring = remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS;
+  const resultShareable = Boolean(result && qrReady && !resultStale && !resultExpiring);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+  }, [conditionKey, expectedSats, ownerRole]);
+
+  useLayoutEffect(() => {
+    onResultChangeRef.current = onResultChange;
+  }, [onResultChange]);
+
+  const verifiedInfo = useMemo<VerifiedReceiveInfo | null>(() => {
+    if (!result || !resultShareable) return null;
+    return Object.freeze({
+      kind: result.kind,
+      rail: result.rail,
+      amountSats: result.amountSats,
+      payload: result.payload,
+      copyTarget: result.copyTarget,
+      address: result.address,
+      expiresAt: result.expiresAt,
+    });
+  }, [result, resultShareable]);
+
+  useLayoutEffect(() => {
+    onResultChangeRef.current(verifiedInfo);
+  }, [verifiedInfo]);
+
+  useEffect(() => () => {
+    generationRef.current += 1;
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    onResultChangeRef.current(null);
+  }, []);
 
   useEffect(() => {
     if (!result?.expiresAt) return;
@@ -198,11 +300,15 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
 
   function clear() {
     generationRef.current += 1;
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    onResultChangeRef.current(null);
     result?.qr.data.fill(0);
     setResult(null);
     setQrReady(false);
     setError("");
     setFeedback("");
+    setBusy(false);
   }
 
   function changeLightningSource(value: string) {
@@ -261,7 +367,12 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     });
     return {
       kind: generated ? "lightning-generated" : "lightning-invoice",
+      rail: "lightning",
+      amountSats,
+      conditionKey,
+      ownerRole,
       payload: checked.canonicalInvoice,
+      copyTarget: checked.canonicalInvoice,
       expiresAt: checked.expiresAt,
       qr,
       shareText: [
@@ -284,11 +395,18 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
 
     if (rail === "onchain") {
       try {
-        const request = createOnchainRequest(onchain.trim(), BigInt(expectedSats));
+        const address = onchainAddressFromInput(onchain, expectedSats);
+        const request = createOnchainRequest(address, BigInt(expectedSats));
         const qr = createVerifiedTextQr(request.uri, { maximumLength: 220, maximumPixelSize: 520, level: "M" });
         setResult({
           kind: "onchain",
+          rail: "onchain",
+          amountSats: expectedSats,
+          conditionKey,
+          ownerRole,
           payload: request.uri,
+          copyTarget: request.address,
+          address: request.address,
           qr,
           shareText: [
             "[BTC 수취정보 · 온체인]",
@@ -329,6 +447,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     setFeedback("결제에 사용할 새 인보이스를 요청하고 있습니다.");
     const generation = generationRef.current;
     const controller = new AbortController();
+    requestAbortRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 15_000);
 
     try {
@@ -370,12 +489,17 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       setFeedback("");
     } finally {
       window.clearTimeout(timeout);
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
       setBusy(false);
     }
   }
 
   async function share() {
     if (!result || !canvasRef.current) return;
+    if (resultStale) {
+      setError("거래 조건이 바뀌었습니다. 현재 금액으로 수취정보를 다시 만드십시오.");
+      return;
+    }
     if (!qrReady) {
       setError("로고가 포함된 QR을 확인하는 중입니다. 잠시 후 다시 시도하십시오.");
       return;
@@ -385,6 +509,18 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
       return;
     }
     try {
+      if (result.kind === "onchain") {
+        const checked = createOnchainRequest(result.copyTarget, BigInt(result.amountSats));
+        if (checked.uri !== result.payload) throw new Error("온체인 수취정보가 생성 당시 값과 다릅니다.");
+      } else {
+        const checked = validateBolt11Invoice(result.payload, {
+          expectedSats: BigInt(result.amountSats),
+          minimumRemainingSeconds: MIN_SHARE_REMAINING_SECONDS,
+        });
+        if (checked.canonicalInvoice !== result.payload || checked.expiresAt !== result.expiresAt) {
+          throw new Error("라이트닝 인보이스가 생성 당시 값과 다릅니다.");
+        }
+      }
       const file = await qrFile(
         canvasRef.current,
         result.kind === "onchain" ? "onchain-qr.png" : "lightning-invoice-qr.png",
@@ -400,11 +536,39 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         setFeedback("수취정보 문구를 공유했습니다. 이 기기는 QR 파일 동시 공유를 지원하지 않습니다.");
         return;
       }
-      await navigator.clipboard.writeText(result.shareText);
+      await copyPlainText(result.shareText);
       setFeedback("수취정보 문구를 복사했습니다.");
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
-      setError("수취정보를 공유하지 못했습니다.");
+      setError(reason instanceof Error ? reason.message : "수취정보를 공유하지 못했습니다.");
+    }
+  }
+
+  async function copyTarget() {
+    if (!result || resultStale) {
+      setError("거래 조건이 바뀌었습니다. 현재 금액으로 수취정보를 다시 만드십시오.");
+      return;
+    }
+    if (resultExpiring) {
+      setError("인보이스 만료가 임박했습니다. 새 인보이스를 만든 뒤 복사하십시오.");
+      return;
+    }
+    try {
+      if (result.kind === "onchain") {
+        createOnchainRequest(result.copyTarget, BigInt(result.amountSats));
+      } else {
+        validateBolt11Invoice(result.copyTarget, {
+          expectedSats: BigInt(result.amountSats),
+          minimumRemainingSeconds: MIN_SHARE_REMAINING_SECONDS,
+        });
+      }
+      await copyPlainText(result.copyTarget);
+      setError("");
+      setFeedback(result.kind === "onchain" ? "온체인 주소만 복사했습니다." : "BOLT11 인보이스만 복사했습니다.");
+    } catch (reason) {
+      setError(reason instanceof Error && reason.message !== "copy failed"
+        ? reason.message
+        : "복사하지 못했습니다. 수취정보를 길게 눌러 복사하십시오.");
     }
   }
 
@@ -419,9 +583,11 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
       <div className={styles.header}>
-        <h3 id="receive-info-title">BTC 받을 정보 <span>(선택 사항)</span></h3>
+        <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 정보" : "구매자가 제공한 BTC 받을 정보"} <span>(선택 사항)</span></h3>
       </div>
-      <p className={styles.intro}>거래 조건과 함께 받을 주소나 인보이스를 공유할 수 있습니다. 입력하지 않으면 거래 조건만 공유됩니다.</p>
+      <p className={styles.intro}>{ownerRole === "buyer"
+        ? "내가 받을 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."
+        : "구매자가 확인해 준 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."}</p>
       <p className={styles.amountNote}>현재 거래에서 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
 
       <fieldset className={styles.railPicker} disabled={busy}>
@@ -440,7 +606,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         <div className={styles.field}>
           <label htmlFor="receive-onchain">온체인 수취 주소</label>
           <div style={inputRowStyle}>
-            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... 또는 bc1p..." />
+            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
         </div>
@@ -487,68 +653,31 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
         <div className={styles.result}>
           <div className={styles.resultInfo}>
             <span className={styles.resultBadge}>{result.kind === "onchain" ? "온체인" : "라이트닝 인보이스"}</span>
-            <strong className={styles.resultAmount}>{expectedSats ? formatSats(expectedSats) : "—"}</strong>
+            <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
+            <p className={styles.lockNote}>이 QR을 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
             <dl>
               <div><dt>공유 내용</dt><dd>{result.kind === "onchain" ? "BIP21 + QR" : "BOLT11 + QR"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
-            <button className={styles.primary} type="button" onClick={() => void share()} disabled={!qrReady || (remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS)}>수취정보 공유</button>
+            <div className={styles.resultTarget}>
+              <span>{result.kind === "onchain" ? "온체인 주소" : "BOLT11 인보이스"}</span>
+              <code>{result.copyTarget}</code>
+            </div>
+            {resultStale ? <p className={styles.stale} role="alert">거래 조건이 바뀌었습니다. 현재 금액으로 다시 만들어야 공유할 수 있습니다.</p> : null}
+            <div className={styles.resultActions}>
+              <button className={styles.primary} type="button" onClick={() => void share()} disabled={!resultShareable}>수취정보 공유</button>
+              <button className={styles.secondary} type="button" onClick={() => void copyTarget()} disabled={!resultShareable}>
+                {result.kind === "onchain" ? "주소만 복사" : "인보이스만 복사"}
+              </button>
+            </div>
           </div>
-          <canvas ref={canvasRef} className={styles.qr} aria-label="BTC 수취정보 QR" />
+          <canvas
+            ref={canvasRef}
+            className={`${styles.qr} ${resultShareable ? "" : styles.qrUnavailable}`}
+            aria-label={resultShareable ? "BTC 수취정보 QR" : "확인 중이거나 다시 만들어야 하는 BTC 수취정보 QR"}
+          />
         </div>
       ) : null}
     </section>
   );
-}
-
-export function TradeReceiveInfoPortal() {
-  const [mount, setMount] = useState<HTMLElement | null>(null);
-  const [visible, setVisible] = useState(false);
-  const [expectedSats, setExpectedSats] = useState<number | null>(null);
-
-  useEffect(() => {
-    const host = document.createElement("div");
-    host.dataset.receiveInfoPortal = "true";
-
-    const sync = () => {
-      const tradeImage = document.querySelector<HTMLInputElement>("#output-mode-trade-image")?.checked === true;
-      const buyer = document.querySelector<HTMLInputElement>("#trade-role-buyer")?.checked === true;
-      const preview = document.querySelector<HTMLElement>(".output-panel:not([hidden]) .trade-share-preview");
-      const parent = preview?.parentElement ?? null;
-      const shouldShow = Boolean(tradeImage && buyer && preview && parent);
-
-      if (shouldShow && parent && preview) {
-        if (host.parentElement !== parent) parent.insertBefore(host, preview);
-        setMount(host);
-        setVisible(true);
-        setExpectedSats(findExpectedSats());
-      } else {
-        host.remove();
-        setVisible(false);
-        setMount(null);
-      }
-    };
-
-    const observer = new MutationObserver(sync);
-    observer.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      characterData: true,
-      attributeFilter: ["checked", "hidden", "value"],
-    });
-    document.addEventListener("change", sync, true);
-    document.addEventListener("input", sync, true);
-    sync();
-
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("change", sync, true);
-      document.removeEventListener("input", sync, true);
-      host.remove();
-    };
-  }, []);
-
-  if (!visible || !mount) return null;
-  return createPortal(<ReceiveInfoPanel expectedSats={expectedSats} />, mount);
 }
