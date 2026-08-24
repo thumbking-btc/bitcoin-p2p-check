@@ -865,10 +865,10 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, /모집글과 거래 조건 이미지/);
   assert.match(html, /<legend class="visually-hidden" id="output-picker-title">만들 결과 선택<\/legend>/);
   assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
-  assert.match(html, /거래 모집글/);
-  assert.match(html, /공개 채널에서 상대 찾기/);
-  assert.match(html, /거래 조건 이미지/);
-  assert.match(html, /연락 후 확정 조건 공유/);
+  assert.match(html, /거래 상대 찾기/);
+  assert.match(html, /공개 채널에 올릴 모집글/);
+  assert.match(html, /거래 조건 공유하기/);
+  assert.match(html, /합의한 조건을 담은 이미지/);
   assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
   assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
   assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);

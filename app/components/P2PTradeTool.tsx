@@ -1172,7 +1172,7 @@ export function P2PTradeTool() {
             <fieldset>
               <legend className="visually-hidden" id="output-picker-title">만들 결과 선택</legend>
               <div className="output-options">
-                <label htmlFor="output-mode-recruitment" aria-label="거래 모집글 만들기. 공개 채널에서 상대를 찾습니다.">
+                <label htmlFor="output-mode-recruitment" aria-label="거래 상대 찾기. 공개 채널에 올릴 모집글을 만듭니다.">
                   <input
                     id="output-mode-recruitment"
                     type="radio"
@@ -1181,9 +1181,9 @@ export function P2PTradeTool() {
                     checked={outputMode === "recruitment"}
                     onChange={() => setOutputMode("recruitment")}
                   />
-                  <span><strong>거래 모집글</strong><small>공개 채널에서 상대 찾기</small></span>
+                  <span><strong>거래 상대 찾기</strong><small>공개 채널에 올릴 모집글</small></span>
                 </label>
-                <label htmlFor="output-mode-trade-image" aria-label="거래 조건 이미지 만들기. 연락 후 확정 조건을 공유합니다.">
+                <label htmlFor="output-mode-trade-image" aria-label="거래 조건 공유하기. 합의한 조건을 담은 이미지를 만듭니다.">
                   <input
                     id="output-mode-trade-image"
                     type="radio"
@@ -1192,7 +1192,7 @@ export function P2PTradeTool() {
                     checked={outputMode === "trade-image"}
                     onChange={() => setOutputMode("trade-image")}
                   />
-                  <span><strong>거래 조건 이미지</strong><small>연락 후 확정 조건 공유</small></span>
+                  <span><strong>거래 조건 공유하기</strong><small>합의한 조건을 담은 이미지</small></span>
                 </label>
               </div>
             </fieldset>
