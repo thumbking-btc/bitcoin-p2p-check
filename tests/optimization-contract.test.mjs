@@ -26,6 +26,13 @@ test("keeps the PWA cache tied to the app release and precaches rendered assets"
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
 });
 
+test("keeps the calculator footer directly below the final reference card", async () => {
+  const home = await source("../app/page.tsx");
+
+  assert.match(home, /<main className="site-main" style=\{\{ paddingBottom: 0 \}\}>/);
+  assert.doesNotMatch(home, /paddingBottom:\s*(?:24|96)/);
+});
+
 test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
   const installCta = await source("../app/components/InstallCta.tsx");
 
