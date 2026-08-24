@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
-import { createVerifiedTextQr } from "../lib/verified-qr.mjs";
+import { createVerifiedTextQr, verifyQrRasterPayload } from "../lib/verified-qr.mjs";
 import styles from "./trade-receive-info.module.css";
 
 type Rail = "onchain" | "lightning";
@@ -29,6 +29,50 @@ type LightningPayResponse = {
 };
 
 const MIN_SHARE_REMAINING_SECONDS = 120;
+const QR_LOGO_SRC = "/creator-logo.jpg";
+const QR_LOGO_RATIO = 0.12;
+let qrLogoPromise: Promise<HTMLImageElement> | null = null;
+
+function loadQrLogo(): Promise<HTMLImageElement> {
+  if (qrLogoPromise) return qrLogoPromise;
+  qrLogoPromise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("QR 로고 원본을 불러오지 못했습니다."));
+    image.src = QR_LOGO_SRC;
+  });
+  return qrLogoPromise;
+}
+
+async function drawVerifiedQrLogo(canvas: HTMLCanvasElement, payload: string) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("QR 캔버스를 확인하지 못했습니다.");
+  const logo = await loadQrLogo();
+  const size = Math.max(32, Math.round(Math.min(canvas.width, canvas.height) * QR_LOGO_RATIO));
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const x = Math.round(centerX - size / 2);
+  const y = Math.round(centerY - size / 2);
+  const radius = size / 2;
+
+  context.save();
+  context.fillStyle = "#fff";
+  context.beginPath();
+  context.arc(centerX, centerY, radius * 1.08, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.clip();
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(logo, x, y, size, size);
+  context.restore();
+
+  const branded = context.getImageData(0, 0, canvas.width, canvas.height);
+  verifyQrRasterPayload(branded, payload);
+  branded.data.fill(0);
+}
 
 function findExpectedSats(): number | null {
   const rows = Array.from(document.querySelectorAll<HTMLElement>(".trade-result .transfer-row"));
@@ -102,6 +146,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [qrReady, setQrReady] = useState(false);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1_000));
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const generationRef = useRef(0);
@@ -121,6 +166,8 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
 
   useLayoutEffect(() => {
     if (!result || !canvasRef.current) return;
+    let cancelled = false;
+    setQrReady(false);
     const canvas = canvasRef.current;
     canvas.width = result.qr.width;
     canvas.height = result.qr.height;
@@ -131,12 +178,29 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
     context.imageSmoothingEnabled = false;
     context.putImageData(image, 0, 0);
     image.data.fill(0);
+
+    void drawVerifiedQrLogo(canvas, result.qr.payload)
+      .then(() => {
+        if (cancelled) return;
+        setError("");
+        setQrReady(true);
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setQrReady(false);
+        setError(reason instanceof Error ? reason.message : "로고가 포함된 QR을 확인하지 못했습니다.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [result]);
 
   function clear() {
     generationRef.current += 1;
     result?.qr.data.fill(0);
     setResult(null);
+    setQrReady(false);
     setError("");
     setFeedback("");
   }
@@ -312,6 +376,10 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
 
   async function share() {
     if (!result || !canvasRef.current) return;
+    if (!qrReady) {
+      setError("로고가 포함된 QR을 확인하는 중입니다. 잠시 후 다시 시도하십시오.");
+      return;
+    }
     if (remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS) {
       setError("인보이스 만료가 임박했습니다. 새 인보이스를 만든 뒤 공유하십시오.");
       return;
@@ -424,7 +492,7 @@ function ReceiveInfoPanel({ expectedSats }: { expectedSats: number | null }) {
               <div><dt>공유 내용</dt><dd>{result.kind === "onchain" ? "BIP21 + QR" : "BOLT11 + QR"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
-            <button className={styles.primary} type="button" onClick={() => void share()} disabled={remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS}>수취정보 공유</button>
+            <button className={styles.primary} type="button" onClick={() => void share()} disabled={!qrReady || (remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS)}>수취정보 공유</button>
           </div>
           <canvas ref={canvasRef} className={styles.qr} aria-label="BTC 수취정보 QR" />
         </div>
