@@ -146,12 +146,12 @@ a { color: inherit; }
 .output-picker fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .output-picker legend { margin-bottom: 8px; color: var(--ink); font-size: 15px; font-weight: 850; }
 .output-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--control-line); background: #fff; }
-.output-options label { position: relative; min-width: 0; cursor: pointer; }
+.output-options label { position: relative; display: grid; min-width: 0; cursor: pointer; }
 .output-options label + label { border-left: 1px solid var(--control-line); }
 .output-options input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
-.output-options span { display: grid; min-height: 68px; align-content: center; gap: 4px; padding: 9px 10px; color: var(--muted); text-align: center; }
+.output-options span { display: grid; height: 100%; min-height: 68px; align-content: center; gap: 4px; padding: 9px 10px; color: var(--muted); text-align: center; }
 .output-options strong { font-size: 16px; }
-.output-options small { font-size: 12px; font-weight: 620; }
+.output-options small { font-size: 12px; font-weight: 620; line-height: 1.4; word-break: keep-all; text-wrap: balance; }
 .output-options label:has(input:checked) span { background: var(--ink); color: #fff; }
 .output-options label:has(input:focus-visible) { position: relative; z-index: 1; outline: 3px solid var(--orange-dark); outline-offset: 2px; }
 .output-panel[hidden] { display: none; }

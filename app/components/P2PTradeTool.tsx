@@ -1240,7 +1240,7 @@ export function P2PTradeTool() {
                     checked={outputMode === "trade-image"}
                     onChange={() => setOutputMode("trade-image")}
                   />
-                  <span><strong>거래 기록 카드</strong><small>합의 조건·결제 QR·원본 확인</small></span>
+                  <span><strong>거래 기록 카드</strong><small>조건·결제 QR·원본 확인</small></span>
                 </label>
               </div>
             </fieldset>

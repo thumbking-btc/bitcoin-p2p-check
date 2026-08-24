@@ -856,7 +856,7 @@ test("renders recruitment and signed record-card flows without DOM bridges", asy
   assert.match(html, /<legend class="visually-hidden" id="output-picker-title">만들 결과 선택<\/legend>/);
   assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
   assert.match(html, /<strong>모집글<\/strong><small>공개 채널에서 상대 찾기<\/small>/);
-  assert.match(html, /<strong>거래 기록 카드<\/strong><small>합의 조건·결제 QR·원본 확인<\/small>/);
+  assert.match(html, /<strong>거래 기록 카드<\/strong><small>조건·결제 QR·원본 확인<\/small>/);
   assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
   assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
   assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);
