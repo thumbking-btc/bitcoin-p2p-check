@@ -771,6 +771,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /원본 확인 QR/);
   assert.match(imageRenderer, /input\.payment\?\.payload \?\? input\.record\.verificationUrl/);
   assert.match(imageRenderer, /원본 확인 ID/);
+  assert.match(imageRenderer, /context\.moveTo\(870, 190\);\s*context\.lineTo\(870, 844\);/);
   assert.match(imageRenderer, /생성 \$\{formatTime\(input\.record\.createdAt\)\}/);
   assert.match(imageRenderer, /사이트 원본 내용 일치 여부 확인 가능/);
   assert.match(imageRenderer, /거래 합의·원화 입금·BTC 수령 완료 증명 아님/);

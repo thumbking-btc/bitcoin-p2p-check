@@ -385,8 +385,8 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.lineWidth = 2;
   context.setLineDash([8, 10]);
   context.beginPath();
-  context.moveTo(900, 190);
-  context.lineTo(900, 844);
+  context.moveTo(870, 190);
+  context.lineTo(870, 844);
   context.stroke();
   context.restore();
 
