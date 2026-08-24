@@ -39,6 +39,7 @@ const UPBIT_PRICE_URL = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PRICE_TIMEOUT_MS = 4_000;
 const UPBIT_PRICE_MAX_AGE_MS = 2 * 60_000;
 const UPBIT_PRICE_MAX_DEVIATION_RATIO = 0.01;
+const UPBIT_PRICE_MAX_REDIRECTS = 2;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 const BASE64URL_COORDINATE_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const BASE64URL_PRIVATE_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
@@ -213,14 +214,43 @@ async function verifyUpbitReferencePrice(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPBIT_PRICE_TIMEOUT_MS);
   try {
-    const response = await fetcher(UPBIT_PRICE_URL, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "BitcoinP2PCheck/1.0 (+trade record verification)",
-      },
-      redirect: "error",
-      signal: controller.signal,
-    });
+    let requestUrl = UPBIT_PRICE_URL;
+    let response: Response | null = null;
+    for (let redirectCount = 0; redirectCount <= UPBIT_PRICE_MAX_REDIRECTS; redirectCount += 1) {
+      response = await fetcher(requestUrl, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "BitcoinP2PCheck/1.0 (+trade record verification)",
+        },
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      if (redirectCount === UPBIT_PRICE_MAX_REDIRECTS) {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답의 이동 횟수를 확인하지 못했습니다.", 503);
+      }
+      const location = response.headers.get("location");
+      if (!location) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답의 이동 경로를 확인하지 못했습니다.", 503);
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(location, requestUrl);
+      } catch {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답의 이동 경로를 확인하지 못했습니다.", 503);
+      }
+      const allowedUrl = new URL(UPBIT_PRICE_URL);
+      const hasOnlyExpectedQuery = nextUrl.searchParams.size === 1
+        && nextUrl.searchParams.get("markets") === "KRW-BTC";
+      if (
+        nextUrl.protocol !== "https:"
+        || nextUrl.origin !== allowedUrl.origin
+        || nextUrl.pathname !== allowedUrl.pathname
+        || !hasOnlyExpectedQuery
+      ) {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답 경로를 확인하지 못했습니다.", 503);
+      }
+      requestUrl = nextUrl.toString();
+    }
+    if (!response) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답을 확인하지 못했습니다.", 503);
     const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
     if (response.status !== 200 || mediaType !== "application/json") {
       fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가 응답을 확인하지 못했습니다.", 503);
@@ -249,6 +279,11 @@ async function verifyUpbitReferencePrice(
     }
   } catch (error) {
     if (error instanceof TradeRecordRequestError) throw error;
+    console.error(JSON.stringify({
+      message: "trade_record_market_verification_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : "Unknown error",
+    }));
     fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
   } finally {
     clearTimeout(timeout);

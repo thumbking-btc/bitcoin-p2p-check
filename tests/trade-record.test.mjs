@@ -43,7 +43,7 @@ class MemoryRateLimit {
 function upbitPriceFetcher(priceKrw = 100_000_000, tradeTimestamp = Date.now()) {
   return async (input, init) => {
     assert.equal(String(input), "https://api.upbit.com/v1/ticker?markets=KRW-BTC");
-    assert.equal(init?.redirect, "error");
+    assert.equal(init?.redirect, "manual");
     return Response.json([{
       market: "KRW-BTC",
       trade_price: priceKrw,
@@ -265,6 +265,71 @@ test("independently checks the submitted reference against fresh Upbit REST data
   assert.equal(staleUpbit.status, 503);
   assert.equal((await staleUpbit.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
   assert.equal(records.puts.length, 0);
+});
+
+test("follows only bounded, allowlisted Upbit redirects before signing", async () => {
+  const allowed = await signingEnvironment();
+  const allowedCalls = [];
+  const allowedRedirect = await allowed.handle(createRequest(validDraft()), undefined, {
+    fetcher: async (input, init) => {
+      assert.equal(init?.redirect, "manual");
+      allowedCalls.push(String(input));
+      if (allowedCalls.length === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "/v1/ticker?markets=KRW-BTC" },
+        });
+      }
+      return Response.json([{
+        market: "KRW-BTC",
+        trade_price: 100_000_000,
+        trade_timestamp: Date.now(),
+      }]);
+    },
+  });
+  assert.equal(allowedRedirect.status, 201);
+  assert.equal(allowedCalls.length, 2);
+  assert.equal(allowed.records.puts.length, 1);
+
+  for (const location of [
+    "https://example.com/v1/ticker?markets=KRW-BTC",
+    "http://api.upbit.com/v1/ticker?markets=KRW-BTC",
+    "https://api.upbit.com/v1/orders?markets=KRW-BTC",
+    "https://api.upbit.com/v1/ticker?markets=KRW-BTC&extra=1",
+    null,
+  ]) {
+    const rejected = await signingEnvironment();
+    let calls = 0;
+    const response = await rejected.handle(createRequest(validDraft()), undefined, {
+      fetcher: async () => {
+        calls += 1;
+        assert.equal(calls, 1, "an untrusted redirect must not receive a follow-up request");
+        return new Response(null, {
+          status: 302,
+          headers: location === null ? undefined : { Location: location },
+        });
+      },
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+    assert.equal(rejected.records.puts.length, 0);
+  }
+
+  const looping = await signingEnvironment();
+  let loopCalls = 0;
+  const redirectLoop = await looping.handle(createRequest(validDraft()), undefined, {
+    fetcher: async () => {
+      loopCalls += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "/v1/ticker?markets=KRW-BTC" },
+      });
+    },
+  });
+  assert.equal(redirectLoop.status, 503);
+  assert.equal((await redirectLoop.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+  assert.equal(loopCalls, 3);
+  assert.equal(looping.records.puts.length, 0);
 });
 
 test("rate-limits create calls by Cloudflare connecting IP before external work or KV writes", async () => {
