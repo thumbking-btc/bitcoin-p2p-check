@@ -10,7 +10,7 @@ export const dynamic = "force-static";
 export default function Home() {
   return (
     <>
-      <main className="site-main" style={{ paddingBottom: 24 }}>
+      <main className="site-main" style={{ paddingBottom: 0 }}>
         <P2PTradeTool />
         <TradeReceiveInfoPortal />
         <ShareDetailsPreference />
