@@ -1,4 +1,6 @@
 import type { WorkerExecutionContext } from "./index";
+import { handleLightningAddressRequest } from "./lightning-address";
+import { handleLightningPayRequest } from "./lightning-pay";
 
 const UPBIT_TICKER = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
@@ -494,6 +496,14 @@ export async function handleMarketRequest(
   request: Request,
   context: WorkerExecutionContext,
 ): Promise<Response> {
+  const receiveMode = new URL(request.url).searchParams.get("receive");
+  if (request.method === "POST" && receiveMode === "lightning-address") {
+    return handleLightningAddressRequest(request);
+  }
+  if (request.method === "POST" && receiveMode === "lightning-pay") {
+    return handleLightningPayRequest(request);
+  }
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     const headers = new Headers(API_HEADERS);
     headers.set("Allow", "GET, HEAD");

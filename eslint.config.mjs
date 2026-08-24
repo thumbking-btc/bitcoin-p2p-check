@@ -38,6 +38,12 @@ const eslintConfig = defineConfig([
       },
     },
   },
+  {
+    files: ["worker/lightning-address.ts", "worker/lightning-pay.ts"],
+    rules: {
+      "no-control-regex": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
