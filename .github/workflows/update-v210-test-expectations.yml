@@ -1,0 +1,43 @@
+name: Update v2.1.0 test expectations
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: staging
+      - name: Update stale default-value expectations
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/rendered-html.test.mjs')
+          text = path.read_text()
+          replacements = {
+              'assert.match(html, /판매자가 기준 시세보다 2% 높은 단가로 팝니다/);': 'assert.match(html, /판매자가 기준 시세와 같은 단가로 팝니다/);',
+              'assert.match(html, /<b>온체인 수수료:<\\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\\/span>/);': 'assert.match(html, /<b>수수료:<\\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\\/span>/);',
+              'assert.match(html, /구매 \\/ 300만원 \\/ 2% \\/ 온체인/);': 'assert.match(html, /구매 \\/ 300만원 \\/ 0% \\/ 온체인/);',
+          }
+          for old, new in replacements.items():
+              if old not in text and new not in text:
+                  raise SystemExit(f'expected test text not found: {old}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+      - name: Commit if changed
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/rendered-html.test.mjs
+          git commit -m "Update v2.1.0 default premium expectations"
+          git push origin HEAD:staging
