@@ -218,7 +218,13 @@ export function ShareDetailsPreference() {
       };
       try {
         Object.defineProperty(navigator, "share", { configurable: true, value: wrappedShare });
-        restoreShare = () => { try { delete (navigator as Navigator & { share?: Navigator["share"] }).share; } catch {} };
+        restoreShare = () => {
+          try {
+            delete (navigator as Navigator & { share?: Navigator["share"] }).share;
+          } catch {
+            return;
+          }
+        };
       } catch {
         restoreShare = null;
       }
@@ -236,8 +242,8 @@ export function ShareDetailsPreference() {
 
   if (!mount) return null;
   return createPortal(
-    <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", marginTop: "1px", borderTop: "1px solid var(--line)", background: "#f7f3ea", cursor: "pointer" }}>
-      <input type="checkbox" checked={includeDetails} onChange={(event) => setIncludeDetails(event.target.checked)} />
+    <label htmlFor="share-details-toggle" style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", marginTop: "1px", borderTop: "1px solid var(--line)", background: "#f7f3ea", cursor: "pointer" }}>
+      <input id="share-details-toggle" type="checkbox" checked={includeDetails} onChange={(event) => setIncludeDetails(event.target.checked)} />
       <span style={{ display: "grid", gap: "1px" }}>
         <strong style={{ fontSize: "12px" }}>상세 계산정보 포함</strong>
         <small style={{ color: "var(--muted)", fontSize: "10px" }}>선택 사항 · 가격 계산 근거까지 함께 보냅니다.</small>
