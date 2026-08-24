@@ -165,7 +165,7 @@ function roundedRect(
   context.lineTo(x + width, y + height - r);
   context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
   context.lineTo(x + r, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.quadraticCurveTo(x, y + height, x + r, y + height);
   context.lineTo(x, y + r);
   context.quadraticCurveTo(x, y, x + r, y);
   context.closePath();
@@ -372,53 +372,59 @@ async function makeFourByThreeTradeCard(file: File) {
   setFont(context, 21, 650);
   context.fillText("적용 단가", 500, 690);
   context.fillStyle = PAPER;
-  fitText(context, snapshot.appliedPrice, 330, 29, 20, 760);
+  fitText(context, snapshot.appliedPrice, 315, 29, 20, 760);
   context.fillText(snapshot.appliedPrice, 626, 690);
 
   context.fillStyle = MUTED;
-  setFont(context, 19, 600);
+  setFont(context, 20, 600);
   const fundingLine = `구매자 자금 출처 · ${snapshot.fundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
-  fitText(context, fundingLine, 810, 19, 15, 600);
-  context.fillText(fundingLine, 100, 770);
+  fitText(context, fundingLine, 820, 20, 17, 600);
+  context.fillText(fundingLine, 100, 758);
+
   const marketLine = `시장 참고 · 업비트 프리미엄 ${snapshot.marketPremium}`;
-  fitText(context, marketLine, 810, 18, 14, 560);
-  context.fillText(marketLine, 100, 816);
-  const calculationLine = "계산 · 기준가 × (1 + 판매자 프리미엄) · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
-  fitText(context, calculationLine, 810, 18, 14, 560);
-  context.fillText(calculationLine, 100, 862);
+  fitText(context, marketLine, 820, 19, 17, 560);
+  context.fillText(marketLine, 100, 804);
+
+  const calculationLine = "계산 · 기준가 × (1 + 판매자 프리미엄)";
+  fitText(context, calculationLine, 820, 19, 17, 560);
+  context.fillText(calculationLine, 100, 850);
+
+  const feeLine = "온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
+  fitText(context, feeLine, 820, 19, 17, 560);
+  context.fillText(feeLine, 100, 896);
 
   context.fillStyle = ORANGE;
-  setFont(context, 19, 760);
-  context.fillText("확인용 · 원화 입금·BTC 수령 증빙 아님", 100, 950);
+  setFont(context, 20, 760);
+  context.fillText("확인용 · 원화 입금·BTC 수령 증빙 아님", 100, 956);
 
   context.save();
   context.strokeStyle = "rgba(245, 240, 227, 0.4)";
   context.lineWidth = 2;
   context.setLineDash([8, 10]);
   context.beginPath();
-  context.moveTo(960, 330);
-  context.lineTo(960, 920);
+  context.moveTo(960, 320);
+  context.lineTo(960, 930);
   context.stroke();
   context.restore();
 
   const qr = receiveCanvas();
   const payload = readReceiveQrPayload();
   if (qr && payload) {
-    const qrSize = 314;
-    const qrX = 1_020;
-    const qrY = 360;
+    const qrSize = 360;
+    const qrX = 982;
+    const qrY = 334;
     context.fillStyle = PAPER;
-    roundedRect(context, qrX - 24, qrY - 24, qrSize + 48, qrSize + 48, 20);
+    roundedRect(context, qrX - 18, qrY - 18, qrSize + 36, qrSize + 36, 20);
     context.fill();
     context.imageSmoothingEnabled = false;
     context.drawImage(qr, qrX, qrY, qrSize, qrSize);
     context.fillStyle = PAPER;
     context.textAlign = "center";
-    setFont(context, 24, 730);
-    context.fillText(qrCaption(payload), qrX + qrSize / 2, 735);
+    setFont(context, 25, 730);
+    context.fillText(qrCaption(payload), qrX + qrSize / 2, 746);
     context.fillStyle = MUTED;
-    setFont(context, 17, 560);
-    context.fillText("스캔하면 현재 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 780);
+    setFont(context, 18, 560);
+    context.fillText("스캔하면 이 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 794);
   } else {
     const fallback = receiveFallback();
     context.textAlign = "center";
