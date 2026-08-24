@@ -26,11 +26,16 @@ test("keeps the PWA cache tied to the app release and precaches rendered assets"
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
 });
 
-test("keeps the calculator footer directly below the final reference card", async () => {
+test("keeps compact, balanced spacing around the reference cards", async () => {
   const home = await source("../app/page.tsx");
 
-  assert.match(home, /<main className="site-main" style=\{\{ paddingBottom: 0 \}\}>/);
-  assert.doesNotMatch(home, /paddingBottom:\s*[1-9]\d*/);
+  assert.match(home, /const REFERENCE_SECTION_GAP = 16;/);
+  assert.match(home, /const MAIN_STYLE = \{ paddingBottom: REFERENCE_SECTION_GAP \} as const;/);
+  assert.match(home, /gap: REFERENCE_SECTION_GAP/);
+  assert.match(home, /marginTop: REFERENCE_SECTION_GAP/);
+  assert.match(home, /const REFERENCE_CARD_STYLE = \{ marginTop: 0 \} as const;/);
+  assert.equal((home.match(/style=\{REFERENCE_CARD_STYLE\}/g) ?? []).length, 2);
+  assert.doesNotMatch(home, /paddingBottom:\s*0/);
 });
 
 test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
