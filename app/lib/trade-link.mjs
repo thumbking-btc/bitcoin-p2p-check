@@ -45,9 +45,10 @@ export function buildTradeFragment({ side, amount, premium, fundingSource, displ
   const fundingCode = FUNDING_CODE_BY_SOURCE.get(fundingSource);
   if (premiumNumber === null || !fundingCode) return "";
 
+  const browserShare = typeof window !== "undefined";
   const params = new URLSearchParams();
-  params.set("v", "2");
-  params.set("side", side);
+  params.set("v", browserShare ? "3" : "2");
+  params.set(browserShare ? "from" : "side", side);
   params.set("basis", basis === "krw" ? "krw" : "btc");
   params.set(basis === "krw" ? "krw" : "sats", String(amountNumber));
   params.set("premium", String(premiumNumber));
@@ -59,18 +60,26 @@ export function buildTradeFragment({ side, amount, premium, fundingSource, displ
 export function parseTradeFragment(fragment) {
   if (typeof fragment !== "string" || fragment.length < 2 || fragment.length > MAX_FRAGMENT_LENGTH) return null;
   const params = new URLSearchParams(fragment.startsWith("#") ? fragment.slice(1) : fragment);
-  if (["v", "side", "premium"].some((key) => params.getAll(key).length !== 1)) return null;
+  const version = params.get("v");
+  if (version !== "1" && version !== "2" && version !== "3") return null;
+
+  const sideKey = version === "3" ? "from" : "side";
+  if (["v", sideKey, "premium"].some((key) => params.getAll(key).length !== 1)) return null;
+  if (version === "3" && params.has("side")) return null;
+  if (version !== "3" && params.has("from")) return null;
   if (params.getAll("fund").length > 1) return null;
   if (params.getAll("unit").length > 1) return null;
-  const version = params.get("v");
-  if (version !== "1" && version !== "2") return null;
 
-  const side = params.get("side");
-  if (side !== "buy" && side !== "sell") return null;
+  const creatorSide = params.get(sideKey);
+  if (creatorSide !== "buy" && creatorSide !== "sell") return null;
+  const side = version === "3"
+    ? creatorSide === "buy" ? "sell" : "buy"
+    : creatorSide;
+
   let amountBasis;
   if (version === "1") {
     if (params.has("basis")) return null;
-    amountBasis = side === "buy" ? "krw" : "bitcoin";
+    amountBasis = creatorSide === "buy" ? "krw" : "bitcoin";
   } else {
     if (params.getAll("basis").length !== 1) return null;
     const basis = params.get("basis");
@@ -89,5 +98,6 @@ export function parseTradeFragment(fragment) {
   const displayUnit = params.get("unit") ?? "sats";
   if (premium === null || !fundingSource || (displayUnit !== "btc" && displayUnit !== "sats")) return null;
 
-  return { side, amount, amountBasis, premium, fundingSource, displayUnit };
+  const result = { side, amount, amountBasis, premium, fundingSource, displayUnit };
+  return version === "3" ? { ...result, creatorSide } : result;
 }

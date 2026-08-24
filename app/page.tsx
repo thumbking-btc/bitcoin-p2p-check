@@ -1,4 +1,6 @@
 import { P2PTradeTool } from "./components/P2PTradeTool";
+import { TradeReceiveInfoPortal } from "./components/TradeReceiveInfoPortal";
+import { ShareDetailsPreference } from "./components/ShareDetailsPreference";
 import { SupportPanel } from "./components/SupportPanel";
 import { InstallCta } from "./components/InstallCta";
 import { SiteRouteNav } from "./components/SiteRouteNav";
@@ -10,6 +12,8 @@ export default function Home() {
     <>
       <main className="site-main">
         <P2PTradeTool />
+        <TradeReceiveInfoPortal />
+        <ShareDetailsPreference />
 
         <details className="reference-details">
           <summary>
@@ -51,7 +55,15 @@ export default function Home() {
           </div>
         </details>
 
-        <SupportPanel />
+        <details className="reference-details">
+          <summary>
+            <span>제작자 보기</span>
+            <small>제작자 정보와 후원</small>
+          </summary>
+          <div className="reference-body">
+            <SupportPanel />
+          </div>
+        </details>
       </main>
 
       <InstallCta showEntry={false} />
