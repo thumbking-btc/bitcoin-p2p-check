@@ -30,7 +30,7 @@ test("keeps the calculator footer directly below the final reference card", asyn
   const home = await source("../app/page.tsx");
 
   assert.match(home, /<main className="site-main" style=\{\{ paddingBottom: 0 \}\}>/);
-  assert.doesNotMatch(home, /paddingBottom:\s*(?:24|96)/);
+  assert.doesNotMatch(home, /paddingBottom:\s*[1-9]\d*/);
 });
 
 test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
