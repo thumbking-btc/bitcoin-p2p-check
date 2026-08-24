@@ -20,6 +20,18 @@ async function materializeShareFile(file) {
   return materializeTradeShareImage(file);
 }
 
+async function prepareShareFile(file) {
+  file = await materializeShareFile(file);
+  if (typeof window === "undefined" || file?.type !== "image/png") return file;
+  const transform = window.__p2pTransformTradeShareFile;
+  if (typeof transform !== "function") return file;
+  try {
+    return await transform(file);
+  } catch {
+    return file;
+  }
+}
+
 function compactTradeShareText(text) {
   if (typeof text !== "string") return text;
   const marker = "\n[가격 계산]\n";
@@ -49,7 +61,7 @@ export async function shareImageFile({
   nativeCanShare,
   download,
 }) {
-  file = await materializeShareFile(file);
+  file = await prepareShareFile(file);
   text = prepareShareText(text);
   let canShareFile = false;
   if (typeof nativeShare === "function" && typeof nativeCanShare === "function") {
