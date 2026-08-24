@@ -26,6 +26,10 @@ function isAppleMobileBrowser() {
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+function isSamsungInternet() {
+  return /SamsungBrowser\//i.test(navigator.userAgent);
+}
+
 function isMobileBrowser() {
   return isAppleMobileBrowser()
     || /Android|Mobile/i.test(navigator.userAgent)
@@ -77,8 +81,17 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
     };
     const handleBeforeInstallPrompt = (event: Event) => {
       if (isInstalledDisplayMode()) return;
-      promptReceived = true;
       event.preventDefault();
+
+      if (isSamsungInternet()) {
+        promptReceived = true;
+        setDeferredPrompt(null);
+        setMode("android");
+        if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
+        return;
+      }
+
+      promptReceived = true;
       setDeferredPrompt(event as BeforeInstallPromptEvent);
       setMode("ready");
       if (isMobileBrowser() && !isInviteDismissed()) setInviteVisible(true);
@@ -112,6 +125,13 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
   }, []);
 
   async function install() {
+    if (isSamsungInternet()) {
+      setDeferredPrompt(null);
+      setMode("android");
+      setInviteVisible(true);
+      return;
+    }
+
     const prompt = deferredPrompt;
     if (!prompt) return;
     setDeferredPrompt(null);
@@ -141,21 +161,26 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
 
   if (mode === "installed") return null;
 
+  const samsungInternet = typeof navigator !== "undefined" && isSamsungInternet();
   const guideHref = mode === "ios"
     ? "/install/#iphone"
     : mode === "android"
       ? "/install/#android"
       : "/install/";
-  const inviteTitle = mode === "ready"
-    ? "P2P 계산기를 설치할까요?"
-    : "P2P 계산기를 홈 화면에 추가할까요?";
-  const inviteDescription = mode === "ready"
-    ? "다음부터 주소 입력 없이 바로 열 수 있습니다."
-    : mode === "ios"
-      ? "공유 메뉴에서 홈 화면에 추가할 수 있습니다."
-      : mode === "android"
-        ? "Chrome 메뉴에서 홈 화면에 추가할 수 있습니다."
-        : "설치 안내에서 브라우저별 방법을 확인할 수 있습니다.";
+  const inviteTitle = samsungInternet
+    ? "Chrome에서 설치해 주세요"
+    : mode === "ready"
+      ? "P2P 계산기를 설치할까요?"
+      : "P2P 계산기를 홈 화면에 추가할까요?";
+  const inviteDescription = samsungInternet
+    ? "Samsung Internet에서는 설치 경고가 나타날 수 있습니다. Chrome으로 이 페이지를 연 뒤 설치해 주세요."
+    : mode === "ready"
+      ? "다음부터 주소 입력 없이 바로 열 수 있습니다."
+      : mode === "ios"
+        ? "공유 메뉴에서 홈 화면에 추가할 수 있습니다."
+        : mode === "android"
+          ? "Chrome 메뉴에서 홈 화면에 추가할 수 있습니다."
+          : "설치 안내에서 브라우저별 방법을 확인할 수 있습니다.";
 
   return (
     <>
@@ -171,11 +196,13 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
         </button>
       ) : showEntry ? (
         <a className="install-entry" href={guideHref}>
-          {mode === "ios"
-            ? "iPhone 홈 화면에 추가"
-            : mode === "android"
-              ? "Android 홈 화면에 추가"
-              : "홈 화면에 추가하는 방법"}
+          {samsungInternet
+            ? "Chrome에서 홈 화면에 추가"
+            : mode === "ios"
+              ? "iPhone 홈 화면에 추가"
+              : mode === "android"
+                ? "Android 홈 화면에 추가"
+                : "홈 화면에 추가하는 방법"}
         </a>
       ) : null}
 
@@ -189,7 +216,7 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
             </div>
           </div>
           <div className="install-invite-actions">
-            {mode === "ready" ? (
+            {mode === "ready" && !samsungInternet ? (
               <button
                 aria-busy={installing}
                 className="install-invite-primary"
