@@ -888,6 +888,8 @@ test("renders an editable public recruitment builder without changing the live c
   assert.doesNotMatch(recruitmentComponent, /returningTraderEnabled \? \(\s*<label className="returning-premium"/);
   assert.match(css, /\.recruitment-option-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.match(css, /\.returning-option\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(150px, \.72fr\)/s);
+  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.returning-option\s*\{[^}]*grid-template-columns:\s*1fr/s);
+  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.returning-premium\s*\{[^}]*border-top:\s*1px solid var\(--line\);[^}]*border-left:\s*0/s);
   assert.match(html, /원화 출처 설명 가능/);
   assert.match(html, /상호 신원확인 협의 가능/);
   assert.match(html, /추가 조건·메모/);

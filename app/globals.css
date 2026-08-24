@@ -415,6 +415,13 @@ a { color: inherit; }
   .site-footer p { text-align: left; }
 }
 
+@media (max-width: 520px) {
+  .returning-option { grid-template-columns: 1fr; }
+  .returning-option .recruitment-check { padding: 10px 12px; font-size: 13px; }
+  .returning-premium { border-top: 1px solid var(--line); border-left: 0; }
+  .returning-premium .input-with-unit input { padding-inline: 12px; }
+}
+
 @media (max-width: 380px) {
   .site-main { width: min(100% - 20px, 880px); }
   .tool-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
