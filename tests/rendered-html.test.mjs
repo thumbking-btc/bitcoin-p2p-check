@@ -563,7 +563,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /BTC 보내고 원화 받기/);
   assert.match(html, /보낼 원화/);
   assert.match(html, /판매자 프리미엄 \(%\)/);
-  assert.match(html, /판매자가 기준 시세보다 2% 높은 단가로 팝니다/);
+  assert.match(html, /판매자가 기준 시세와 같은 단가로 팝니다/);
   assert.match(html, /구매자 자금 출처/);
   assert.match(html, /<select[^>]*id="buyer-funding-source"/);
   for (const fundingSource of [
@@ -585,7 +585,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /시세 조회 중/);
   assert.match(html, /시세는 합의의 기준일 뿐입니다/);
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
-  assert.match(html, /<b>온체인 수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
+  assert.match(html, /<b>수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
   assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
   assert.match(html, /<b>확인용:<\/b><span>원화 입금·BTC 수령 증빙 아님<\/span>/);
   assert.match(html, /현재 온체인 수수료율/);
@@ -855,7 +855,7 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, /자동 문구로 되돌리기/);
   assert.match(html, /모집글 공유/);
   assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
-  assert.match(html, /구매 \/ 300만원 \/ 2% \/ 온체인/);
+  assert.match(html, /구매 \/ 300만원 \/ 0% \/ 온체인/);
 
   const integration = calculator.match(/<TradeRecruitmentTool[\s\S]*?\/>/)?.[0] ?? "";
   assert.match(integration, /tradeRole=\{tradeRole\}/);
