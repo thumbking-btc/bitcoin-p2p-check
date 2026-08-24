@@ -1,6 +1,6 @@
 {
   "name": "bitcoin-p2p-check",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": true,
   "engines": {
     "node": ">=22.13.0 <23"
