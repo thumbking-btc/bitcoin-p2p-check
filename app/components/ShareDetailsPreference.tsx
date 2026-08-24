@@ -76,7 +76,7 @@ function withPremium(text: string) {
   if (!premium || !text) return text;
   const lines = text.split("\n");
   if (!lines[0]) return text;
-  lines[0] = lines[0].replace(/\s·\s(?:\(P\s[+\-±]?[\d,.]+%\)|P\s[+\-]?[\d,.]+%)$/u, "");
+  lines[0] = lines[0].replace(/\s·\s(?:\(P\s[+±-]?[\d,.]+%\)|P\s[+-]?[\d,.]+%)$/u, "");
   lines[0] = `${lines[0]} · ${premium}`;
   return lines.join("\n");
 }
