@@ -8,6 +8,27 @@ type TransformWindow = Window & {
   __p2pTransformTradeShareFile?: (file: File) => Promise<File>;
 };
 
+type TradeImageSnapshot = {
+  role: "buyer" | "seller";
+  referenceLabel: string;
+  referencePrice: string;
+  referenceTime: string;
+  payment: string;
+  bitcoin: string;
+  premium: string;
+  appliedPrice: string;
+  fundingSource: string;
+  marketPremium: string;
+};
+
+const CARD_WIDTH = 1_440;
+const CARD_HEIGHT = 1_080;
+const PAPER = "#f5f0e3";
+const INK = "#101619";
+const MUTED = "#d9d1c1";
+const ORANGE = "#f7931a";
+const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+
 function compactShareText(text: string) {
   const marker = "\n[가격 계산]\n";
   const markerIndex = text.indexOf(marker);
@@ -44,9 +65,14 @@ function visibleValue(selector: string) {
   return field.value.trim();
 }
 
-function readReceiveQrPayload() {
+function receiveCanvas() {
   const canvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label='BTC 수취정보 QR']");
-  if (!canvas || canvas.width < 1 || canvas.height < 1) return "";
+  return canvas && canvas.width > 0 && canvas.height > 0 ? canvas : null;
+}
+
+function readReceiveQrPayload() {
+  const canvas = receiveCanvas();
+  if (!canvas) return "";
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return "";
   try {
@@ -76,9 +102,7 @@ function receiveShareLines() {
   if (onchain) return [`온체인 주소: ${onchain}`];
 
   const lightning = visibleValue("#receive-lightning");
-  if (lightning) {
-    return [`${lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay"}: ${lightning}`];
-  }
+  if (lightning) return [`${lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay"}: ${lightning}`];
 
   return [];
 }
@@ -94,126 +118,319 @@ function withReceiveInfo(text: string) {
     : `${text.trimEnd()}\n\n${block}`;
 }
 
-async function imageFromFile(file: File) {
-  const url = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.decoding = "async";
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("거래 조건 이미지를 읽지 못했습니다."));
-      image.src = url;
-    });
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+function lineValue(text: string, prefix: string) {
+  const line = text.split("\n").find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : "";
 }
 
-function drawFittedText(
+function makeSnapshot(): TradeImageSnapshot | null {
+  const source = document.documentElement.dataset.fullTradeShareText
+    || document.documentElement.dataset.currentTradeShareText
+    || "";
+  if (!source) return null;
+
+  const firstLine = source.split("\n")[0] ?? "";
+  const role: TradeImageSnapshot["role"] = firstLine.includes("팝니다") ? "seller" : "buyer";
+  const reference = lineValue(source, "기준:");
+  const referenceMatch = reference.match(/^(.*?)\s+([\d,]+원\s*\/\s*BTC)$/u);
+  const premiumInput = formatPremium().replace(/^P\s*/u, "");
+
+  return {
+    role,
+    referenceLabel: referenceMatch?.[1]?.trim() || "업비트 최근 체결가",
+    referencePrice: referenceMatch?.[2]?.trim() || reference || "—",
+    referenceTime: lineValue(source, "계산 시각:") || "조회 시각 없음",
+    payment: lineValue(source, "구매자 → 판매자:") || "—",
+    bitcoin: lineValue(source, "판매자 → 구매자:") || "—",
+    premium: premiumInput || lineValue(source, "판매자 프리미엄:") || "0%",
+    appliedPrice: lineValue(source, "판매자가 파는 BTC 가격:") || "—",
+    fundingSource: lineValue(source, "구매자 자금 출처:").replace(/\s*\(구매자 제공 정보.*$/u, "") || "기재하지 않음",
+    marketPremium: lineValue(source, "참고 업비트 프리미엄:") || "조회 불가",
+  };
+}
+
+function roundedRect(
   context: CanvasRenderingContext2D,
-  text: string,
   x: number,
   y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function setFont(context: CanvasRenderingContext2D, size: number, weight = 700, mono = false) {
+  context.font = `${weight} ${size}px ${mono ? '"SFMono-Regular", Consolas, monospace' : FONT_FAMILY}`;
+}
+
+function fitText(
+  context: CanvasRenderingContext2D,
+  text: string,
   maximumWidth: number,
   preferredSize: number,
   minimumSize: number,
   weight = 700,
+  mono = false,
 ) {
   let size = preferredSize;
-  context.font = `${weight} ${size}px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif`;
+  setFont(context, size, weight, mono);
   while (size > minimumSize && context.measureText(text).width > maximumWidth) {
     size -= 1;
-    context.font = `${weight} ${size}px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif`;
+    setFont(context, size, weight, mono);
   }
-  context.fillText(text, x, y);
+  return size;
 }
 
-function receiveImageSummary(hasQr: boolean) {
+function drawPaperTexture(context: CanvasRenderingContext2D) {
+  context.fillStyle = PAPER;
+  context.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  context.save();
+  context.globalAlpha = 0.035;
+  context.fillStyle = INK;
+  for (let index = 0; index < 1_200; index += 1) {
+    const x = (index * 97) % CARD_WIDTH;
+    const y = (index * 53 + (index % 17) * 19) % CARD_HEIGHT;
+    context.fillRect(x, y, index % 5 === 0 ? 2 : 1, 1);
+  }
+  context.restore();
+}
+
+function drawPersonIcon(context: CanvasRenderingContext2D, centerX: number, centerY: number) {
+  context.save();
+  context.fillStyle = PAPER;
+  context.beginPath();
+  context.arc(centerX, centerY, 32, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = INK;
+  context.beginPath();
+  context.arc(centerX, centerY - 9, 8, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(centerX, centerY + 18, 17, Math.PI, 0);
+  context.lineTo(centerX + 17, centerY + 23);
+  context.lineTo(centerX - 17, centerY + 23);
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function drawRule(context: CanvasRenderingContext2D, y: number) {
+  context.save();
+  context.strokeStyle = "rgba(245, 240, 227, 0.28)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(100, y);
+  context.lineTo(920, y);
+  context.stroke();
+  context.restore();
+}
+
+function drawTransferRow(
+  context: CanvasRenderingContext2D,
+  options: { y: number; label: string; value: string; highlighted: boolean; badge?: string },
+) {
+  drawPersonIcon(context, 132, options.y);
+  if (options.highlighted) {
+    context.fillStyle = ORANGE;
+    roundedRect(context, 174, options.y - 40, 8, 80, 4);
+    context.fill();
+  }
+
+  context.fillStyle = PAPER;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  setFont(context, 34, 750);
+  context.fillText(options.label, 208, options.badge ? options.y - 14 : options.y);
+
+  if (options.badge) {
+    setFont(context, 18, 800);
+    const badgeWidth = Math.ceil(context.measureText(options.badge).width) + 30;
+    context.fillStyle = ORANGE;
+    roundedRect(context, 208, options.y + 14, badgeWidth, 34, 17);
+    context.fill();
+    context.fillStyle = INK;
+    context.textAlign = "center";
+    context.fillText(options.badge, 208 + badgeWidth / 2, options.y + 31);
+  }
+
+  context.fillStyle = options.highlighted ? ORANGE : PAPER;
+  context.textAlign = "right";
+  fitText(context, options.value, 430, 43, 29, 820);
+  context.fillText(options.value, 890, options.y);
+}
+
+function qrCaption(payload: string) {
+  const lower = payload.toLowerCase();
+  if (lower.startsWith("bitcoin:")) return "온체인 결제 QR";
+  if (lower.startsWith("lnbc") || lower.startsWith("lightning:lnbc")) return "라이트닝 인보이스 QR";
+  return "BTC 수취 QR";
+}
+
+function receiveFallback() {
   const onchain = visibleValue("#receive-onchain");
-  if (onchain) {
-    return {
-      label: "온체인",
-      value: onchain,
-      note: hasQr ? "QR에는 거래 금액이 포함된 BIP21 요청이 들어 있습니다." : "주소는 함께 공유되는 문구에 포함됩니다.",
-    };
-  }
-
+  if (onchain) return { title: "온체인 주소", value: onchain };
   const lightning = visibleValue("#receive-lightning");
-  if (lightning) {
-    return {
-      label: hasQr ? "라이트닝 인보이스" : "라이트닝 주소",
-      value: hasQr ? "BOLT11 인보이스 · QR 또는 함께 공유되는 문구 사용" : lightning,
-      note: hasQr ? `원래 주소 · ${lightning}` : "주소는 함께 공유되는 문구에 포함됩니다.",
-    };
-  }
-
-  if (hasQr) {
-    return {
-      label: "라이트닝 인보이스",
-      value: "BOLT11 인보이스 · QR 또는 함께 공유되는 문구 사용",
-      note: "검증된 결제 요청입니다.",
-    };
-  }
-
-  return {
-    label: "수취정보 미입력",
-    value: "거래 조건만 공유됩니다.",
-    note: "",
-  };
+  if (lightning) return { title: lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay", value: lightning };
+  return { title: "BTC 받을 정보", value: "수취정보를 입력하지 않았습니다." };
 }
 
 async function makeFourByThreeTradeCard(file: File) {
-  const image = await imageFromFile(file);
+  const snapshot = makeSnapshot();
+  if (!snapshot) return file;
+  await document.fonts.ready;
+
   const canvas = document.createElement("canvas");
-  canvas.width = 1_200;
-  canvas.height = 900;
+  canvas.width = CARD_WIDTH;
+  canvas.height = CARD_HEIGHT;
   const context = canvas.getContext("2d");
   if (!context) return file;
 
-  context.fillStyle = "#f5f0e3";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
-  context.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight, 0, 0, 1_200, 675);
+  drawPaperTexture(context);
+  context.strokeStyle = INK;
+  context.lineWidth = 4;
+  context.strokeRect(1, 1, CARD_WIDTH - 2, CARD_HEIGHT - 2);
 
-  context.strokeStyle = "#101619";
-  context.lineWidth = 3;
-  context.beginPath();
-  context.moveTo(26, 676);
-  context.lineTo(1_174, 676);
+  context.fillStyle = INK;
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  setFont(context, 58, 820);
+  context.fillText("비트코인 P2P 거래 조건", 56, 92);
+
+  context.fillStyle = ORANGE;
+  roundedRect(context, 1_170, 42, 218, 64, 32);
+  context.fill();
+  context.fillStyle = INK;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  setFont(context, 25, 820);
+  context.fillText(snapshot.role === "buyer" ? "비트코인 구매" : "비트코인 판매", 1_279, 74);
+
+  context.fillStyle = INK;
+  roundedRect(context, 40, 138, 1_360, 900, 14);
+  context.fill();
+  context.strokeStyle = "rgba(245, 240, 227, 0.35)";
+  context.lineWidth = 2;
+  roundedRect(context, 64, 166, 1_312, 842, 7);
   context.stroke();
-
-  const receiveCanvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label='BTC 수취정보 QR']");
-  const hasQr = Boolean(receiveCanvas && receiveCanvas.width > 0 && receiveCanvas.height > 0);
-  const summary = receiveImageSummary(hasQr);
-  const textWidth = hasQr ? 820 : 1_070;
 
   context.textAlign = "left";
   context.textBaseline = "middle";
-  context.fillStyle = "#101619";
-  context.font = '800 28px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
-  context.fillText("BTC 받을 정보", 48, 716);
+  context.fillStyle = MUTED;
+  setFont(context, 22, 650);
+  context.fillText("비트코인 기준 가격", 100, 210);
+  context.fillStyle = PAPER;
+  fitText(context, snapshot.referenceLabel, 440, 32, 22, 760);
+  context.fillText(snapshot.referenceLabel, 100, 254);
 
-  context.fillStyle = "#a94d00";
-  context.font = '800 19px "Pretendard Variable", Pretendard, "Noto Sans KR", sans-serif';
-  context.fillText(summary.label, 48, 755);
+  context.textAlign = "right";
+  context.fillStyle = PAPER;
+  fitText(context, snapshot.referencePrice, 520, 46, 32, 820);
+  context.fillText(snapshot.referencePrice, 910, 224);
+  context.fillStyle = MUTED;
+  setFont(context, 19, 550);
+  context.fillText(`조회 시각 ${snapshot.referenceTime}`, 910, 270);
+  drawRule(context, 308);
 
-  context.fillStyle = "#101619";
-  drawFittedText(context, summary.value, 48, 798, textWidth, 23, 14, 700);
-  if (summary.note) {
-    context.fillStyle = "#5f665f";
-    drawFittedText(context, summary.note, 48, 837, textWidth, 17, 12, 600);
-  }
+  drawTransferRow(context, {
+    y: 388,
+    label: "구매자 → 판매자",
+    value: snapshot.payment,
+    highlighted: snapshot.role === "seller",
+    badge: snapshot.role === "seller" ? "판매자가 받음" : undefined,
+  });
+  drawRule(context, 466);
+  drawTransferRow(context, {
+    y: 548,
+    label: "판매자 → 구매자",
+    value: snapshot.bitcoin,
+    highlighted: snapshot.role === "buyer",
+    badge: snapshot.role === "buyer" ? "구매자가 받음" : undefined,
+  });
+  drawRule(context, 626);
 
-  if (hasQr && receiveCanvas) {
-    const qrSize = 170;
-    const qrX = 982;
-    const qrY = 700;
-    context.fillStyle = "#ffffff";
-    context.fillRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16);
+  context.textAlign = "left";
+  context.fillStyle = PAPER;
+  setFont(context, 25, 730);
+  context.fillText("판매자 프리미엄", 100, 690);
+  context.fillStyle = ORANGE;
+  fitText(context, snapshot.premium, 180, 39, 26, 840);
+  context.fillText(snapshot.premium, 348, 690);
+
+  context.fillStyle = MUTED;
+  setFont(context, 21, 650);
+  context.fillText("적용 단가", 500, 690);
+  context.fillStyle = PAPER;
+  fitText(context, snapshot.appliedPrice, 330, 29, 20, 760);
+  context.fillText(snapshot.appliedPrice, 626, 690);
+
+  context.fillStyle = MUTED;
+  setFont(context, 19, 600);
+  const fundingLine = `구매자 자금 출처 · ${snapshot.fundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
+  fitText(context, fundingLine, 810, 19, 15, 600);
+  context.fillText(fundingLine, 100, 770);
+  const marketLine = `시장 참고 · 업비트 프리미엄 ${snapshot.marketPremium}`;
+  fitText(context, marketLine, 810, 18, 14, 560);
+  context.fillText(marketLine, 100, 816);
+  const calculationLine = "계산 · 기준가 × (1 + 판매자 프리미엄) · 온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
+  fitText(context, calculationLine, 810, 18, 14, 560);
+  context.fillText(calculationLine, 100, 862);
+
+  context.fillStyle = ORANGE;
+  setFont(context, 19, 760);
+  context.fillText("확인용 · 원화 입금·BTC 수령 증빙 아님", 100, 950);
+
+  context.save();
+  context.strokeStyle = "rgba(245, 240, 227, 0.4)";
+  context.lineWidth = 2;
+  context.setLineDash([8, 10]);
+  context.beginPath();
+  context.moveTo(960, 330);
+  context.lineTo(960, 920);
+  context.stroke();
+  context.restore();
+
+  const qr = receiveCanvas();
+  const payload = readReceiveQrPayload();
+  if (qr && payload) {
+    const qrSize = 314;
+    const qrX = 1_020;
+    const qrY = 360;
+    context.fillStyle = PAPER;
+    roundedRect(context, qrX - 24, qrY - 24, qrSize + 48, qrSize + 48, 20);
+    context.fill();
     context.imageSmoothingEnabled = false;
-    context.drawImage(receiveCanvas, qrX, qrY, qrSize, qrSize);
+    context.drawImage(qr, qrX, qrY, qrSize, qrSize);
+    context.fillStyle = PAPER;
+    context.textAlign = "center";
+    setFont(context, 24, 730);
+    context.fillText(qrCaption(payload), qrX + qrSize / 2, 735);
+    context.fillStyle = MUTED;
+    setFont(context, 17, 560);
+    context.fillText("스캔하면 현재 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 780);
+  } else {
+    const fallback = receiveFallback();
+    context.textAlign = "center";
+    context.fillStyle = ORANGE;
+    setFont(context, 22, 800);
+    context.fillText(fallback.title, 1_165, 470);
+    context.fillStyle = PAPER;
+    fitText(context, fallback.value, 300, 21, 13, 650, true);
+    context.fillText(fallback.value, 1_165, 525);
+    context.fillStyle = MUTED;
+    setFont(context, 16, 560);
+    context.fillText("QR을 만들면 이 영역에 결제 QR이 표시됩니다.", 1_165, 580);
   }
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -254,8 +471,10 @@ export function ShareDetailsPreference() {
       const current = pre.textContent ?? "";
       if (current !== renderedTextRef.current) baseTextRef.current = current;
       const base = baseTextRef.current || current;
-      const compacted = includeDetails ? base : compactShareText(base);
-      const desired = withReceiveInfo(withPremium(compacted));
+      const full = withPremium(base);
+      document.documentElement.dataset.fullTradeShareText = full;
+      const compacted = includeDetails ? full : compactShareText(full);
+      const desired = withReceiveInfo(compacted);
       renderedTextRef.current = desired;
       document.documentElement.dataset.currentTradeShareText = desired;
       if (current !== desired) pre.textContent = desired;
@@ -280,6 +499,7 @@ export function ShareDetailsPreference() {
       scheduledRef.current = null;
       delete transformWindow.__p2pTransformTradeShareFile;
       delete document.documentElement.dataset.includePriceDetails;
+      delete document.documentElement.dataset.fullTradeShareText;
       delete document.documentElement.dataset.currentTradeShareText;
     };
   }, [includeDetails]);
