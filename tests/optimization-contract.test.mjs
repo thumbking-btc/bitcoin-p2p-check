@@ -26,6 +26,17 @@ test("keeps the PWA cache tied to the app release and precaches rendered assets"
   assert.match(serviceWorker, /fetch\(request, \{ cache: "no-store" \}\)/);
 });
 
+test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
+  const installCta = await source("../app/components/InstallCta.tsx");
+
+  assert.match(installCta, /SamsungBrowser/);
+  assert.match(installCta, /if \(isSamsungInternet\(\)\)/);
+  assert.match(installCta, /event\.preventDefault\(\)/);
+  assert.match(installCta, /setDeferredPrompt\(null\)/);
+  assert.match(installCta, /setMode\("android"\)/);
+  assert.match(installCta, /Chrome으로 연 뒤 브라우저 메뉴에서 설치/);
+});
+
 test("keeps the Upbit live path lightweight and realtime only", async () => {
   const calculator = await source("../app/components/P2PTradeTool.tsx");
 
