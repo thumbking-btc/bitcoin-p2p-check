@@ -29,15 +29,31 @@ const MUTED = "#d9d1c1";
 const ORANGE = "#f7931a";
 const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 
+function normalizeDetailedShareText(text: string) {
+  return text
+    .split("\n")
+    .filter((line) => line !== "[가격 계산]")
+    .filter((line) => !line.startsWith("금액 기준:"))
+    .filter((line) => !line.startsWith("판매자 프리미엄:"))
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
 function compactShareText(text: string) {
-  const marker = "\n[가격 계산]\n";
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex < 0) return text;
-  const verificationMarker = "\n\n거래 조건 검증하기:";
-  const verificationIndex = text.indexOf(verificationMarker, markerIndex + marker.length);
-  const head = text.slice(0, markerIndex).trimEnd();
-  if (verificationIndex < 0) return head;
-  return `${head}${text.slice(verificationIndex)}`;
+  const normalized = normalizeDetailedShareText(text);
+  const detailPrefixes = [
+    "계산 시각:",
+    "기준:",
+    "판매자가 파는 BTC 가격:",
+    "참고 업비트 프리미엄:",
+  ];
+  return normalized
+    .split("\n")
+    .filter((line) => !detailPrefixes.some((prefix) => line.startsWith(prefix)))
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 }
 
 function formatPremium() {
@@ -159,13 +175,17 @@ function roundedRect(
 ) {
   const r = Math.min(radius, width / 2, height / 2);
   context.beginPath();
+  if (typeof context.roundRect === "function") {
+    context.roundRect(x, y, width, height, r);
+    return;
+  }
   context.moveTo(x + r, y);
   context.lineTo(x + width - r, y);
   context.quadraticCurveTo(x + width, y, x + width, y + r);
   context.lineTo(x + width, y + height - r);
   context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
   context.lineTo(x + r, y + height);
-  context.quadraticCurveTo(x, y + height, x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
   context.lineTo(x, y + r);
   context.quadraticCurveTo(x, y, x + r, y);
   context.closePath();
@@ -232,7 +252,7 @@ function drawRule(context: CanvasRenderingContext2D, y: number) {
   context.lineWidth = 2;
   context.beginPath();
   context.moveTo(100, y);
-  context.lineTo(920, y);
+  context.lineTo(850, y);
   context.stroke();
   context.restore();
 }
@@ -251,24 +271,24 @@ function drawTransferRow(
   context.fillStyle = PAPER;
   context.textAlign = "left";
   context.textBaseline = "middle";
-  setFont(context, 34, 750);
+  setFont(context, 38, 750);
   context.fillText(options.label, 208, options.badge ? options.y - 14 : options.y);
 
   if (options.badge) {
-    setFont(context, 18, 800);
-    const badgeWidth = Math.ceil(context.measureText(options.badge).width) + 30;
+    setFont(context, 20, 800);
+    const badgeWidth = Math.ceil(context.measureText(options.badge).width) + 32;
     context.fillStyle = ORANGE;
-    roundedRect(context, 208, options.y + 14, badgeWidth, 34, 17);
+    roundedRect(context, 208, options.y + 14, badgeWidth, 36, 18);
     context.fill();
     context.fillStyle = INK;
     context.textAlign = "center";
-    context.fillText(options.badge, 208 + badgeWidth / 2, options.y + 31);
+    context.fillText(options.badge, 208 + badgeWidth / 2, options.y + 32);
   }
 
   context.fillStyle = options.highlighted ? ORANGE : PAPER;
   context.textAlign = "right";
-  fitText(context, options.value, 430, 43, 29, 820);
-  context.fillText(options.value, 890, options.y);
+  fitText(context, options.value, 335, 44, 31, 820);
+  context.fillText(options.value, 835, options.y);
 }
 
 function qrCaption(payload: string) {
@@ -328,91 +348,91 @@ async function makeFourByThreeTradeCard(file: File) {
   context.textAlign = "left";
   context.textBaseline = "middle";
   context.fillStyle = MUTED;
-  setFont(context, 22, 650);
+  setFont(context, 26, 650);
   context.fillText("비트코인 기준 가격", 100, 210);
   context.fillStyle = PAPER;
-  fitText(context, snapshot.referenceLabel, 440, 32, 22, 760);
-  context.fillText(snapshot.referenceLabel, 100, 254);
+  fitText(context, snapshot.referenceLabel, 390, 37, 27, 760);
+  context.fillText(snapshot.referenceLabel, 100, 258);
 
   context.textAlign = "right";
   context.fillStyle = PAPER;
-  fitText(context, snapshot.referencePrice, 520, 46, 32, 820);
-  context.fillText(snapshot.referencePrice, 910, 224);
+  fitText(context, snapshot.referencePrice, 440, 47, 34, 820);
+  context.fillText(snapshot.referencePrice, 850, 224);
   context.fillStyle = MUTED;
-  setFont(context, 19, 550);
-  context.fillText(`조회 시각 ${snapshot.referenceTime}`, 910, 270);
-  drawRule(context, 308);
+  setFont(context, 20, 550);
+  context.fillText(`조회 시각 ${snapshot.referenceTime}`, 850, 274);
+  drawRule(context, 312);
 
   drawTransferRow(context, {
-    y: 388,
+    y: 390,
     label: "구매자 → 판매자",
     value: snapshot.payment,
     highlighted: snapshot.role === "seller",
     badge: snapshot.role === "seller" ? "판매자가 받음" : undefined,
   });
-  drawRule(context, 466);
+  drawRule(context, 470);
   drawTransferRow(context, {
-    y: 548,
+    y: 552,
     label: "판매자 → 구매자",
     value: snapshot.bitcoin,
     highlighted: snapshot.role === "buyer",
     badge: snapshot.role === "buyer" ? "구매자가 받음" : undefined,
   });
-  drawRule(context, 626);
+  drawRule(context, 632);
 
   context.textAlign = "left";
   context.fillStyle = PAPER;
-  setFont(context, 25, 730);
-  context.fillText("판매자 프리미엄", 100, 690);
+  setFont(context, 28, 730);
+  context.fillText("판매자 프리미엄", 100, 696);
   context.fillStyle = ORANGE;
-  fitText(context, snapshot.premium, 180, 39, 26, 840);
-  context.fillText(snapshot.premium, 348, 690);
+  fitText(context, snapshot.premium, 150, 40, 29, 840);
+  context.fillText(snapshot.premium, 355, 696);
 
   context.fillStyle = MUTED;
-  setFont(context, 21, 650);
-  context.fillText("적용 단가", 500, 690);
+  setFont(context, 23, 650);
+  context.fillText("적용 단가", 490, 696);
   context.fillStyle = PAPER;
-  fitText(context, snapshot.appliedPrice, 315, 29, 20, 760);
-  context.fillText(snapshot.appliedPrice, 626, 690);
+  fitText(context, snapshot.appliedPrice, 245, 30, 22, 760);
+  context.fillText(snapshot.appliedPrice, 610, 696);
 
   context.fillStyle = MUTED;
-  setFont(context, 20, 600);
-  const fundingLine = `구매자 자금 출처 · ${snapshot.fundingSource} · 구매자 제공 정보 · 거래 전 상호 확인`;
-  fitText(context, fundingLine, 820, 20, 17, 600);
-  context.fillText(fundingLine, 100, 758);
+  setFont(context, 23, 600);
+  const fundingLine = `구매자 자금 출처 · ${snapshot.fundingSource} · 구매자 제공 정보`;
+  fitText(context, fundingLine, 740, 23, 20, 600);
+  context.fillText(fundingLine, 100, 766);
 
   const marketLine = `시장 참고 · 업비트 프리미엄 ${snapshot.marketPremium}`;
-  fitText(context, marketLine, 820, 19, 17, 560);
-  context.fillText(marketLine, 100, 804);
+  fitText(context, marketLine, 740, 22, 20, 560);
+  context.fillText(marketLine, 100, 814);
 
   const calculationLine = "계산 · 기준가 × (1 + 판매자 프리미엄)";
-  fitText(context, calculationLine, 820, 19, 17, 560);
-  context.fillText(calculationLine, 100, 850);
+  fitText(context, calculationLine, 740, 22, 20, 560);
+  context.fillText(calculationLine, 100, 862);
 
   const feeLine = "온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
-  fitText(context, feeLine, 820, 19, 17, 560);
-  context.fillText(feeLine, 100, 896);
+  fitText(context, feeLine, 740, 22, 19, 560);
+  context.fillText(feeLine, 100, 910);
 
   context.fillStyle = ORANGE;
-  setFont(context, 20, 760);
-  context.fillText("확인용 · 원화 입금·BTC 수령 증빙 아님", 100, 956);
+  setFont(context, 22, 760);
+  context.fillText("확인용 · 원화 입금·BTC 수령 증빙 아님", 100, 968);
 
   context.save();
   context.strokeStyle = "rgba(245, 240, 227, 0.4)";
   context.lineWidth = 2;
   context.setLineDash([8, 10]);
   context.beginPath();
-  context.moveTo(960, 320);
-  context.lineTo(960, 930);
+  context.moveTo(900, 320);
+  context.lineTo(900, 930);
   context.stroke();
   context.restore();
 
   const qr = receiveCanvas();
   const payload = readReceiveQrPayload();
   if (qr && payload) {
-    const qrSize = 360;
-    const qrX = 982;
-    const qrY = 334;
+    const qrSize = 400;
+    const qrX = 940;
+    const qrY = 316;
     context.fillStyle = PAPER;
     roundedRect(context, qrX - 18, qrY - 18, qrSize + 36, qrSize + 36, 20);
     context.fill();
@@ -420,23 +440,23 @@ async function makeFourByThreeTradeCard(file: File) {
     context.drawImage(qr, qrX, qrY, qrSize, qrSize);
     context.fillStyle = PAPER;
     context.textAlign = "center";
-    setFont(context, 25, 730);
-    context.fillText(qrCaption(payload), qrX + qrSize / 2, 746);
+    setFont(context, 27, 730);
+    context.fillText(qrCaption(payload), qrX + qrSize / 2, 770);
     context.fillStyle = MUTED;
-    setFont(context, 18, 560);
-    context.fillText("스캔하면 이 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 794);
+    setFont(context, 20, 560);
+    context.fillText("스캔하면 이 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 820);
   } else {
     const fallback = receiveFallback();
     context.textAlign = "center";
     context.fillStyle = ORANGE;
-    setFont(context, 22, 800);
-    context.fillText(fallback.title, 1_165, 470);
+    setFont(context, 25, 800);
+    context.fillText(fallback.title, 1_140, 470);
     context.fillStyle = PAPER;
-    fitText(context, fallback.value, 300, 21, 13, 650, true);
-    context.fillText(fallback.value, 1_165, 525);
+    fitText(context, fallback.value, 390, 23, 15, 650, true);
+    context.fillText(fallback.value, 1_140, 530);
     context.fillStyle = MUTED;
-    setFont(context, 16, 560);
-    context.fillText("QR을 만들면 이 영역에 결제 QR이 표시됩니다.", 1_165, 580);
+    setFont(context, 19, 560);
+    context.fillText("QR을 만들면 이 영역에 결제 QR이 표시됩니다.", 1_140, 590);
   }
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -479,7 +499,8 @@ export function ShareDetailsPreference() {
       const base = baseTextRef.current || current;
       const full = withPremium(base);
       document.documentElement.dataset.fullTradeShareText = full;
-      const compacted = includeDetails ? full : compactShareText(full);
+      const detailed = normalizeDetailedShareText(full);
+      const compacted = includeDetails ? detailed : compactShareText(full);
       const desired = withReceiveInfo(compacted);
       renderedTextRef.current = desired;
       document.documentElement.dataset.currentTradeShareText = desired;
