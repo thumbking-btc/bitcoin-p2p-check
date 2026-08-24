@@ -34,6 +34,8 @@ function compactTradeShareText(text) {
 
 function prepareShareText(text) {
   if (typeof document === "undefined") return text;
+  const visibleText = document.documentElement.dataset.currentTradeShareText;
+  if (visibleText) return visibleText;
   return document.documentElement.dataset.includePriceDetails === "false"
     ? compactTradeShareText(text)
     : text;
