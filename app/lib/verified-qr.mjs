@@ -1,11 +1,8 @@
 import { binarize, Byte, Charset, Decoder, Detector, Encoder, grayscale } from "@nuintun/qrcode";
-import { THUMBKING_QR_LOGO_RGBA_BASE64 } from "./thumbking-qr-logo.mjs";
 
 const MAXIMUM_QR_PIXEL_SIZE = 2_048;
 const MAXIMUM_QR_SCAN_DIMENSION = 4_096;
 const QR_LEVELS = new Set(["L", "M", "Q", "H"]);
-const BRAND_LOGO_RATIOS = [0.18, 0.16, 0.14, 0.12, 0.10, 0.08];
-let cachedLogo = null;
 
 export class VerifiedQrError extends TypeError {
   constructor(code, message) {
@@ -99,107 +96,6 @@ function renderRaster(encoded, maximumPixelSize, quietZoneModules) {
   return { data, height: pixelSize, width: pixelSize };
 }
 
-function getLogo() {
-  if (cachedLogo) return cachedLogo;
-  if (typeof globalThis.atob !== "function") {
-    fail("QR_BRAND", "QR 로고 데이터를 읽지 못했습니다.");
-  }
-
-  let binary;
-  try {
-    binary = globalThis.atob(THUMBKING_QR_LOGO_RGBA_BASE64);
-  } catch {
-    fail("QR_BRAND", "QR 로고 데이터를 해석하지 못했습니다.");
-  }
-
-  if (binary.length < 4 || binary.length % 4 !== 0) {
-    fail("QR_BRAND", "QR 로고 픽셀 형식을 확인하지 못했습니다.");
-  }
-  const pixelCount = binary.length / 4;
-  const size = Math.sqrt(pixelCount);
-  if (!Number.isInteger(size) || size < 8 || size > 512) {
-    fail("QR_BRAND", "QR 로고 이미지 크기를 확인하지 못했습니다.");
-  }
-
-  const pixels = new Uint8ClampedArray(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    pixels[index] = binary.charCodeAt(index);
-  }
-  cachedLogo = Object.freeze({ pixels, width: size, height: size });
-  return cachedLogo;
-}
-
-function fillWhiteCircle(data, width, height, centerX, centerY, radius) {
-  const minX = Math.max(0, Math.floor(centerX - radius));
-  const maxX = Math.min(width - 1, Math.ceil(centerX + radius));
-  const minY = Math.max(0, Math.floor(centerY - radius));
-  const maxY = Math.min(height - 1, Math.ceil(centerY + radius));
-  const radiusSquared = radius * radius;
-  for (let y = minY; y <= maxY; y += 1) {
-    const dy = y + 0.5 - centerY;
-    for (let x = minX; x <= maxX; x += 1) {
-      const dx = x + 0.5 - centerX;
-      if (dx * dx + dy * dy > radiusSquared) continue;
-      const offset = (y * width + x) * 4;
-      data[offset] = 255;
-      data[offset + 1] = 255;
-      data[offset + 2] = 255;
-      data[offset + 3] = 255;
-    }
-  }
-}
-
-function overlayLogo(baseRaster, ratio) {
-  const data = new Uint8ClampedArray(baseRaster.data);
-  const logo = getLogo();
-  const targetSize = Math.max(24, Math.round(Math.min(baseRaster.width, baseRaster.height) * ratio));
-  const centerX = baseRaster.width / 2;
-  const centerY = baseRaster.height / 2;
-  const startX = Math.round(centerX - targetSize / 2);
-  const startY = Math.round(centerY - targetSize / 2);
-
-  fillWhiteCircle(data, baseRaster.width, baseRaster.height, centerX, centerY, targetSize * 0.57);
-
-  for (let y = 0; y < targetSize; y += 1) {
-    const sourceY = Math.min(logo.height - 1, Math.floor((y * logo.height) / targetSize));
-    const destinationY = startY + y;
-    if (destinationY < 0 || destinationY >= baseRaster.height) continue;
-    for (let x = 0; x < targetSize; x += 1) {
-      const sourceX = Math.min(logo.width - 1, Math.floor((x * logo.width) / targetSize));
-      const destinationX = startX + x;
-      if (destinationX < 0 || destinationX >= baseRaster.width) continue;
-      const sourceOffset = (sourceY * logo.width + sourceX) * 4;
-      const alpha = logo.pixels[sourceOffset + 3] / 255;
-      if (alpha <= 0) continue;
-      const destinationOffset = (destinationY * baseRaster.width + destinationX) * 4;
-      const inverseAlpha = 1 - alpha;
-      data[destinationOffset] = Math.round(logo.pixels[sourceOffset] * alpha + data[destinationOffset] * inverseAlpha);
-      data[destinationOffset + 1] = Math.round(logo.pixels[sourceOffset + 1] * alpha + data[destinationOffset + 1] * inverseAlpha);
-      data[destinationOffset + 2] = Math.round(logo.pixels[sourceOffset + 2] * alpha + data[destinationOffset + 2] * inverseAlpha);
-      data[destinationOffset + 3] = 255;
-    }
-  }
-
-  return { data, height: baseRaster.height, width: baseRaster.width };
-}
-
-function addVerifiedBrandLogo(raster, payload, decodeSymbols) {
-  for (const ratio of BRAND_LOGO_RATIOS) {
-    const candidate = overlayLogo(raster, ratio);
-    try {
-      const symbols = decodeSymbols(candidate);
-      if (Array.isArray(symbols) && symbols.length === 1 && symbols[0] === payload) {
-        return candidate;
-      }
-    } catch {
-      // Retry with a smaller logo while keeping the same QR payload.
-    }
-    candidate.data.fill(0);
-  }
-  raster.data.fill(0);
-  fail("QR_BRAND", "엄지왕 로고를 포함한 QR을 안전하게 만들지 못했습니다.");
-}
-
 export function decodeQrSymbols(image) {
   validateQrImage(image);
   const luminances = grayscale(image);
@@ -272,13 +168,10 @@ export function createVerifiedTextQr(payload, options = {}) {
     raster.data.fill(0);
     fail("QR_VERIFY", "생성한 QR과 원문이 정확히 일치하지 않습니다.");
   }
-
-  const branded = addVerifiedBrandLogo(raster, payload, decodeSymbols);
-  raster.data.fill(0);
   return {
-    data: branded.data,
-    height: branded.height,
+    data: raster.data,
+    height: raster.height,
     payload,
-    width: branded.width,
+    width: raster.width,
   };
 }
