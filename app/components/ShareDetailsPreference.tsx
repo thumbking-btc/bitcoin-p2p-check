@@ -36,6 +36,7 @@ function normalizeDetailedShareText(text: string) {
     .filter((line) => !line.startsWith("금액 기준:"))
     .filter((line) => !line.startsWith("판매자 프리미엄:"))
     .join("\n")
+    .replace(/온체인 수수료:/gu, "수수료:")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
 }
@@ -409,7 +410,7 @@ async function makeFourByThreeTradeCard(file: File) {
   fitText(context, calculationLine, 740, 22, 20, 560);
   context.fillText(calculationLine, 100, 862);
 
-  const feeLine = "온체인 수수료 판매자 부담 · 구매자 수령량 차감 없음";
+  const feeLine = "수수료 판매자 부담 · 구매자 수령량 차감 없음";
   fitText(context, feeLine, 740, 22, 19, 560);
   context.fillText(feeLine, 100, 910);
 
@@ -479,6 +480,14 @@ export function ShareDetailsPreference() {
 
     const sync = () => {
       scheduledRef.current = null;
+
+      const feeMeta = document.querySelector<HTMLElement>(".capture-meta-fee");
+      const feeLabel = feeMeta?.querySelector<HTMLElement>("b");
+      if (feeLabel && feeLabel.textContent !== "수수료:") feeLabel.textContent = "수수료:";
+      if (feeMeta && feeMeta.getAttribute("aria-label") !== "수수료: 판매자 부담, 구매자 수령량 차감 없음") {
+        feeMeta.setAttribute("aria-label", "수수료: 판매자 부담, 구매자 수령량 차감 없음");
+      }
+
       const details = document.querySelector<HTMLElement>(".trade-share-preview");
       const pre = details?.querySelector<HTMLPreElement>("pre[aria-label='거래 조건 이미지와 함께 공유되는 문구']");
       if (!details || !pre) {
