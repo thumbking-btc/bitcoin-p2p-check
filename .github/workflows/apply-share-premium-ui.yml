@@ -1,0 +1,184 @@
+name: Apply share premium UI
+
+on:
+  push:
+    branches: [feature/receive-info-current-main-final]
+    paths: [.github/workflows/apply-share-premium-ui.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/receive-info-current-main-final
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply UI changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('app/components/P2PTradeTool.tsx')
+          s = p.read_text()
+
+          state_anchor = '  const [isSharing, setIsSharing] = useState(false);\n'
+          if 'includePriceDetails' not in s:
+              if state_anchor not in s: raise SystemExit('state anchor not found')
+              s = s.replace(state_anchor, state_anchor + '  const [includePriceDetails, setIncludePriceDetails] = useState(false);\n', 1)
+
+          intent_anchor = '''  const tradeIntent = quote ? buildTradeIntent({
+    tradeRole,
+    amountBasis,
+    paymentKrw: quote.paymentKrw,
+    sats: quote.sats,
+    bitcoinDisplayUnit,
+  }) : "";
+'''
+          if 'const premiumShareLabel' not in s:
+              if intent_anchor not in s: raise SystemExit('trade intent anchor not found')
+              s = s.replace(intent_anchor, intent_anchor + '''  const premiumShareLabel = premiumPercent === null
+    ? ""
+    : `P ${premiumPercent > 0 ? "+" : ""}${premiumPercent.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
+  const compactTradeIntent = tradeIntent && premiumShareLabel ? `${tradeIntent} · ${premiumShareLabel}` : tradeIntent;
+''', 1)
+
+          old = '''  const shareText = quote && multiplier !== null && tradeIntent ? [
+    tradeIntent,
+    `계산 시각: ${formatTime(referenceTime)}`,
+    `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
+    `판매자 → 구매자: ${formatTradeBitcoinAmount({ sats: quote.sats, bitcoinDisplayUnit })}`,
+    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
+    "",
+    "[가격 계산]",
+    `금액 기준: ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"}`,
+    `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
+    `판매자 프리미엄: ${premiumPercent}%`,
+    `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
+    `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
+    "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
+    "확인용: 원화 입금·BTC 수령 증빙 아님",
+  ].join("\\n") : "";
+'''
+          new = '''  const shareText = quote && multiplier !== null && compactTradeIntent ? [
+    compactTradeIntent,
+    `계산 시각: ${formatTime(referenceTime)}`,
+    `구매자 → 판매자: ${formatKrw(quote.paymentKrw)}`,
+    `판매자 → 구매자: ${formatTradeBitcoinAmount({ sats: quote.sats, bitcoinDisplayUnit })}`,
+    `구매자 자금 출처: ${fundingSource} (구매자 제공 정보 · 거래 전 상호 확인)`,
+    ...(includePriceDetails ? [
+      "",
+      "[가격 계산]",
+      `금액 기준: ${amountBasis === "krw" ? "원화 금액" : "비트코인 수량"}`,
+      `기준: ${referenceLabel} ${formatKrw(referencePrice)} / BTC`,
+      `판매자 프리미엄: ${premiumPercent}%`,
+      `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
+      `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
+      "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
+      "확인용: 원화 입금·BTC 수령 증빙 아님",
+    ] : []),
+  ].join("\\n") : "";
+'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'compactTradeIntent ? [' not in s:
+              raise SystemExit('share text anchor not found')
+
+          old_preview = '''          <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
+            {draftHydrated && shareTextWithLink
+              ? shareTextWithLink
+              : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
+          </pre>
+'''
+          option = '''          <label className="share-detail-option">
+            <input
+              type="checkbox"
+              checked={includePriceDetails}
+              onChange={(event) => setIncludePriceDetails(event.target.checked)}
+            />
+            <span>
+              <strong>상세 계산정보 포함</strong>
+              <small>선택 사항 · 가격 계산 근거까지 함께 보냅니다.</small>
+            </span>
+          </label>
+'''
+          if 'className="share-detail-option"' not in s:
+              if old_preview not in s: raise SystemExit('preview anchor not found')
+              s = s.replace(old_preview, old_preview + option, 1)
+
+          p.write_text(s)
+
+          css = Path('app/globals.css')
+          c = css.read_text()
+          if '.share-detail-option {' not in c:
+              c += '''
+
+.share-detail-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.share-detail-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.share-detail-option > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-detail-option strong {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.share-detail-option small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+'''
+          css.write_text(c)
+
+          page = Path('app/page.tsx')
+          ps = page.read_text()
+          old_support = '        <SupportPanel />\n'
+          new_support = '''        <details className="reference-details">
+          <summary>
+            <span>제작자 보기</span>
+            <small>제작자 정보와 후원</small>
+          </summary>
+          <div className="reference-body">
+            <SupportPanel />
+          </div>
+        </details>
+'''
+          if '<span>제작자 보기</span>' not in ps:
+              if old_support not in ps: raise SystemExit('support anchor not found')
+              ps = ps.replace(old_support, new_support, 1)
+          page.write_text(ps)
+      - name: Verify
+        run: npm ci && npm run verify
+      - name: Commit changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/components/P2PTradeTool.tsx app/globals.css app/page.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Simplify share copy and show premium upfront"
+          git push origin HEAD:feature/receive-info-current-main-final
