@@ -1,4 +1,4 @@
-export const TRADE_DRAFT_VERSION = 1;
+export const TRADE_DRAFT_VERSION = 2;
 export const TRADE_DRAFT_TTL_MS = 12 * 60 * 60 * 1_000;
 export const TRADE_DRAFT_STORAGE_KEY = "bitcoin-p2p-check:trade-draft";
 export const TRADE_DRAFT_MAX_RAW_LENGTH = 8 * 1_024;
@@ -70,10 +70,6 @@ function removeInvalidDraft(storage) {
   }
 }
 
-/**
- * Validates and returns a new allowlisted draft object.
- * Market data, timestamps from quotes, calculations, PNGs and share state are never accepted.
- */
 export function validateTradeDraft(value, now = Date.now()) {
   if (!Number.isSafeInteger(now) || now <= 0) return null;
   if (!hasExactKeys(value, DRAFT_KEYS)) return null;

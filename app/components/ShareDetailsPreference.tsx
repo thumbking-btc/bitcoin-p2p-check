@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { decodeQrSymbols } from "../lib/verified-qr.mjs";
+import { createVerifiedTextQr, decodeQrSymbols, verifyQrRasterPayload } from "../lib/verified-qr.mjs";
 
 type TransformWindow = Window & {
   __p2pTransformTradeShareFile?: (file: File) => Promise<File>;
@@ -57,13 +57,18 @@ function compactShareText(text: string) {
     .trim();
 }
 
+function formatPremiumValue(value: number) {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "±";
+  const magnitude = Math.abs(value).toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+  return `${sign}${magnitude}%`;
+}
+
 function formatPremium() {
   const input = document.querySelector<HTMLInputElement>("#seller-premium");
   if (!input) return "";
   const value = Number(input.value);
   if (!Number.isFinite(value)) return "";
-  const sign = value > 0 ? "+" : "";
-  return `P ${sign}${value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
+  return `(P ${formatPremiumValue(value)})`;
 }
 
 function withPremium(text: string) {
@@ -71,7 +76,7 @@ function withPremium(text: string) {
   if (!premium || !text) return text;
   const lines = text.split("\n");
   if (!lines[0]) return text;
-  lines[0] = lines[0].replace(/\s·\sP\s[+-]?[\d,.]+%$/u, "");
+  lines[0] = lines[0].replace(/\s·\s(?:\(P\s[+±-]?[\d,.]+%\)|P\s[+-]?[\d,.]+%)$/u, "");
   lines[0] = `${lines[0]} · ${premium}`;
   return lines.join("\n");
 }
@@ -150,7 +155,7 @@ function makeSnapshot(): TradeImageSnapshot | null {
   const role: TradeImageSnapshot["role"] = firstLine.includes("팝니다") ? "seller" : "buyer";
   const reference = lineValue(source, "기준:");
   const referenceMatch = reference.match(/^(.*?)\s+([\d,]+원\s*\/\s*BTC)$/u);
-  const premiumInput = formatPremium().replace(/^P\s*/u, "");
+  const premiumInput = formatPremium().replace(/^\(P\s*/u, "").replace(/\)$/u, "");
 
   return {
     role,
@@ -159,7 +164,7 @@ function makeSnapshot(): TradeImageSnapshot | null {
     referenceTime: lineValue(source, "계산 시각:") || "조회 시각 없음",
     payment: lineValue(source, "구매자 → 판매자:") || "—",
     bitcoin: lineValue(source, "판매자 → 구매자:") || "—",
-    premium: premiumInput || lineValue(source, "판매자 프리미엄:") || "0%",
+    premium: premiumInput || lineValue(source, "판매자 프리미엄:") || "±0%",
     appliedPrice: lineValue(source, "판매자가 파는 BTC 가격:") || "—",
     fundingSource: lineValue(source, "구매자 자금 출처:").replace(/\s*\(구매자 제공 정보.*$/u, "") || "기재하지 않음",
     marketPremium: lineValue(source, "참고 업비트 프리미엄:") || "조회 불가",
@@ -301,10 +306,78 @@ function qrCaption(payload: string) {
 
 function receiveFallback() {
   const onchain = visibleValue("#receive-onchain");
-  if (onchain) return { title: "온체인 주소", value: onchain };
+  if (onchain) return { title: "온체인 주소", value: onchain, payload: onchain, caption: "온체인 주소 QR" };
   const lightning = visibleValue("#receive-lightning");
-  if (lightning) return { title: lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay", value: lightning };
-  return { title: "BTC 받을 정보", value: "수취정보를 입력하지 않았습니다." };
+  if (lightning) return {
+    title: lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay",
+    value: lightning,
+    payload: lightning,
+    caption: lightning.includes("@") ? "라이트닝 주소 QR" : "LNURL-pay QR",
+  };
+  return { title: "BTC 받을 정보", value: "수취정보를 입력하지 않았습니다.", payload: "", caption: "" };
+}
+
+let fallbackQrLogoPromise: Promise<HTMLImageElement> | null = null;
+
+function loadFallbackQrLogo() {
+  if (fallbackQrLogoPromise) return fallbackQrLogoPromise;
+  fallbackQrLogoPromise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("QR 로고를 불러오지 못했습니다."));
+    image.src = "/creator-logo.jpg";
+  });
+  return fallbackQrLogoPromise;
+}
+
+async function makeFallbackReceiveQr(payload: string) {
+  const qr = createVerifiedTextQr(payload, { maximumLength: 2_048, maximumPixelSize: 520, level: "M" });
+  const canvas = document.createElement("canvas");
+  canvas.width = qr.width;
+  canvas.height = qr.height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    qr.data.fill(0);
+    return null;
+  }
+
+  const drawRaw = () => {
+    const image = context.createImageData(qr.width, qr.height);
+    image.data.set(qr.data);
+    context.imageSmoothingEnabled = false;
+    context.putImageData(image, 0, 0);
+    image.data.fill(0);
+  };
+  drawRaw();
+
+  try {
+    const logo = await loadFallbackQrLogo();
+    const size = Math.max(32, Math.round(Math.min(canvas.width, canvas.height) * 0.12));
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    context.save();
+    context.fillStyle = "#fff";
+    context.beginPath();
+    context.arc(centerX, centerY, size * 0.54, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
+    context.clip();
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(logo, centerX - size / 2, centerY - size / 2, size, size);
+    context.restore();
+
+    const branded = context.getImageData(0, 0, canvas.width, canvas.height);
+    verifyQrRasterPayload(branded, payload);
+    branded.data.fill(0);
+  } catch {
+    drawRaw();
+  } finally {
+    qr.data.fill(0);
+  }
+  return canvas;
 }
 
 async function makeFourByThreeTradeCard(file: File) {
@@ -448,16 +521,34 @@ async function makeFourByThreeTradeCard(file: File) {
     context.fillText("스캔하면 이 거래의 BTC 수취정보를 불러옵니다.", qrX + qrSize / 2, 820);
   } else {
     const fallback = receiveFallback();
-    context.textAlign = "center";
-    context.fillStyle = ORANGE;
-    setFont(context, 25, 800);
-    context.fillText(fallback.title, 1_140, 470);
-    context.fillStyle = PAPER;
-    fitText(context, fallback.value, 390, 23, 15, 650, true);
-    context.fillText(fallback.value, 1_140, 530);
-    context.fillStyle = MUTED;
-    setFont(context, 19, 560);
-    context.fillText("QR을 만들면 이 영역에 결제 QR이 표시됩니다.", 1_140, 590);
+    const fallbackQr = fallback.payload ? await makeFallbackReceiveQr(fallback.payload) : null;
+    if (fallbackQr) {
+      const qrSize = 400;
+      const qrX = 940;
+      const qrY = 316;
+      context.fillStyle = PAPER;
+      roundedRect(context, qrX - 18, qrY - 18, qrSize + 36, qrSize + 36, 20);
+      context.fill();
+      context.imageSmoothingEnabled = false;
+      context.drawImage(fallbackQr, qrX, qrY, qrSize, qrSize);
+      context.fillStyle = PAPER;
+      context.textAlign = "center";
+      setFont(context, 27, 730);
+      context.fillText(fallback.caption, qrX + qrSize / 2, 770);
+      context.fillStyle = MUTED;
+      setFont(context, 20, 560);
+      context.fillText("스캔하면 BTC 수취 주소를 불러옵니다.", qrX + qrSize / 2, 820);
+      fallbackQr.width = 1;
+      fallbackQr.height = 1;
+    } else {
+      context.textAlign = "center";
+      context.fillStyle = ORANGE;
+      setFont(context, 25, 800);
+      context.fillText(fallback.title, 1_140, 470);
+      context.fillStyle = PAPER;
+      fitText(context, fallback.value, 390, 23, 15, 650, true);
+      context.fillText(fallback.value, 1_140, 530);
+    }
   }
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
