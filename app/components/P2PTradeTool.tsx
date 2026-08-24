@@ -64,7 +64,7 @@ const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
   krwAmounts: { buyer: "3000000", seller: "3000000" },
   bitcoinAmountInputs: { buyer: "3000000", seller: "3000000" },
   amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
-  premiumInput: "2",
+  premiumInput: "0",
   fundingSources: { buyer: "기재하지 않음", seller: "기재하지 않음" },
   bitcoinDisplayUnit: "sats",
 };
@@ -810,7 +810,7 @@ export function P2PTradeTool() {
     `판매자 프리미엄: ${premiumPercent}%`,
     `판매자가 파는 BTC 가격: ${formatKrw(quote.appliedPrice)} / BTC`,
     `참고 업비트 프리미엄: ${formatPercent(effectiveKoreaPremium)}`,
-    "온체인 수수료: 판매자 부담 · 구매자 수령량 차감 없음",
+    "수수료: 판매자 부담 · 구매자 수령량 차감 없음",
     "확인용: 원화 입금·BTC 수령 증빙 아님",
   ].join("\n") : "";
   const tradeFragment = buildTradeFragment({
@@ -1141,7 +1141,7 @@ export function P2PTradeTool() {
         </section>
 
         <div className="capture-meta" id="trade-rounding" role="note" aria-label="거래 계산 참고사항">
-          <span className="capture-meta-fee" aria-label="온체인 수수료: 판매자 부담, 구매자 수령량 차감 없음"><b>온체인 수수료:</b><span>판매자 부담 · 구매자 수령량 차감 없음</span></span>
+          <span className="capture-meta-fee" aria-label="수수료: 판매자 부담, 구매자 수령량 차감 없음"><b>수수료:</b><span>판매자 부담 · 구매자 수령량 차감 없음</span></span>
           <span className="capture-meta-rounding" aria-label="반올림: 1 sat, 1원"><b>반올림:</b><span>1 sat·1원</span></span>
           <span className="capture-meta-disclaimer" aria-label="확인용: 원화 입금과 비트코인 수령 증빙 아님"><b>확인용:</b><span>원화 입금·BTC 수령 증빙 아님</span></span>
         </div>
