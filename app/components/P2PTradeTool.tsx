@@ -55,7 +55,7 @@ type TradeDraftFields = {
   bitcoinAmountInputs: Record<TradeRole, string>;
   amountBasisByRole: Record<TradeRole, AmountBasis>;
   premiumInput: string;
-  fundingSources: Record<TradeRole, FundingSource>;
+  fundingSource: FundingSource;
   bitcoinDisplayUnit: BitcoinDisplayUnit;
 };
 
@@ -65,7 +65,7 @@ const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
   bitcoinAmountInputs: { buyer: "3000000", seller: "3000000" },
   amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
   premiumInput: "0",
-  fundingSources: { buyer: "기재하지 않음", seller: "기재하지 않음" },
+  fundingSource: "기재하지 않음",
   bitcoinDisplayUnit: "sats",
 };
 
@@ -328,7 +328,7 @@ export function P2PTradeTool() {
   const [bitcoinAmountInputs, setBitcoinAmountInputs] = useState<Record<TradeRole, string>>({ ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs });
   const [amountBasisByRole, setAmountBasisByRole] = useState<Record<TradeRole, AmountBasis>>({ ...DEFAULT_TRADE_DRAFT.amountBasisByRole });
   const [premiumInput, setPremiumInput] = useState(DEFAULT_TRADE_DRAFT.premiumInput);
-  const [fundingSources, setFundingSources] = useState<Record<TradeRole, FundingSource>>({ ...DEFAULT_TRADE_DRAFT.fundingSources });
+  const [fundingSource, setFundingSource] = useState<FundingSource>(DEFAULT_TRADE_DRAFT.fundingSource);
   const [importedTradeLink, setImportedTradeLink] = useState(false);
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
   const [outputMode, setOutputMode] = useState<OutputMode>("recruitment");
@@ -627,14 +627,13 @@ export function P2PTradeTool() {
         bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
         amountBasisByRole: { ...stored.amountBasisByRole },
         premiumInput: stored.premiumInput,
-        fundingSources: { ...stored.fundingSources },
+        fundingSource: stored.fundingSource as FundingSource,
         bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
       } : {
         ...DEFAULT_TRADE_DRAFT,
         krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
         bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
         amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
-        fundingSources: { ...DEFAULT_TRADE_DRAFT.fundingSources },
       };
 
       if (imported) {
@@ -656,7 +655,7 @@ export function P2PTradeTool() {
             : String(imported.amount);
         }
         hydratedDraft.premiumInput = String(imported.premium);
-        hydratedDraft.fundingSources[importedRole] = imported.fundingSource as FundingSource;
+        hydratedDraft.fundingSource = imported.fundingSource as FundingSource;
         hydratedDraft.bitcoinDisplayUnit = importedDisplayUnit;
         setImportedTradeLink(true);
         writeTradeDraft(storage, hydratedDraft);
@@ -668,7 +667,7 @@ export function P2PTradeTool() {
       setBitcoinAmountInputs(hydratedDraft.bitcoinAmountInputs);
       setAmountBasisByRole(hydratedDraft.amountBasisByRole);
       setPremiumInput(hydratedDraft.premiumInput);
-      setFundingSources(hydratedDraft.fundingSources);
+      setFundingSource(hydratedDraft.fundingSource);
       setBitcoinDisplayUnit(hydratedDraft.bitcoinDisplayUnit);
       setDraftHydrated(true);
     }, 0);
@@ -687,10 +686,10 @@ export function P2PTradeTool() {
       bitcoinAmountInputs,
       amountBasisByRole,
       premiumInput,
-      fundingSources,
+      fundingSource,
       bitcoinDisplayUnit,
     });
-  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSources, krwAmounts, premiumInput, tradeRole]);
+  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSource, krwAmounts, premiumInput, tradeRole]);
 
   useEffect(() => {
     if (!market?.priceObservedAt) return;
@@ -711,8 +710,12 @@ export function P2PTradeTool() {
   const referencePrice = market?.priceKrw ?? null;
   const referenceLabel = "업비트 최근 체결가";
   const referenceTime = market?.priceObservedAt ?? null;
-  const fundingSource = fundingSources[tradeRole];
-  const fundingSourceFieldLabel = "구매자 자금 출처";
+  const fundingSourceFieldLabel = tradeRole === "buyer"
+    ? "내 구매 자금 출처"
+    : "구매자가 제공한 자금 출처";
+  const fundingSourceNote = tradeRole === "buyer"
+    ? "거래 조건 이미지에만 포함됩니다."
+    : "구매자가 알려준 내용만 선택해 주세요.";
   const amountBasis = amountBasisByRole[tradeRole];
   const krwAmount = krwAmounts[tradeRole];
   const bitcoinAmountInput = bitcoinAmountInputs[tradeRole];
@@ -1082,21 +1085,6 @@ export function P2PTradeTool() {
           {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
           {bitcoinAmountError ? <p className="input-alert" id="bitcoin-amount-error" role="alert">{bitcoinAmountError}</p> : null}
-          <label className="fund-source-field" htmlFor="buyer-funding-source">
-            <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
-            <select
-              id="buyer-funding-source"
-              value={fundingSource}
-              onChange={(event) => setFundingSources((current) => ({
-                ...current,
-                [tradeRole]: event.target.value as FundingSource,
-              }))}
-              aria-describedby="fund-source-note"
-            >
-              {FUNDING_SOURCE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          </label>
-          <p className="fund-source-note" id="fund-source-note">자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요.</p>
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -1174,84 +1162,106 @@ export function P2PTradeTool() {
 
       {marketError ? <p className="market-error" role="alert">{marketError}</p> : null}
 
-      <section className="output-picker" aria-labelledby="output-picker-title">
-        <fieldset>
-          <legend id="output-picker-title">무엇을 만들까요?</legend>
-          <div className="output-options">
-            <label htmlFor="output-mode-recruitment" aria-label="거래 모집글 만들기. 공개 채널에서 상대를 찾습니다.">
-              <input
-                id="output-mode-recruitment"
-                type="radio"
-                name="output-mode"
-                value="recruitment"
-                checked={outputMode === "recruitment"}
-                onChange={() => setOutputMode("recruitment")}
-              />
-              <span><strong>거래 모집글</strong><small>공개 채널에서 상대 찾기</small></span>
-            </label>
-            <label htmlFor="output-mode-trade-image" aria-label="거래 조건 이미지 만들기. 연락 후 확정 조건을 공유합니다.">
-              <input
-                id="output-mode-trade-image"
-                type="radio"
-                name="output-mode"
-                value="trade-image"
-                checked={outputMode === "trade-image"}
-                onChange={() => setOutputMode("trade-image")}
-              />
-              <span><strong>거래 조건 이미지</strong><small>연락 후 확정 조건 공유</small></span>
-            </label>
+      <details className="share-tools">
+        <summary>
+          <span>상대 찾기·공유하기</span>
+          <small>모집글과 거래 조건 이미지</small>
+        </summary>
+        <div className="share-tools-body">
+          <section className="output-picker" aria-labelledby="output-picker-title">
+            <fieldset>
+              <legend className="visually-hidden" id="output-picker-title">만들 결과 선택</legend>
+              <div className="output-options">
+                <label htmlFor="output-mode-recruitment" aria-label="거래 모집글 만들기. 공개 채널에서 상대를 찾습니다.">
+                  <input
+                    id="output-mode-recruitment"
+                    type="radio"
+                    name="output-mode"
+                    value="recruitment"
+                    checked={outputMode === "recruitment"}
+                    onChange={() => setOutputMode("recruitment")}
+                  />
+                  <span><strong>거래 모집글</strong><small>공개 채널에서 상대 찾기</small></span>
+                </label>
+                <label htmlFor="output-mode-trade-image" aria-label="거래 조건 이미지 만들기. 연락 후 확정 조건을 공유합니다.">
+                  <input
+                    id="output-mode-trade-image"
+                    type="radio"
+                    name="output-mode"
+                    value="trade-image"
+                    checked={outputMode === "trade-image"}
+                    onChange={() => setOutputMode("trade-image")}
+                  />
+                  <span><strong>거래 조건 이미지</strong><small>연락 후 확정 조건 공유</small></span>
+                </label>
+              </div>
+            </fieldset>
+          </section>
+
+          <div className="output-panel" hidden={outputMode !== "trade-image"}>
+            <div className="trade-image-funding">
+              <label className="fund-source-field" htmlFor="buyer-funding-source">
+                <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
+                <select
+                  id="buyer-funding-source"
+                  value={fundingSource}
+                  onChange={(event) => setFundingSource(event.target.value as FundingSource)}
+                  aria-describedby="fund-source-note"
+                >
+                  {FUNDING_SOURCE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+              <p className="fund-source-note" id="fund-source-note">{fundingSourceNote}</p>
+            </div>
+            <details className="trade-share-preview">
+              <summary>
+                <span>함께 공유되는 문구</span>
+                <small>읽기 전용 · 공유 전 확인</small>
+              </summary>
+              <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
+                {draftHydrated && shareTextWithLink
+                  ? shareTextWithLink
+                  : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
+              </pre>
+            </details>
+            <div className="tool-actions">
+              <button
+                className="share-button"
+                type="button"
+                onClick={() => void shareTrade()}
+                disabled={!shareImageAllowed || isSharing}
+                aria-busy={isSharing}
+              >
+                {isSharing
+                  ? "거래 조건 이미지 공유 중"
+                  : stalePrice
+                    ? "시세 새로고침 후 공유"
+                    : "거래 조건 이미지 공유"}
+              </button>
+              <p
+                className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
+                aria-live="polite"
+                role={shareStatusIsError ? "alert" : undefined}
+              >
+                {shareStatus || (!isSharing ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
+              </p>
+            </div>
           </div>
-        </fieldset>
-      </section>
 
-      <div className="output-panel" hidden={outputMode !== "trade-image"}>
-        <details className="trade-share-preview" open>
-          <summary>
-            <span>함께 공유되는 문구</span>
-            <small>읽기 전용 · 공유 전 확인</small>
-          </summary>
-          <pre aria-label="거래 조건 이미지와 함께 공유되는 문구">
-            {draftHydrated && shareTextWithLink
-              ? shareTextWithLink
-              : "거래 조건을 계산하면 공유 문구가 표시됩니다."}
-          </pre>
-        </details>
-        <div className="tool-actions">
-          <button
-            className="share-button"
-            type="button"
-            onClick={() => void shareTrade()}
-            disabled={!shareImageAllowed || isSharing}
-            aria-busy={isSharing}
-          >
-            {isSharing
-              ? "거래 조건 이미지 공유 중"
-              : stalePrice
-                ? "시세 새로고침 후 공유"
-                : "거래 조건 이미지 공유"}
-          </button>
-          <p
-            className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
-            aria-live="polite"
-            role={shareStatusIsError ? "alert" : undefined}
-          >
-            {shareStatus || (!isSharing ? "입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다." : "")}
-          </p>
+          <div className="output-panel" hidden={outputMode !== "recruitment"}>
+            <TradeRecruitmentTool
+              active={outputMode === "recruitment"}
+              tradeRole={tradeRole}
+              amountUnit={amountInputUnit}
+              amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
+              sellerPremiumInput={premiumInput}
+              approximateKrw={quote?.paymentKrw ?? null}
+              approximateSats={quote?.sats ?? null}
+              bitcoinDisplayUnit={bitcoinDisplayUnit}
+            />
+          </div>
         </div>
-      </div>
-
-      <div className="output-panel" hidden={outputMode !== "recruitment"}>
-        <TradeRecruitmentTool
-          active={outputMode === "recruitment"}
-          tradeRole={tradeRole}
-          amountUnit={amountInputUnit}
-          amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
-          sellerPremiumInput={premiumInput}
-          approximateKrw={quote?.paymentKrw ?? null}
-          approximateSats={quote?.sats ?? null}
-          bitcoinDisplayUnit={bitcoinDisplayUnit}
-        />
-      </div>
+      </details>
     </section>
   );
 }

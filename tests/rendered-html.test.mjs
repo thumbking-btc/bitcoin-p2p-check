@@ -476,7 +476,7 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
     bitcoinAmountInputs: { buyer: "0.005", seller: "0.008" },
     amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
     premiumInput: "-2.5",
-    fundingSources: { buyer: "근로소득", seller: "기재하지 않음" },
+    fundingSource: "근로소득",
     bitcoinDisplayUnit: "btc",
     market: { priceKrw: 100_000_000 },
     quote: { sats: 800_000 },
@@ -489,11 +489,13 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   const storedJson = values.get(TRADE_DRAFT_STORAGE_KEY);
   const storedObject = JSON.parse(storedJson);
   assert.deepEqual(Object.keys(storedObject).sort(), [
-    "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "fundingSources",
+    "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "fundingSource",
     "krwAmounts", "premiumInput", "savedAt", "tradeRole", "version",
   ]);
   assert.equal(storedObject.version, TRADE_DRAFT_VERSION);
   assert.equal(storedObject.savedAt, now);
+  assert.equal(storedObject.fundingSource, "근로소득");
+  assert.equal(Object.hasOwn(storedObject, "fundingSources"), false);
   for (const forbidden of ["market", "quote", "referenceTime", "png", "shareStatus"]) {
     assert.equal(Object.hasOwn(storedObject, forbidden), false);
   }
@@ -522,6 +524,28 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   };
   assert.equal(readTradeDraft(blockedStorage, now), null);
   assert.equal(writeTradeDraft(blockedStorage, fields, now), false);
+
+  const legacyValues = new Map();
+  legacyValues.set(TRADE_DRAFT_STORAGE_KEY, JSON.stringify({
+    version: 2,
+    savedAt: now,
+    tradeRole: "seller",
+    krwAmounts: { buyer: "500000", seller: "800000" },
+    bitcoinAmountInputs: { buyer: "0.005", seller: "0.008" },
+    amountBasisByRole: { buyer: "krw", seller: "bitcoin" },
+    premiumInput: "-2.5",
+    fundingSources: { buyer: "근로소득", seller: "사업소득" },
+    bitcoinDisplayUnit: "btc",
+  }));
+  const legacyStorage = {
+    getItem: (key) => legacyValues.get(key) ?? null,
+    setItem: (key, value) => legacyValues.set(key, value),
+    removeItem: (key) => legacyValues.delete(key),
+  };
+  const migrated = readTradeDraft(legacyStorage, now);
+  assert.equal(migrated.version, TRADE_DRAFT_VERSION);
+  assert.equal(migrated.fundingSource, "사업소득");
+  assert.equal(JSON.parse(legacyValues.get(TRADE_DRAFT_STORAGE_KEY)).fundingSource, "사업소득");
 });
 
 test("hydrates a local draft once and lets an imported share link win", async () => {
@@ -564,7 +588,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /보낼 원화/);
   assert.match(html, /판매자 프리미엄 \(%\)/);
   assert.match(html, /판매자가 기준 시세와 같은 단가로 팝니다/);
-  assert.match(html, /구매자 자금 출처/);
+  assert.match(html, /내 구매 자금 출처/);
   assert.match(html, /<select[^>]*id="buyer-funding-source"/);
   for (const fundingSource of [
     "기재하지 않음", "근로소득", "사업소득", "연금소득", "금융소득", "임대소득",
@@ -572,7 +596,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   ]) {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
-  assert.match(html, /자금 출처는 구매자가 제공하는 정보입니다. 거래 전에 서로 확인해 주세요/);
+  assert.match(html, /거래 조건 이미지에만 포함됩니다/);
   assert.match(html, /입력값은 이 브라우저에 최대 12시간 임시 저장되며 서버에는 저장되지 않습니다/);
   assert.match(html, /거래 조건 이미지 공유/);
   assert.match(html, /함께 공유되는 문구/);
@@ -661,9 +685,12 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /navigator\.canShare/);
   assert.match(component, /URL\.createObjectURL/);
   assert.match(component, /effectiveKoreaPremium/);
-  assert.match(component, /buyer: "기재하지 않음"/);
-  assert.match(component, /seller: "기재하지 않음"/);
-  assert.match(component, /fundingSourceFieldLabel = "구매자 자금 출처"/);
+  assert.match(component, /fundingSource: "기재하지 않음"/);
+  assert.match(component, /useState<FundingSource>\(DEFAULT_TRADE_DRAFT\.fundingSource\)/);
+  assert.doesNotMatch(component, /setFundingSources|fundingSources\[tradeRole\]/);
+  assert.match(component, /hydratedDraft\.fundingSource = imported\.fundingSource/);
+  assert.match(component, /\? "내 구매 자금 출처"\s*: "구매자가 제공한 자금 출처"/);
+  assert.match(component, /구매자가 알려준 내용만 선택해 주세요/);
   assert.doesNotMatch(component, /송금 계좌 명의|제3자|확인 전/);
   assert.match(component, /buyerFundingSource: fundingSource/);
   assert.match(component, /구매자 자금 출처: \$\{fundingSource\}/);
@@ -712,7 +739,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /const shareTextWithLink = shareText && tradeLink/);
   assert.match(component, /text: shareTextWithLink/);
   assert.match(component, /draftHydrated && shareTextWithLink[\s\S]*?shareTextWithLink/);
-  assert.match(component, /<details className="trade-share-preview" open>/);
+  assert.match(component, /<details className="trade-share-preview">/);
+  assert.doesNotMatch(component, /<details className="trade-share-preview" open>/);
   assert.doesNotMatch(component, /const textWithLink/);
   assert.match(css, /\.trade-share-preview pre[\s\S]*?white-space:\s*pre-wrap/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
@@ -780,7 +808,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.amount-unit-chevron\s*\{[^}]*width:\s*22px[^}]*pointer-events:\s*none/s);
   assert.match(css, /\.amount-unit-control:focus-within::after\s*\{[^}]*inset:\s*2px[^}]*border:\s*3px solid var\(--orange-dark\)/s);
   assert.match(css, /\.premium-stepper\s*\{[^}]*width:\s*50px;[^}]*grid-template-rows:\s*repeat\(2/s);
-  assert.match(css, /\.fund-source-field\s*\{[^}]*grid-column:\s*1 \/ -1/s);
+  assert.match(css, /\.trade-image-funding \.fund-source-field\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
   assert.match(component, /className=\{`result-row transfer-row/);
@@ -803,26 +831,39 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.support-address-card button\s*\{[^}]*width:\s*44px/s);
   assert.match(css, /\.support-status:empty\s*\{[^}]*min-height:\s*0/s);
   assert.doesNotMatch(`${component}\n${imageRenderer}`, /당사자 입력|계산 미반영|자동으로 더하지|자동 반영하지/);
-  const premiumNotePosition = component.indexOf('<p className="premium-note" id="premium-note">');
-  const fundingFieldPosition = component.indexOf('<label className="fund-source-field"');
-  const fundingNotePosition = component.indexOf('<p className="fund-source-note" id="fund-source-note">');
-  assert.ok(premiumNotePosition > 0 && premiumNotePosition < fundingFieldPosition);
-  assert.ok(fundingFieldPosition < fundingNotePosition);
+  const tradeFormBlock = component.slice(
+    component.indexOf('<form className="trade-form"'),
+    component.indexOf("</form>", component.indexOf('<form className="trade-form"')),
+  );
+  const tradeImagePanelBlock = component.slice(
+    component.indexOf('<div className="output-panel" hidden={outputMode !== "trade-image"}>'),
+    component.indexOf('<div className="output-panel" hidden={outputMode !== "recruitment"}>'),
+  );
+  assert.doesNotMatch(tradeFormBlock, /buyer-funding-source/);
+  assert.match(tradeImagePanelBlock, /buyer-funding-source/);
+  assert.ok(tradeImagePanelBlock.indexOf("buyer-funding-source") < tradeImagePanelBlock.indexOf("trade-share-preview"));
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
 });
 
 test("renders an editable public recruitment builder without changing the live calculator path", async () => {
-  const [response, recruitmentComponent, recruitmentBuilder, calculator, css] = await Promise.all([
+  const [response, recruitmentComponent, recruitmentBuilder, calculator, css, shareDetailsPreference, receiveInfoPortal] = await Promise.all([
     render(),
     readFile(new URL("../app/components/TradeRecruitmentTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-recruitment.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/ShareDetailsPreference.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/TradeReceiveInfoPortal.tsx", import.meta.url), "utf8"),
   ]);
   const html = (await response.text()).replace(/<!-- -->/g, "");
 
-  assert.match(html, /<legend id="output-picker-title">무엇을 만들까요\?<\/legend>/);
+  const shareToolsTag = html.match(/<details class="share-tools"[^>]*>/)?.[0] ?? "";
+  assert.match(shareToolsTag, /<details class="share-tools">/);
+  assert.doesNotMatch(shareToolsTag, /\bopen\b/);
+  assert.match(html, /상대 찾기·공유하기/);
+  assert.match(html, /모집글과 거래 조건 이미지/);
+  assert.match(html, /<legend class="visually-hidden" id="output-picker-title">만들 결과 선택<\/legend>/);
   assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
   assert.match(html, /거래 모집글/);
   assert.match(html, /공개 채널에서 상대 찾기/);
@@ -836,7 +877,8 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, />온체인<\/span>/);
   assert.match(html, />라이트닝<\/span>/);
   assert.match(html, />둘 다<\/span>/);
-  assert.match(html, /<details class="recruitment-options">/);
+  assert.match(html, /<details class="recruitment-customization">/);
+  assert.match(html, /내용 추가·수정/);
   assert.match(html, /선택 문구 추가/);
   assert.match(html, /여러 개 선택 가능/);
   assert.match(html, /기존 거래자 우대/);
@@ -849,13 +891,30 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(html, /원화 출처 설명 가능/);
   assert.match(html, /상호 신원확인 협의 가능/);
   assert.match(html, /추가 조건·메모/);
-  assert.match(html, /편집 가능한 모집글 미리보기/);
+  assert.match(html, /모집글 미리보기/);
   assert.match(html, /<textarea id="recruitment-preview"[^>]*>/);
   assert.doesNotMatch(html.match(/<textarea id="recruitment-preview"[^>]*>/)?.[0] ?? "", /readonly|disabled/);
   assert.match(html, /자동 문구로 되돌리기/);
   assert.match(html, /모집글 공유/);
-  assert.match(html, /실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요/);
+  assert.match(html, /주소·인보이스 같은 결제정보는 공개 모집글에 넣지 마세요/);
   assert.match(html, /구매 \/ 300만원 \/ 0% \/ 온체인/);
+
+  const customizationStart = recruitmentComponent.indexOf('<details className="recruitment-customization">');
+  const customizationEnd = recruitmentComponent.indexOf("</details>", customizationStart);
+  const customizationBlock = recruitmentComponent.slice(customizationStart, customizationEnd);
+  const renderedCustomizationStart = html.indexOf('<details class="recruitment-customization">');
+  const renderedCustomizationEnd = html.indexOf("</details>", renderedCustomizationStart);
+  const renderedCustomizationBlock = html.slice(renderedCustomizationStart, renderedCustomizationEnd);
+  assert.ok(customizationStart > 0 && customizationEnd > customizationStart);
+  assert.ok(renderedCustomizationStart > 0 && renderedCustomizationEnd > renderedCustomizationStart);
+  assert.match(customizationBlock, /\{children\}/);
+  assert.match(customizationBlock, /id="recruitment-preview"/);
+  assert.match(customizationBlock, /자동 문구로 되돌리기/);
+  assert.match(renderedCustomizationBlock, /선택 문구 추가/);
+  assert.match(renderedCustomizationBlock, /recruitment-memo/);
+  assert.match(renderedCustomizationBlock, /id="recruitment-preview"/);
+  assert.doesNotMatch(customizationBlock, /className="recruitment-copy"/);
+  assert.ok(recruitmentComponent.indexOf('className="recruitment-copy"') < customizationStart);
 
   const integration = calculator.match(/<TradeRecruitmentTool[\s\S]*?\/>/)?.[0] ?? "";
   assert.match(integration, /tradeRole=\{tradeRole\}/);
@@ -866,10 +925,12 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
-  assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\(\{/);
+  assert.match(recruitmentComponent, /const structuredChanged = previewState\.structuredKey !== structuredKey/);
+  assert.match(recruitmentComponent, /const syncedPreview = structuredChanged[\s\S]*syncTradeRecruitmentPreview\(\{/);
   assert.match(recruitmentComponent, /previousGenerated: previewState\.generatedText/);
   assert.match(recruitmentComponent, /nextGenerated: generated\.text/);
   assert.match(recruitmentComponent, /setPreviewState\(\{[\s\S]*preview: event\.target\.value,[\s\S]*generatedText: generated\.text/);
+  assert.doesNotMatch(recruitmentComponent, /key=\{structuredKey\}/);
   assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
   assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
   assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
@@ -882,6 +943,11 @@ test("renders an editable public recruitment builder without changing the live c
   assert.match(css, /\.output-panel\[hidden\]\s*\{\s*display:\s*none/s);
   assert.match(css, /\.recruitment-check\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /@media \(max-width: 700px\)[\s\S]*?\.recruitment-memo textarea, \.recruitment-preview textarea \{ font-size: 16px; \}/);
+  assert.match(css, /\.share-tools > summary\s*\{[^}]*min-height:\s*54px/s);
+  assert.match(css, /\.recruitment-customization > summary\s*\{[^}]*min-height:\s*44px/s);
+  assert.doesNotMatch(shareDetailsPreference, /offsetParent/);
+  assert.match(receiveInfoPortal, /\.output-panel:not\(\[hidden\]\) \.trade-share-preview/);
+  assert.match(receiveInfoPortal, /parent\.insertBefore\(host, preview\)/);
   assert.match(calculator, /wss:\/\/api\.upbit\.com\/websocket\/v1/);
   assert.match(calculator, /requestMarketSnapshot\(includePrice\)/);
   assert.match(calculator, /calculateP2PQuote\(\{/);
@@ -913,7 +979,7 @@ test("renders creator identity and Lightning support details", async () => {
 });
 
 test("ships an installable PWA with the tilted v2 icon set and no cached market data", async () => {
-  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage, appVersion] = await Promise.all([
+  const [manifestText, serviceWorker, registration, installCta, siteRouteNav, css, appIconSource, maskableSource, shareRenderer, ogImage, homePage, appVersion] = await Promise.all([
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/components/PwaRegistration.tsx", import.meta.url), "utf8"),
@@ -924,6 +990,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
     readFile(new URL("../public/icons/app-icon-maskable.svg", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
     readFile(new URL("../public/og-v2.png", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readAppVersion(),
   ]);
   const manifest = JSON.parse(manifestText);
@@ -996,6 +1063,7 @@ test("ships an installable PWA with the tilted v2 icon set and no cached market 
   assert.match(html, /<nav class="site-route-nav" aria-label="사이트 메뉴">/);
   assert.match(html, /aria-current="page">₿ 비트코인 P2P 계산기<\/span>/);
   assert.match(html, /class="site-route-install" href="\/install\/">홈 화면에 추가하는 방법<\/a>/);
+  assert.doesNotMatch(homePage, /InstallCta/);
   assert.ok(html.includes(`aria-label="버전 ${appVersion}">v${appVersion}</span>`));
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
@@ -1041,6 +1109,8 @@ test("renders BIP39-style home-screen installation guides for mobile and PC", as
   assert.match(html, /id="desktop"/);
   assert.match(html, /<h2>PC에서 설치<\/h2>/);
   assert.match(html, /주소창의 설치 아이콘/);
+  assert.match(html, /작업 표시줄이나 시작 메뉴에서 일반 앱처럼 열 수 있습니다/);
+  assert.doesNotMatch(html, /계산기 안의/);
   assert.match(html, /src="\/install\/iphone-guide-v1\.png"/);
   assert.match(html, /src="\/install\/android-guide-v1\.png"/);
   assert.equal((installSource.match(/loading="lazy"/g) ?? []).length, 2);
@@ -1098,6 +1168,6 @@ test("exports static pages and keeps only the market endpoint in the Worker", as
   assert.match(headers, /Permissions-Policy:/);
   assert.match(css, /body\s*\{\s*min-width:\s*0/);
   assert.match(css, /\.refresh-button\s*\{[^}]*min-height:\s*44px/s);
-  assert.match(home, /<details className="reference-details">/);
+  assert.match(home, /<details className="reference-details" style=\{REFERENCE_CARD_STYLE\}>/);
   assert.doesNotMatch(home, /className="explanation"|className="source-note"/);
 });

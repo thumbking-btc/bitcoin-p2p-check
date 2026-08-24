@@ -105,7 +105,7 @@ export default function InstallPage() {
 
         <section className="install-desktop" id="desktop">
           <h2>PC에서 설치</h2>
-          <p>Chrome·Edge처럼 PWA 설치를 지원하는 브라우저에서는 주소창의 설치 아이콘이나 브라우저 메뉴의 앱 설치 항목을 선택하세요. 설치 신호가 준비되면 계산기 안의 <strong>홈 화면에 추가</strong> 버튼을 눌러 실제 브라우저 설치창을 열 수도 있습니다.</p>
+          <p>Chrome·Edge처럼 PWA 설치를 지원하는 브라우저에서는 주소창의 설치 아이콘이나 브라우저 메뉴의 앱 설치 항목을 선택하세요. 설치한 뒤에는 작업 표시줄이나 시작 메뉴에서 일반 앱처럼 열 수 있습니다.</p>
         </section>
 
         <aside className="install-caveat">

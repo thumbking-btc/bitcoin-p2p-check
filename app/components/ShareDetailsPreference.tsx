@@ -81,9 +81,9 @@ function withPremium(text: string) {
   return lines.join("\n");
 }
 
-function visibleValue(selector: string) {
+function fieldValue(selector: string) {
   const field = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
-  if (!field || field.offsetParent === null) return "";
+  if (!field) return "";
   return field.value.trim();
 }
 
@@ -112,7 +112,7 @@ function receiveShareLines() {
   if (payload) {
     const lower = payload.toLowerCase();
     if (lower.startsWith("bitcoin:")) {
-      const address = visibleValue("#receive-onchain");
+      const address = fieldValue("#receive-onchain");
       return [address ? `온체인 주소: ${address}` : "", `금액 지정 요청(BIP21): ${payload}`].filter(Boolean);
     }
     if (lower.startsWith("lnbc") || lower.startsWith("lightning:lnbc")) {
@@ -120,10 +120,10 @@ function receiveShareLines() {
     }
   }
 
-  const onchain = visibleValue("#receive-onchain");
+  const onchain = fieldValue("#receive-onchain");
   if (onchain) return [`온체인 주소: ${onchain}`];
 
-  const lightning = visibleValue("#receive-lightning");
+  const lightning = fieldValue("#receive-lightning");
   if (lightning) return [`${lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay"}: ${lightning}`];
 
   return [];
@@ -305,9 +305,9 @@ function qrCaption(payload: string) {
 }
 
 function receiveFallback() {
-  const onchain = visibleValue("#receive-onchain");
+  const onchain = fieldValue("#receive-onchain");
   if (onchain) return { title: "온체인 주소", value: onchain, payload: onchain, caption: "온체인 주소 QR" };
-  const lightning = visibleValue("#receive-lightning");
+  const lightning = fieldValue("#receive-lightning");
   if (lightning) return {
     title: lightning.includes("@") ? "라이트닝 주소" : "LNURL-pay",
     value: lightning,

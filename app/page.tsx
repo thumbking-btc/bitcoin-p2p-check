@@ -2,7 +2,6 @@ import { P2PTradeTool } from "./components/P2PTradeTool";
 import { TradeReceiveInfoPortal } from "./components/TradeReceiveInfoPortal";
 import { ShareDetailsPreference } from "./components/ShareDetailsPreference";
 import { SupportPanel } from "./components/SupportPanel";
-import { InstallCta } from "./components/InstallCta";
 import { SiteRouteNav } from "./components/SiteRouteNav";
 
 export const dynamic = "force-static";
@@ -76,8 +75,6 @@ export default function Home() {
           </details>
         </div>
       </main>
-
-      <InstallCta showEntry={false} />
       <footer className="site-footer">
         <SiteRouteNav current="calculator" />
         <p>입금 확인과 온체인 전송 확인은 거래 당사자가 직접 해야 합니다.</p>

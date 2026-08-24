@@ -1,7 +1,9 @@
-export const TRADE_DRAFT_VERSION = 2;
+export const TRADE_DRAFT_VERSION = 3;
 export const TRADE_DRAFT_TTL_MS = 12 * 60 * 60 * 1_000;
 export const TRADE_DRAFT_STORAGE_KEY = "bitcoin-p2p-check:trade-draft";
 export const TRADE_DRAFT_MAX_RAW_LENGTH = 8 * 1_024;
+
+const LEGACY_TRADE_DRAFT_VERSION = 2;
 
 const TRADE_ROLES = new Set(["buyer", "seller"]);
 const AMOUNT_BASES = new Set(["krw", "bitcoin"]);
@@ -29,9 +31,10 @@ const DRAFT_KEYS = [
   "bitcoinAmountInputs",
   "amountBasisByRole",
   "premiumInput",
-  "fundingSources",
+  "fundingSource",
   "bitcoinDisplayUnit",
 ];
+const LEGACY_DRAFT_KEYS = DRAFT_KEYS.map((key) => key === "fundingSource" ? "fundingSources" : key);
 const ROLE_KEYS = ["buyer", "seller"];
 
 function isRecord(value) {
@@ -70,24 +73,22 @@ function removeInvalidDraft(storage) {
   }
 }
 
-export function validateTradeDraft(value, now = Date.now()) {
-  if (!Number.isSafeInteger(now) || now <= 0) return null;
-  if (!hasExactKeys(value, DRAFT_KEYS)) return null;
-  if (value.version !== TRADE_DRAFT_VERSION) return null;
-  if (!Number.isSafeInteger(value.savedAt) || value.savedAt <= 0 || value.savedAt > now) return null;
-  if (now - value.savedAt >= TRADE_DRAFT_TTL_MS) return null;
-  if (!TRADE_ROLES.has(value.tradeRole)) return null;
-  if (!BITCOIN_DISPLAY_UNITS.has(value.bitcoinDisplayUnit)) return null;
+function hasValidBaseFields(value, now) {
+  if (!Number.isSafeInteger(now) || now <= 0) return false;
+  if (!Number.isSafeInteger(value.savedAt) || value.savedAt <= 0 || value.savedAt > now) return false;
+  if (now - value.savedAt >= TRADE_DRAFT_TTL_MS) return false;
+  if (!TRADE_ROLES.has(value.tradeRole)) return false;
+  if (!BITCOIN_DISPLAY_UNITS.has(value.bitcoinDisplayUnit)) return false;
   if (!hasExactKeys(value.krwAmounts, ROLE_KEYS)
-    || !ROLE_KEYS.every((role) => isKrwInput(value.krwAmounts[role]))) return null;
+    || !ROLE_KEYS.every((role) => isKrwInput(value.krwAmounts[role]))) return false;
   if (!hasExactKeys(value.bitcoinAmountInputs, ROLE_KEYS)
-    || !ROLE_KEYS.every((role) => isBitcoinInput(value.bitcoinAmountInputs[role], value.bitcoinDisplayUnit))) return null;
+    || !ROLE_KEYS.every((role) => isBitcoinInput(value.bitcoinAmountInputs[role], value.bitcoinDisplayUnit))) return false;
   if (!hasExactKeys(value.amountBasisByRole, ROLE_KEYS)
-    || !ROLE_KEYS.every((role) => AMOUNT_BASES.has(value.amountBasisByRole[role]))) return null;
-  if (!isPremiumInput(value.premiumInput)) return null;
-  if (!hasExactKeys(value.fundingSources, ROLE_KEYS)
-    || !ROLE_KEYS.every((role) => FUNDING_SOURCES.has(value.fundingSources[role]))) return null;
+    || !ROLE_KEYS.every((role) => AMOUNT_BASES.has(value.amountBasisByRole[role]))) return false;
+  return isPremiumInput(value.premiumInput);
+}
 
+function normalizedTradeDraft(value, fundingSource) {
   return {
     version: TRADE_DRAFT_VERSION,
     savedAt: value.savedAt,
@@ -102,12 +103,25 @@ export function validateTradeDraft(value, now = Date.now()) {
       seller: value.amountBasisByRole.seller,
     },
     premiumInput: value.premiumInput,
-    fundingSources: {
-      buyer: value.fundingSources.buyer,
-      seller: value.fundingSources.seller,
-    },
+    fundingSource,
     bitcoinDisplayUnit: value.bitcoinDisplayUnit,
   };
+}
+
+function migrateLegacyTradeDraft(value, now) {
+  if (!hasExactKeys(value, LEGACY_DRAFT_KEYS)) return null;
+  if (value.version !== LEGACY_TRADE_DRAFT_VERSION || !hasValidBaseFields(value, now)) return null;
+  if (!hasExactKeys(value.fundingSources, ROLE_KEYS)
+    || !ROLE_KEYS.every((role) => FUNDING_SOURCES.has(value.fundingSources[role]))) return null;
+  return normalizedTradeDraft(value, value.fundingSources[value.tradeRole]);
+}
+
+export function validateTradeDraft(value, now = Date.now()) {
+  if (!hasExactKeys(value, DRAFT_KEYS)) return null;
+  if (value.version !== TRADE_DRAFT_VERSION) return null;
+  if (!hasValidBaseFields(value, now)) return null;
+  if (!FUNDING_SOURCES.has(value.fundingSource)) return null;
+  return normalizedTradeDraft(value, value.fundingSource);
 }
 
 export function readTradeDraft(storage, now = Date.now()) {
@@ -124,8 +138,18 @@ export function readTradeDraft(storage, now = Date.now()) {
   }
 
   try {
-    const draft = validateTradeDraft(JSON.parse(raw), now);
+    const parsed = JSON.parse(raw);
+    const draft = validateTradeDraft(parsed, now);
     if (draft) return draft;
+    const migrated = migrateLegacyTradeDraft(parsed, now);
+    if (migrated) {
+      try {
+        storage?.setItem?.(TRADE_DRAFT_STORAGE_KEY, JSON.stringify(migrated));
+      } catch {
+        // A valid legacy draft is still useful even when migration cannot be persisted.
+      }
+      return migrated;
+    }
   } catch {
     // Malformed JSON is handled like every other invalid draft.
   }
@@ -142,7 +166,7 @@ export function writeTradeDraft(storage, fields, now = Date.now()) {
     bitcoinAmountInputs: fields?.bitcoinAmountInputs,
     amountBasisByRole: fields?.amountBasisByRole,
     premiumInput: fields?.premiumInput,
-    fundingSources: fields?.fundingSources,
+    fundingSource: fields?.fundingSource,
     bitcoinDisplayUnit: fields?.bitcoinDisplayUnit,
   }, now);
   if (!draft) return false;

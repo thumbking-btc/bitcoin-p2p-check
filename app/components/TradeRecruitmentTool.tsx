@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, type ReactNode, useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
   shareTradeRecruitmentText,
@@ -26,6 +26,13 @@ type TradeRecruitmentToolProps = {
 type RecruitmentPost = {
   text: string;
   error: string;
+};
+
+type RecruitmentPreviewProps = {
+  generated: RecruitmentPost;
+  structuredKey: string;
+  customizationSummary: string;
+  children: ReactNode;
 };
 
 function signedDecimalOnly(value: string) {
@@ -69,10 +76,11 @@ function legacyCopy(value: string) {
   }
 }
 
-function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
+function RecruitmentPreview({ generated, structuredKey, customizationSummary, children }: RecruitmentPreviewProps) {
   const [previewState, setPreviewState] = useState(() => ({
     preview: generated.text,
     generatedText: generated.text,
+    structuredKey,
   }));
   const [copyFeedback, setCopyFeedback] = useState<{
     generatedText: string;
@@ -80,11 +88,21 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
     message: string;
   } | null>(null);
   const [sharing, setSharing] = useState(false);
-  const syncedPreview = syncTradeRecruitmentPreview({
-    preview: previewState.preview,
-    previousGenerated: previewState.generatedText,
-    nextGenerated: generated.text,
-  });
+  const structuredChanged = previewState.structuredKey !== structuredKey;
+  if (structuredChanged) {
+    setPreviewState({
+      preview: generated.text,
+      generatedText: generated.text,
+      structuredKey,
+    });
+  }
+  const syncedPreview = structuredChanged
+    ? { preview: generated.text, dirty: false }
+    : syncTradeRecruitmentPreview({
+        preview: previewState.preview,
+        previousGenerated: previewState.generatedText,
+        nextGenerated: generated.text,
+      });
   const previewText = syncedPreview.preview;
   const previewDirty = syncedPreview.dirty;
   const copyStatus = copyFeedback?.generatedText === generated.text
@@ -96,6 +114,7 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
     setPreviewState({
       preview: generated.text,
       generatedText: generated.text,
+      structuredKey,
     });
     setCopyFeedback(null);
   }
@@ -130,28 +149,15 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
 
   return (
     <div className="recruitment-preview">
-      <label htmlFor="recruitment-preview">
-        <span>편집 가능한 모집글 미리보기</span>
+      <div className="recruitment-preview-heading">
+        <span>모집글 미리보기</span>
         <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
-      </label>
-      <textarea
-        id="recruitment-preview"
-        value={previewText}
-        rows={5}
-        maxLength={2_000}
-        aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
-        aria-invalid={Boolean(generated.error) || undefined}
-        onChange={(event) => {
-          setPreviewState({
-            preview: event.target.value,
-            generatedText: generated.text,
-          });
-          setCopyFeedback(null);
-        }}
-      />
+      </div>
+      <pre className="recruitment-preview-text" aria-label="공유할 거래 모집글">
+        {previewText || "거래 조건을 입력하면 모집글이 표시됩니다."}
+      </pre>
       {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
       <div className="recruitment-actions">
-        <button type="button" onClick={regeneratePreview} disabled={!generated.text}>자동 문구로 되돌리기</button>
         <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
           {sharing ? "공유 중" : "모집글 공유"}
         </button>
@@ -163,6 +169,40 @@ function RecruitmentPreview({ generated }: { generated: RecruitmentPost }) {
       >
         {copyStatus}
       </p>
+      <details className="recruitment-customization">
+        <summary>
+          내용 추가·수정
+          <small>{generated.error ? "입력 확인" : previewDirty ? "직접 수정됨" : customizationSummary}</small>
+        </summary>
+        <div className="recruitment-customization-body">
+          {children}
+          <label className="recruitment-editor" htmlFor="recruitment-preview">
+            <span>모집글 직접 편집 <small>선택 사항</small></span>
+            <textarea
+              id="recruitment-preview"
+              value={previewText}
+              rows={5}
+              maxLength={2_000}
+              aria-describedby={`${generated.error ? "recruitment-error " : ""}recruitment-copy-status`}
+              aria-invalid={Boolean(generated.error) || undefined}
+              onChange={(event) => {
+                setPreviewState({
+                  preview: event.target.value,
+                  generatedText: generated.text,
+                  structuredKey,
+                });
+                setCopyFeedback(null);
+              }}
+            />
+          </label>
+          <p className="recruitment-privacy-note">
+            주소·인보이스 같은 결제정보는 공개 모집글에 넣지 마세요.
+          </p>
+          <button className="recruitment-reset" type="button" onClick={regeneratePreview} disabled={!generated.text}>
+            자동 문구로 되돌리기
+          </button>
+        </div>
+      </details>
     </div>
   );
 }
@@ -244,6 +284,13 @@ function TradeRecruitmentToolComponent({
   ]);
   const returningPremiumInvalid = returningTraderEnabled
     && generated.error.startsWith("기존 거래자");
+  const customizationCount = [
+    returningTraderEnabled,
+    tradeRole === "buyer" && canShareKrwSource,
+    canVerifyIdentity,
+    Boolean(memoText.trim()),
+  ].filter(Boolean).length;
+  const customizationSummary = customizationCount ? `${customizationCount}개 추가` : "선택 사항";
 
   function adjustReturningPremium(direction: -1 | 1) {
     const current = Number.isFinite(returningPremiumPercent) ? returningPremiumPercent : null;
@@ -287,96 +334,94 @@ function TradeRecruitmentToolComponent({
           </div>
         </fieldset>
 
-        <details className="recruitment-options">
-          <summary>
-            선택 문구 추가
-            <small>{[returningTraderEnabled, tradeRole === "buyer" && canShareKrwSource, canVerifyIdentity].filter(Boolean).length
-              ? `${[returningTraderEnabled, tradeRole === "buyer" && canShareKrwSource, canVerifyIdentity].filter(Boolean).length}개 선택`
-              : "여러 개 선택 가능"}</small>
-          </summary>
-          <div className="recruitment-option-list">
-            <div className="returning-option">
+        <RecruitmentPreview
+          generated={generated}
+          structuredKey={structuredKey}
+          customizationSummary={customizationSummary}
+        >
+          <fieldset className="recruitment-option-group">
+            <legend>
+              선택 문구 추가
+              <small>여러 개 선택 가능</small>
+            </legend>
+            <div className="recruitment-option-list">
+              <div className="returning-option">
+                <label className="recruitment-check">
+                  <input
+                    type="checkbox"
+                    checked={returningTraderEnabled}
+                    onChange={(event) => setReturningTraderEnabled(event.target.checked)}
+                  />
+                  <span>기존 거래자 우대</span>
+                </label>
+                <label className="returning-premium" htmlFor="returning-trader-premium">
+                  <span className="input-with-unit">
+                    <input
+                      id="returning-trader-premium"
+                      inputMode="decimal"
+                      value={returningTraderPremiumInput}
+                      onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                      aria-label="기존 거래자 우대 프리미엄"
+                      aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
+                      aria-invalid={returningPremiumInvalid || undefined}
+                    />
+                    <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
+                      <b aria-hidden="true">%</b>
+                      <button
+                        type="button"
+                        onClick={() => adjustReturningPremium(1)}
+                        aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
+                        title="0.1% 올리기"
+                      >
+                        <span aria-hidden="true">▲</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustReturningPremium(-1)}
+                        disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
+                        aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
+                        title="0.1% 내리기"
+                      >
+                        <span aria-hidden="true">▼</span>
+                      </button>
+                    </span>
+                  </span>
+                </label>
+              </div>
+              {tradeRole === "buyer" ? (
+                <label className="recruitment-check">
+                  <input
+                    type="checkbox"
+                    checked={canShareKrwSource}
+                    onChange={(event) => setCanShareKrwSource(event.target.checked)}
+                  />
+                  <span>원화 출처 설명 가능</span>
+                </label>
+              ) : null}
               <label className="recruitment-check">
                 <input
                   type="checkbox"
-                  checked={returningTraderEnabled}
-                  onChange={(event) => setReturningTraderEnabled(event.target.checked)}
+                  checked={canVerifyIdentity}
+                  onChange={(event) => setCanVerifyIdentity(event.target.checked)}
                 />
-                <span>기존 거래자 우대</span>
-              </label>
-              <label className="returning-premium" htmlFor="returning-trader-premium">
-                <span className="input-with-unit">
-                  <input
-                    id="returning-trader-premium"
-                    inputMode="decimal"
-                    value={returningTraderPremiumInput}
-                    onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
-                    aria-label="기존 거래자 우대 프리미엄"
-                    aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
-                    aria-invalid={returningPremiumInvalid || undefined}
-                  />
-                  <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
-                    <b aria-hidden="true">%</b>
-                    <button
-                      type="button"
-                      onClick={() => adjustReturningPremium(1)}
-                      aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
-                      title="0.1% 올리기"
-                    >
-                      <span aria-hidden="true">▲</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustReturningPremium(-1)}
-                      disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
-                      aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
-                      title="0.1% 내리기"
-                    >
-                      <span aria-hidden="true">▼</span>
-                    </button>
-                  </span>
-                </span>
+                <span>상호 신원확인 협의 가능</span>
               </label>
             </div>
-            {tradeRole === "buyer" ? (
-              <label className="recruitment-check">
-                <input
-                  type="checkbox"
-                  checked={canShareKrwSource}
-                  onChange={(event) => setCanShareKrwSource(event.target.checked)}
-                />
-                <span>원화 출처 설명 가능</span>
-              </label>
-            ) : null}
-            <label className="recruitment-check">
-              <input
-                type="checkbox"
-                checked={canVerifyIdentity}
-                onChange={(event) => setCanVerifyIdentity(event.target.checked)}
-              />
-              <span>상호 신원확인 협의 가능</span>
-            </label>
-          </div>
-        </details>
+          </fieldset>
 
-        <label className="recruitment-memo" htmlFor="recruitment-memo">
-          <span>추가 조건·메모 <small>선택 사항</small></span>
-          <textarea
-            id="recruitment-memo"
-            value={memoText}
-            maxLength={300}
-            rows={3}
-            placeholder="예: 답변이 늦을 수 있습니다. 첫 거래자는 활동 내역을 확인합니다."
-            onChange={(event) => setMemo(event.target.value)}
-          />
-        </label>
+          <label className="recruitment-memo" htmlFor="recruitment-memo">
+            <span>추가 조건·메모 <small>선택 사항</small></span>
+            <textarea
+              id="recruitment-memo"
+              value={memoText}
+              maxLength={300}
+              rows={3}
+              placeholder="예: 답변이 늦을 수 있습니다. 첫 거래자는 활동 내역을 확인합니다."
+              onChange={(event) => setMemo(event.target.value)}
+            />
+          </label>
+        </RecruitmentPreview>
       </form>
-
-      <p className="recruitment-privacy-note">
-        공개 모집에는 실제 자금 출처 종류·주소·인보이스·QR·지급 요청을 넣지 마세요. 필요한 정보는 상대방과 DM에서 확인하세요.
-      </p>
-
-      <RecruitmentPreview key={structuredKey} generated={generated} />
     </section>
   );
 }
