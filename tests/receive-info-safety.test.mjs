@@ -18,7 +18,9 @@ test("receive info exposes only a verified, current, amount-snapshotted result",
   assert.match(component, /<strong className=\{styles\.resultAmount\}>\{formatSats\(result\.amountSats\)\}<\/strong>/u);
   assert.match(component, /validateBolt11Invoice\(rawInvoice,[\s\S]*expectedSats: BigInt\(amountSats\)/u);
   assert.match(component, /createOnchainRequest\(target\.address, BigInt\(expectedSats\)\)/u);
-  assert.match(component, /target\.amountIncluded \? request\.uri : request\.address/u);
+  assert.match(component, /amountIncluded \? request\.uri : request\.address/u);
+  assert.match(component, /forceOnchainAmountIncluded \?\? target\.amountIncluded/u);
+  assert.match(component, />금액 포함 QR 만들기<\/button>/u);
   assert.match(component, /kind: "lightning-address"[\s\S]*payload: address[\s\S]*address,/u);
   assert.doesNotMatch(component, /MutationObserver|createPortal|document\.querySelector|\.dataset/u);
 });

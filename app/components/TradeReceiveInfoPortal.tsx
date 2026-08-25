@@ -280,7 +280,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     };
   }
 
-  async function build() {
+  async function build(forceOnchainAmountIncluded?: boolean) {
     if (busy) return;
     clear();
     if (!expectedSats) {
@@ -292,17 +292,18 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       try {
         const target = onchainTargetFromInput(onchain, expectedSats);
         const request = createOnchainRequest(target.address, BigInt(expectedSats));
+        const amountIncluded = forceOnchainAmountIncluded ?? target.amountIncluded;
         setResult({
-          kind: target.amountIncluded ? "onchain-request" : "onchain-address",
+          kind: amountIncluded ? "onchain-request" : "onchain-address",
           rail: "onchain",
           amountSats: expectedSats,
           conditionKey,
           ownerRole,
-          payload: target.amountIncluded ? request.uri : request.address,
+          payload: amountIncluded ? request.uri : request.address,
           copyTarget: request.address,
           address: request.address,
         });
-        setFeedback(target.amountIncluded ? "주소와 포함된 거래 금액을 확인했습니다." : "온체인 주소를 확인했습니다.");
+        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소만 거래 기록 카드에 포함합니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
       }
@@ -378,9 +379,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     }
   }
 
-  const buildLabel = rail === "onchain"
-    ? "결제정보 확인"
-    : lightningMode === "address"
+  const buildLabel = lightningMode === "address"
       ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제 직전 인보이스 만들기"
       : "인보이스 확인";
 
@@ -429,7 +428,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
-          <small>일반 주소는 주소만, 금액이 있는 bitcoin: 요청은 금액까지 확인해 그대로 포함합니다.</small>
+          <small>주소만 포함하거나, 현재 거래 금액을 넣은 BIP21 결제 QR을 만들 수 있습니다.</small>
         </div>
       ) : (
         <>
@@ -464,10 +463,15 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       )}
 
           <div className={styles.actions}>
-            {rail === "lightning" && lightningMode === "address" ? (
+            {rail === "onchain" ? (
+              <>
+                <button className={styles.secondary} type="button" disabled={busy} onClick={() => void build(false)}>주소만 포함</button>
+                <button className={styles.primary} type="button" disabled={busy} onClick={() => void build(true)}>금액 포함 QR 만들기</button>
+              </>
+            ) : rail === "lightning" && lightningMode === "address" ? (
               <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
             ) : null}
-            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+            {rail !== "onchain" ? <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button> : null}
             <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
           </div>
 
