@@ -2,6 +2,9 @@
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { init as initModuleLexer, parse as parseModuleImports } from "es-module-lexer";
+
+await initModuleLexer;
 import { normalizeDeploymentEnvironment } from "../app/lib/deployment-environment.mjs";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -396,20 +399,18 @@ export function extractJavaScriptReferencedAssets(source, sourceUrl) {
   if (typeof source !== "string") throw new TypeError("JavaScript는 문자열이어야 합니다.");
   const assets = new Map();
 
-  for (const match of source.matchAll(/\b(?:from|import)\s*(["'`])([^"'`\r\n]+)\1/gu)) {
-    addReferencedAsset(
-      assets,
-      createReferencedAsset(requireLiteralSpecifier(match[1], match[2]), sourceUrl, "javascript"),
-    );
+  let imports;
+  try {
+    [imports] = parseModuleImports(source, sourceUrl);
+  } catch {
+    throw new Error("JavaScript module specifier를 해석하지 못했습니다.");
   }
-  for (const match of source.matchAll(/\bimport\s*\(\s*([^)]{1,2048})\)/gu)) {
-    const argument = match[1].trim();
-    const literal = argument.match(/^(["'`])([^"'`\r\n]+)\1$/u);
-    if (!literal) throw new Error("정적으로 해석할 수 없는 dynamic import가 있습니다.");
-    addReferencedAsset(
-      assets,
-      createReferencedAsset(requireLiteralSpecifier(literal[1], literal[2]), sourceUrl, "javascript"),
-    );
+  for (const imported of imports) {
+    if (imported.d === -2) continue;
+    if (imported.n === undefined) {
+      throw new Error("정적으로 해석할 수 없는 dynamic import가 있습니다.");
+    }
+    addReferencedAsset(assets, createReferencedAsset(imported.n, sourceUrl, "javascript"));
   }
   for (const match of source.matchAll(/\bimportScripts\s*\(\s*(["'`])([^"'`\r\n]+)\1\s*\)/gu)) {
     addReferencedAsset(

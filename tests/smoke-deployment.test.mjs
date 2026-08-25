@@ -406,6 +406,28 @@ test("recursive asset extractors follow JavaScript, CSS, manifest, and service-w
   );
 });
 
+test("JavaScript extraction ignores import-like strings and property calls in minified bundles", () => {
+  assert.deepEqual(
+    extractJavaScriptReferencedAssets(`
+      const fromField = params.getAll(\`from\`) || params.getAll(\`basis\`);
+      const quoted = "import('./not-a-module.js')";
+      loader.import(runtimeExpression);
+      import "./actual-module.js";
+    `, "https://deployment.example/_next/static/chunks/app.js").map((asset) => asset.path),
+    ["/_next/static/chunks/actual-module.js"],
+  );
+});
+
+test("JavaScript extraction rejects a real non-literal dynamic import", () => {
+  assert.throws(
+    () => extractJavaScriptReferencedAssets(
+      "const modulePath = './runtime.js'; import(modulePath);",
+      "https://deployment.example/_next/static/chunks/app.js",
+    ),
+    /정적으로 해석할 수 없는 dynamic import/u,
+  );
+});
+
 for (const scenario of [
   {
     name: "dynamic JavaScript import",
