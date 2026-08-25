@@ -17,7 +17,9 @@ test("receive info exposes only a verified, current, amount-snapshotted result",
   assert.match(component, /onResultChangeRef\.current\(verifiedInfo\)/u);
   assert.match(component, /<strong className=\{styles\.resultAmount\}>\{formatSats\(result\.amountSats\)\}<\/strong>/u);
   assert.match(component, /validateBolt11Invoice\(rawInvoice,[\s\S]*expectedSats: BigInt\(amountSats\)/u);
-  assert.match(component, /createOnchainRequest\(address, BigInt\(expectedSats\)\)/u);
+  assert.match(component, /createOnchainRequest\(target\.address, BigInt\(expectedSats\)\)/u);
+  assert.match(component, /target\.amountIncluded \? request\.uri : request\.address/u);
+  assert.match(component, /kind: "lightning-address"[\s\S]*payload: address[\s\S]*address,/u);
   assert.doesNotMatch(component, /MutationObserver|createPortal|document\.querySelector|\.dataset/u);
 });
 
@@ -30,6 +32,7 @@ test("receive info prepares one compact card payment result without a second sha
   assert.doesNotMatch(component, /주소만 복사|인보이스만 복사|수취정보 공유|navigator\.share|<canvas/u);
   assert.match(component, /거래 기록 카드에 포함/u);
   assert.match(component, /<summary>결제정보 보기<\/summary>/u);
+  assert.match(component, />주소만 포함<\/button>/u);
   assert.match(css, /\.field > label\s*\{[^}]*font-size:\s*13px/su);
   assert.match(css, /\.input,[\s\S]*?font:\s*720 16px\/1\.3/su);
   assert.match(css, /\.modeButton\s*\{[^}]*min-height:\s*44px/su);

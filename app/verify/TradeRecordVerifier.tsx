@@ -65,7 +65,8 @@ function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeReco
     const payment = record.payment;
     const canvas = qrCanvasRef.current;
     if (!payment || paymentExpired || !canvas) return;
-    const payload = payment.rail === "lightning" ? payment.payload.toUpperCase() : payment.payload;
+    const lightningInvoice = payment.rail === "lightning" && !payment.address;
+    const payload = lightningInvoice ? payment.payload.toUpperCase() : payment.payload;
     const qr = createVerifiedTextQr(payload, {
       maximumLength: payment.rail === "lightning" ? 1_300 : 300,
       maximumPixelSize: 520,
@@ -103,11 +104,13 @@ function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeReco
   }
 
   const onchain = record.payment.rail === "onchain";
+  const lightningAddress = record.payment.rail === "lightning" && Boolean(record.payment.address);
+  const onchainAmountIncluded = onchain && /^bitcoin:/iu.test(record.payment.payload);
   const copyTarget = onchain ? record.payment.address : record.payment.payload;
   async function handleCopy() {
     try {
       await copyText(copyTarget);
-      setCopyStatus(onchain ? "온체인 주소를 복사했습니다." : "BOLT11 인보이스를 복사했습니다.");
+      setCopyStatus(onchain ? "온체인 주소를 복사했습니다." : lightningAddress ? "라이트닝 주소를 복사했습니다." : "BOLT11 인보이스를 복사했습니다.");
     } catch {
       setCopyStatus("자동 복사하지 못했습니다. 아래 내용을 길게 눌러 복사해 주세요.");
     }
@@ -116,31 +119,31 @@ function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeReco
   return (
     <section className={`${styles.card} ${styles.paymentCard}`} aria-labelledby="shared-payment-title">
       <div className={styles.cardHeading}>
-        <p>{onchain ? "온체인" : "라이트닝"}</p>
+        <p>{onchain ? (onchainAmountIncluded ? "금액 포함 온체인" : "온체인 주소") : lightningAddress ? "라이트닝 주소" : "라이트닝 인보이스"}</p>
         <h2 id="shared-payment-title">BTC 결제정보</h2>
       </div>
       <div className={styles.copyPanel}>
-        <span>{onchain ? "받을 주소" : "BOLT11 인보이스"}</span>
+        <span>{onchain ? "받을 주소" : lightningAddress ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
         <code>{copyTarget}</code>
-        <button type="button" onClick={() => void handleCopy()}>{onchain ? "주소 복사" : "인보이스 복사"}</button>
+        <button type="button" onClick={() => void handleCopy()}>{onchain || lightningAddress ? "주소 복사" : "인보이스 복사"}</button>
         <p className={styles.copyStatus} aria-live="polite">{copyStatus}</p>
       </div>
       {!paymentExpired ? (
         <details className={styles.qrDetails}>
           <summary>결제 QR 보기</summary>
-          <canvas ref={qrCanvasRef} className={styles.paymentQr} aria-label={onchain ? "온체인 결제 QR" : "라이트닝 결제 QR"} />
+          <canvas ref={qrCanvasRef} className={styles.paymentQr} aria-label={onchain ? "온체인 QR" : lightningAddress ? "라이트닝 주소 QR" : "라이트닝 결제 QR"} />
         </details>
       ) : null}
-      {onchain ? (
+      {onchain && onchainAmountIncluded ? (
         <details className={styles.paymentExtra}>
           <summary>금액이 포함된 결제 요청 보기</summary>
           <code>{record.payment.payload}</code>
         </details>
-      ) : (
+      ) : !onchain && !lightningAddress ? (
         <p className={`${styles.paymentMeta} ${paymentExpired ? styles.warning : ""}`}>
           인보이스 만료: {formatTime(record.payment.expiresAt)} KST {paymentExpired ? "· 이미 만료됨" : ""}
         </p>
-      )}
+      ) : null}
     </section>
   );
 }

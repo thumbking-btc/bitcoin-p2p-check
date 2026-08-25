@@ -102,7 +102,7 @@ export async function verifyTradeRecordSignature(
     if (!valid) return { status: "invalid-signature", message: "거래 기록이 서명 이후 변경되었거나 올바른 서명이 아닙니다." };
 
     const nowMs = options.nowMs ?? Date.now();
-    const paymentExpired = signed.record.payment?.rail === "lightning"
+    const paymentExpired = signed.record.payment?.rail === "lightning" && signed.record.payment.expiresAt
       ? Date.parse(signed.record.payment.expiresAt) <= nowMs
       : false;
     return Object.freeze({

@@ -10,7 +10,7 @@ type Rail = ReceiveRail;
 type LightningMode = "address" | "invoice";
 type PasteTarget = "onchain" | "lightning" | "invoice";
 export type VerifiedReceiveInfo = Readonly<{
-  kind: "onchain" | "lightning-generated" | "lightning-invoice";
+  kind: "onchain-address" | "onchain-request" | "lightning-address" | "lightning-generated" | "lightning-invoice";
   rail: Rail;
   amountSats: number;
   payload: string;
@@ -73,9 +73,9 @@ function parseBip21AmountSats(value: string) {
   return BigInt(match[1]) * BigInt(100_000_000) + BigInt((match[2] ?? "").padEnd(8, "0"));
 }
 
-function onchainAddressFromInput(value: string, amountSats: number) {
+function onchainTargetFromInput(value: string, amountSats: number) {
   const trimmed = value.trim();
-  if (!/^bitcoin:/iu.test(trimmed)) return trimmed;
+  if (!/^bitcoin:/iu.test(trimmed)) return { address: trimmed, amountIncluded: false } as const;
   if (/^bitcoin:\/\//iu.test(trimmed) || trimmed.includes("#")) {
     throw new Error("bitcoin: 뒤에 메인넷 주소 한 개가 있는 BIP21만 사용할 수 있습니다.");
   }
@@ -99,7 +99,7 @@ function onchainAddressFromInput(value: string, amountSats: number) {
   if (amounts.length === 1 && parseBip21AmountSats(amounts[0]) !== BigInt(amountSats)) {
     throw new Error("BIP21 금액이 현재 거래에서 받을 금액과 정확히 일치하지 않습니다.");
   }
-  return request.address;
+  return { address: request.address, amountIncluded: amounts.length === 1 } as const;
 }
 
 async function readLightningPayResponse(response: Response): Promise<LightningPayResponse> {
@@ -263,6 +263,23 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     };
   }
 
+  function makeLightningAddressResult(source: string, amountSats: number): Result {
+    const address = source.trim();
+    if (!lightningAddressLike(address)) {
+      throw new Error("주소만 포함하려면 사용자명@도메인 형식의 라이트닝 주소를 입력하십시오.");
+    }
+    return {
+      kind: "lightning-address",
+      rail: "lightning",
+      amountSats,
+      conditionKey,
+      ownerRole,
+      payload: address,
+      copyTarget: address,
+      address,
+    };
+  }
+
   async function build() {
     if (busy) return;
     clear();
@@ -273,19 +290,19 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
 
     if (rail === "onchain") {
       try {
-        const address = onchainAddressFromInput(onchain, expectedSats);
-        const request = createOnchainRequest(address, BigInt(expectedSats));
+        const target = onchainTargetFromInput(onchain, expectedSats);
+        const request = createOnchainRequest(target.address, BigInt(expectedSats));
         setResult({
-          kind: "onchain",
+          kind: target.amountIncluded ? "onchain-request" : "onchain-address",
           rail: "onchain",
           amountSats: expectedSats,
           conditionKey,
           ownerRole,
-          payload: request.uri,
+          payload: target.amountIncluded ? request.uri : request.address,
           copyTarget: request.address,
           address: request.address,
         });
-        setFeedback("주소와 거래 금액을 확인했습니다.");
+        setFeedback(target.amountIncluded ? "주소와 포함된 거래 금액을 확인했습니다." : "온체인 주소를 확인했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
       }
@@ -367,6 +384,20 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제 직전 인보이스 만들기"
       : "인보이스 확인";
 
+  function includeLightningAddress() {
+    clear();
+    if (!expectedSats) {
+      setError("거래 금액을 먼저 계산하십시오.");
+      return;
+    }
+    try {
+      setResult(makeLightningAddressResult(lightningSource, expectedSats));
+      setFeedback("라이트닝 주소를 거래 기록 카드에 포함합니다.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "라이트닝 주소를 확인하지 못했습니다.");
+    }
+  }
+
   const inputRowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px", alignItems: "stretch" } as const;
 
   return (
@@ -398,12 +429,13 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
+          <small>일반 주소는 주소만, 금액이 있는 bitcoin: 요청은 금액까지 확인해 그대로 포함합니다.</small>
         </div>
       ) : (
         <>
           <div className={styles.modeRow}>
             <p>{lightningMode === "address"
-              ? "주소는 그대로 두고, 실제 결제·공유 직전에 새 고정금액 인보이스를 만듭니다."
+              ? "주소만 포함하거나, 실제 결제에 사용할 고정금액 인보이스를 만들 수 있습니다."
               : "지갑에서 직접 만든 인보이스를 거래 금액과 대조합니다."}</p>
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
@@ -416,7 +448,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
                 <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
-              <small>Lightning Address는 결제 직전에 새 BOLT11을 요청합니다. 추가 결제자 정보를 필수로 요구하는 주소는 자동 생성을 중단하고 직접 인보이스 입력을 안내합니다.</small>
+                  <small>주소만 포함하면 만료 없이 주소를 공유합니다. 인보이스 만들기는 현재 거래 금액의 새 BOLT11을 요청합니다.</small>
             </div>
           ) : (
             <div className={styles.field}>
@@ -431,17 +463,20 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         </>
       )}
 
-      <div className={styles.actions}>
-        <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
-        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
-      </div>
+          <div className={styles.actions}>
+            {rail === "lightning" && lightningMode === "address" ? (
+              <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
+            ) : null}
+            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+            <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
+          </div>
 
       {error ? <p className={`${styles.status} ${styles.error}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
 
       {result ? (
         <div className={styles.result}>
           <div className={styles.resultInfo}>
-            <span className={styles.resultBadge}>{result.kind === "onchain" ? "온체인" : "라이트닝 인보이스"}</span>
+                <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
             <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
             <dl>
@@ -452,7 +487,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <details className={styles.resultDetails}>
               <summary>결제정보 보기</summary>
               <div className={styles.resultTarget}>
-                <span>{result.kind === "onchain" ? "온체인 주소" : "BOLT11 인보이스"}</span>
+                    <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
                 <code>{result.copyTarget}</code>
               </div>
             </details>

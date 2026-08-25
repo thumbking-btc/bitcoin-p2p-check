@@ -393,12 +393,22 @@ function canonicalizePaymentDraft(value: unknown, sats: number, createdAtMs: num
     }
     try {
       const request = createOnchainRequest(value.address, BigInt(sats));
-      if (request.uri !== value.payload) fail("PAYMENT_AMOUNT_MISMATCH", "BIP21의 주소·금액이 거래 조건과 일치하지 않습니다.");
-      return Object.freeze({ rail: "onchain", payload: request.uri, address: request.address });
+      if (value.payload !== request.address && value.payload !== request.uri) {
+        fail("PAYMENT_AMOUNT_MISMATCH", "온체인 주소 또는 BIP21의 주소·금액이 거래 조건과 일치하지 않습니다.");
+      }
+      return Object.freeze({ rail: "onchain", payload: value.payload === request.uri ? request.uri : request.address, address: request.address });
     } catch (error) {
       if (error instanceof TradeRecordRequestError) throw error;
       fail("INVALID_PAYMENT", error instanceof Error ? error.message : "BIP21 수취정보를 확인하지 못했습니다.");
     }
+  }
+
+  if (hasExactKeys(value, ["rail", "payload", "address"]) && typeof value.payload === "string" && typeof value.address === "string") {
+    const address = value.address.trim();
+    if (address !== value.address || value.payload !== address || address.length > 254 || !/^[^\s@]+@[^\s@]+$/u.test(address)) {
+      fail("INVALID_PAYMENT", "라이트닝 주소를 사용자명@도메인 형식으로 확인하지 못했습니다.");
+    }
+    return Object.freeze({ rail: "lightning", payload: address, address });
   }
 
   if (!hasExactKeys(value, ["rail", "payload"]) || typeof value.payload !== "string") {

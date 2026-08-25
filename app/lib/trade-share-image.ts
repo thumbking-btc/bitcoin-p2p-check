@@ -249,7 +249,7 @@ function compactId(id: string) {
 }
 
 function compactTarget(payment: TradeSharePayment) {
-  if (payment.rail === "lightning") return "고정금액 BOLT11 인보이스";
+  if (payment.rail === "lightning") return payment.address ? payment.address : "고정금액 BOLT11 인보이스";
   const address = payment.address ?? payment.payload.replace(/^bitcoin:/iu, "").split("?")[0];
   return address.length > 30 ? `${address.slice(0, 16)}…${address.slice(-12)}` : address;
 }
@@ -395,7 +395,12 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "center";
   context.fillStyle = ORANGE;
   setFont(context, 27, 800);
-  context.fillText(input.payment ? (input.payment.rail === "onchain" ? "금액 포함 온체인 결제 QR" : "고정금액 라이트닝 결제 QR") : "상세 정보 QR", 1_130, 718);
+  const paymentQrTitle = input.payment?.rail === "onchain"
+    ? (/^bitcoin:/iu.test(input.payment.payload) ? "금액 포함 온체인 결제 QR" : "온체인 주소 QR")
+    : input.payment?.rail === "lightning"
+      ? (input.payment.address ? "라이트닝 주소 QR" : "고정금액 라이트닝 결제 QR")
+      : "상세 정보 QR";
+  context.fillText(paymentQrTitle, 1_130, 718);
   context.fillStyle = PAPER;
   setFont(context, 23, 740);
   context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : `기록 ID ${compactId(input.record.id)}`, 1_130, 762);

@@ -866,7 +866,9 @@ export function P2PTradeTool() {
           ? paymentForRecord.rail === "onchain" && paymentForRecord.address
             ? { rail: "onchain", payload: paymentForRecord.payload, address: paymentForRecord.address }
             : paymentForRecord.rail === "lightning"
-              ? { rail: "lightning", payload: paymentForRecord.payload }
+              ? paymentForRecord.kind === "lightning-address" && paymentForRecord.address
+                ? { rail: "lightning", payload: paymentForRecord.payload, address: paymentForRecord.address }
+                : { rail: "lightning", payload: paymentForRecord.payload }
               : null
           : null,
       });
@@ -892,7 +894,8 @@ export function P2PTradeTool() {
             ? {
                 rail: "lightning",
                 payload: signed.record.payment.payload,
-                expiresAt: Math.floor(Date.parse(signed.record.payment.expiresAt) / 1_000),
+                ...(signed.record.payment.address ? { address: signed.record.payment.address } : {}),
+                ...(signed.record.payment.expiresAt ? { expiresAt: Math.floor(Date.parse(signed.record.payment.expiresAt) / 1_000) } : {}),
               }
             : null,
         record: {

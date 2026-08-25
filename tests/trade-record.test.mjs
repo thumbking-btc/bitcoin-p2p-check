@@ -171,6 +171,31 @@ test("binds one exact canonical BIP21 payment target to the signed sats", async 
   assert.equal((await rejected.json()).code, "PAYMENT_AMOUNT_MISMATCH");
 });
 
+test("preserves address-only onchain and Lightning targets without inventing an amount request", async () => {
+  const onchainEnvironment = await signingEnvironment();
+  const onchainResponse = await onchainEnvironment.handle(createRequest(validDraft({
+    rail: "onchain",
+    address: ADDRESS,
+    payload: ADDRESS,
+  })));
+  assert.equal(onchainResponse.status, 201);
+  const onchain = canonicalizeTradeRecordApiSuccess(await onchainResponse.json());
+  assert.deepEqual(onchain.record.payment, { rail: "onchain", payload: ADDRESS, address: ADDRESS });
+  assert.equal((await verifyTradeRecordSignature(onchain, { publicKeys: onchainEnvironment.publicKeys })).status, "valid");
+
+  const lightningEnvironment = await signingEnvironment();
+  const lightningAddress = "seller@example.com";
+  const lightningResponse = await lightningEnvironment.handle(createRequest(validDraft({
+    rail: "lightning",
+    payload: lightningAddress,
+    address: lightningAddress,
+  })));
+  assert.equal(lightningResponse.status, 201);
+  const lightning = canonicalizeTradeRecordApiSuccess(await lightningResponse.json());
+  assert.deepEqual(lightning.record.payment, { rail: "lightning", payload: lightningAddress, address: lightningAddress });
+  assert.equal((await verifyTradeRecordSignature(lightning, { publicKeys: lightningEnvironment.publicKeys })).status, "valid");
+});
+
 test("rejects inconsistent or expanded condition schemas before signing", async () => {
   const { handle, records } = await signingEnvironment();
   const inconsistent = validDraft();

@@ -47,11 +47,12 @@ export type TradeRecordCondition = Readonly<{
 
 export type TradeRecordPaymentDraft =
   | Readonly<{ rail: "onchain"; payload: string; address: string }>
-  | Readonly<{ rail: "lightning"; payload: string }>;
+  | Readonly<{ rail: "lightning"; payload: string; address?: string }>;
 
 export type TradeRecordPayment =
   | Readonly<{ rail: "onchain"; payload: string; address: string }>
-  | Readonly<{ rail: "lightning"; payload: string; expiresAt: string }>;
+  | Readonly<{ rail: "lightning"; payload: string; address: string; expiresAt?: never }>
+  | Readonly<{ rail: "lightning"; payload: string; expiresAt: string; address?: never }>;
 
 export type TradeRecordDraft = Readonly<{
   condition: TradeRecordCondition;
@@ -235,6 +236,11 @@ function canonicalizeStoredPayment(value: unknown): TradeRecordPayment | null {
       address: boundedString(value.address, 128, "비트코인 주소"),
     });
   }
+  if (hasExactKeys(value, ["rail", "payload", "address"])) {
+    const address = boundedString(value.address, 254, "라이트닝 주소");
+    if (boundedString(value.payload, 254, "라이트닝 주소") !== address) fail("INVALID_PAYMENT", "라이트닝 주소 항목이 일치하지 않습니다.");
+    return Object.freeze({ rail: "lightning", payload: address, address });
+  }
   if (!hasExactKeys(value, ["rail", "payload", "expiresAt"])) fail("INVALID_PAYMENT", "라이트닝 수취정보 항목을 확인하지 못했습니다.");
   return Object.freeze({
     rail: "lightning",
@@ -258,7 +264,7 @@ export function canonicalizeTradeRecord(value: unknown): TradeRecord {
 
   const condition = canonicalizeTradeRecordCondition(value.condition);
   const payment = canonicalizeStoredPayment(value.payment);
-  if (payment?.rail === "lightning" && Date.parse(payment.expiresAt) <= createdAtMs) {
+  if (payment?.rail === "lightning" && payment.expiresAt && Date.parse(payment.expiresAt) <= createdAtMs) {
     fail("INVALID_PAYMENT", "생성 시점에 이미 만료된 라이트닝 인보이스입니다.");
   }
 
