@@ -199,8 +199,7 @@
 .input:disabled,
 .textarea:disabled,
 .modeButton:disabled,
-.actions button:disabled,
-.result button:disabled {
+.actions button:disabled {
   background: #ece7dd;
   color: #77716a;
   cursor: not-allowed;
@@ -210,7 +209,7 @@
 .textarea:focus-visible,
 .modeButton:focus-visible,
 .actions button:focus-visible,
-.result button:focus-visible {
+.resultDetails > summary:focus-visible {
   outline: 3px solid var(--surface);
   outline-offset: 2px;
   box-shadow: 0 0 0 5px var(--ink);
@@ -223,8 +222,7 @@
   margin-top: 9px;
 }
 
-.actions button,
-.result button {
+.actions button {
   min-height: 44px;
   padding: 8px 10px;
   border: 1px solid var(--ink);
@@ -244,8 +242,7 @@
   color: var(--ink);
 }
 
-.actions button:hover:not(:disabled),
-.result button:hover:not(:disabled) {
+.actions button:hover:not(:disabled) {
   box-shadow: inset 0 -3px 0 rgba(17, 24, 32, .18);
 }
 
@@ -267,9 +264,6 @@
 }
 
 .result {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 230px);
-  gap: 12px;
   margin-top: 10px;
   padding: 10px;
   border: 1px solid var(--ink);
@@ -280,12 +274,6 @@
 .resultInfo {
   display: grid;
   align-content: start;
-  gap: 7px;
-}
-
-.resultActions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -349,6 +337,25 @@
   background: #0c141b;
 }
 
+.resultDetails {
+  border: 1px solid #35414b;
+  background: #0c141b;
+}
+
+.resultDetails > summary {
+  min-height: 44px;
+  padding: 12px 34px 12px 10px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.resultDetails .resultTarget {
+  border: 0;
+  border-top: 1px solid #35414b;
+}
+
 .resultTarget span {
   color: #b6c0c8;
   font-size: 12px;
@@ -377,19 +384,6 @@
   line-height: 1.45;
 }
 
-.qr {
-  width: min(100%, 230px);
-  height: auto;
-  justify-self: center;
-  align-self: start;
-  background: #fff;
-}
-
-.qrUnavailable {
-  opacity: 0;
-  pointer-events: none;
-}
-
 @media (max-width: 620px) {
   .section {
     margin: 10px;
@@ -405,15 +399,4 @@
     width: 100%;
   }
 
-  .result {
-    grid-template-columns: 1fr;
-  }
-
-  .resultActions {
-    grid-template-columns: 1fr;
-  }
-
-  .qr {
-    width: min(100%, 260px);
-  }
 }

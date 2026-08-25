@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchTradeRecord, TradeRecordApiRequestError } from "../lib/trade-record-client";
 import { deriveAppliedPriceKrw, isTradeRecordId, type TradeRecord } from "../lib/trade-record";
 import { verifyTradeRecordSignature, type TradeRecordVerificationResult } from "../lib/trade-record-verification";
+import { createVerifiedTextQr } from "../lib/verified-qr.mjs";
 import styles from "./verify.module.css";
 
 type ViewState =
@@ -58,6 +59,37 @@ async function copyText(value: string): Promise<void> {
 
 function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeRecord; paymentExpired: boolean }>) {
   const [copyStatus, setCopyStatus] = useState("");
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const payment = record.payment;
+    const canvas = qrCanvasRef.current;
+    if (!payment || paymentExpired || !canvas) return;
+    const payload = payment.rail === "lightning" ? payment.payload.toUpperCase() : payment.payload;
+    const qr = createVerifiedTextQr(payload, {
+      maximumLength: payment.rail === "lightning" ? 1_300 : 300,
+      maximumPixelSize: 520,
+      level: "M",
+    });
+    canvas.width = qr.width;
+    canvas.height = qr.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      qr.data.fill(0);
+      return;
+    }
+    const image = context.createImageData(qr.width, qr.height);
+    image.data.set(qr.data);
+    context.imageSmoothingEnabled = false;
+    context.putImageData(image, 0, 0);
+    image.data.fill(0);
+    qr.data.fill(0);
+    return () => {
+      canvas.width = 1;
+      canvas.height = 1;
+    };
+  }, [paymentExpired, record.payment]);
+
   if (!record.payment) {
     return (
       <section className={styles.card} aria-labelledby="shared-payment-title">
@@ -93,6 +125,12 @@ function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeReco
         <button type="button" onClick={() => void handleCopy()}>{onchain ? "주소 복사" : "인보이스 복사"}</button>
         <p className={styles.copyStatus} aria-live="polite">{copyStatus}</p>
       </div>
+      {!paymentExpired ? (
+        <details className={styles.qrDetails}>
+          <summary>결제 QR 보기</summary>
+          <canvas ref={qrCanvasRef} className={styles.paymentQr} aria-label={onchain ? "온체인 결제 QR" : "라이트닝 결제 QR"} />
+        </details>
+      ) : null}
       {onchain ? (
         <details className={styles.paymentExtra}>
           <summary>금액이 포함된 결제 요청 보기</summary>

@@ -1273,12 +1273,12 @@ export function P2PTradeTool() {
                 onResultChange={handleVerifiedReceiveInfo}
               />
             ) : null}
-            <p className={`record-payment-state ${paymentForRecord ? "is-ready" : ""}`} role="status">
-              <strong>{paymentForRecord ? "결제 QR 포함 준비됨" : "결제 QR 미포함"}</strong>
-              <span>{paymentForRecord
-                ? "확인된 고정금액 결제정보가 기록 카드에 들어갑니다."
-                : "지금 공유하면 상세 정보 QR이 대신 들어갑니다."}</span>
-            </p>
+            {!paymentForRecord ? (
+              <p className="record-payment-state" role="status">
+                <strong>결제 QR 미포함</strong>
+                <span>지금 공유하면 상세 정보 QR이 대신 들어갑니다.</span>
+              </p>
+            ) : null}
             <div className="tool-actions">
               <button
                 className="share-button"

@@ -226,7 +226,8 @@
 
 .audit > summary:focus-visible,
 .copyPanel button:focus-visible,
-.paymentExtra > summary:focus-visible {
+.paymentExtra > summary:focus-visible,
+.qrDetails > summary:focus-visible {
   outline: 3px solid var(--orange-dark);
   outline-offset: -3px;
 }
@@ -285,6 +286,28 @@
 
 .paymentExtra {
   border-top: 1px solid var(--line);
+}
+
+.qrDetails {
+  border-top: 1px solid var(--line);
+}
+
+.qrDetails > summary {
+  min-height: 48px;
+  padding: 14px 20px;
+  cursor: pointer;
+  font-size: .86rem;
+  font-weight: 800;
+}
+
+.paymentQr {
+  display: block;
+  width: min(calc(100% - 40px), 420px);
+  height: auto;
+  margin: 0 auto 20px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
 }
 
 .paymentExtra > summary {
