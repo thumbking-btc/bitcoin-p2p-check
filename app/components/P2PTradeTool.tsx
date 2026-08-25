@@ -1243,7 +1243,7 @@ export function P2PTradeTool() {
                     checked={outputMode === "trade-image"}
                     onChange={() => setOutputMode("trade-image")}
                   />
-                  <span><strong>거래 기록 카드</strong><small>조건·결제 QR·상세 정보</small></span>
+                  <span><strong>거래 기록 카드</strong><small>조건·선택 결제정보</small></span>
                 </label>
               </div>
             </fieldset>
@@ -1278,8 +1278,8 @@ export function P2PTradeTool() {
             ) : null}
             {!paymentForRecord ? (
               <p className="record-payment-state" role="status">
-                <strong>결제 QR 미포함</strong>
-                <span>지금 공유하면 상세 정보 QR이 대신 들어갑니다.</span>
+                <strong>결제정보 미포함</strong>
+                <span>카드에는 보관용 거래 기록 QR이 들어갑니다.</span>
               </p>
             ) : null}
             <div className="tool-actions">

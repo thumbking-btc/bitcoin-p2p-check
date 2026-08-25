@@ -600,7 +600,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /상세 링크는 생성 후 180일간 열 수 있습니다/);
   assert.match(html, /거래 기록 카드 공유/);
   assert.match(html, /입력한 거래 조건을 한 장의 카드로 만듭니다/);
-  assert.match(html, /결제 QR 미포함/);
+  assert.match(html, /결제정보 미포함/);
   assert.doesNotMatch(html, /함께 공유되는 문구|읽기 전용 · 공유 전 확인/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.doesNotMatch(html, /거래 이미지 공유/);
@@ -768,8 +768,10 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /수수료 판매자 부담/);
   assert.match(imageRenderer, /금액 포함 온체인 결제 QR/);
   assert.match(imageRenderer, /고정금액 라이트닝 결제 QR/);
-  assert.match(imageRenderer, /상세 정보 QR/);
+  assert.doesNotMatch(imageRenderer, /상세 정보 QR/);
   assert.match(imageRenderer, /input\.payment\?\.payload \?\? input\.record\.verificationUrl/);
+  assert.match(imageRenderer, /거래 기록 열기/);
+  assert.match(imageRenderer, /보관용 링크 QR/);
   assert.match(imageRenderer, /공유 기록 ID/);
   assert.match(imageRenderer, /context\.moveTo\(870, 190\);\s*context\.lineTo\(870, 844\);/);
   assert.match(imageRenderer, /생성 \$\{formatTime\(input\.record\.createdAt\)\}/);
@@ -857,7 +859,7 @@ test("renders recruitment and signed record-card flows without DOM bridges", asy
   assert.match(html, /<legend class="visually-hidden" id="output-picker-title">만들 결과 선택<\/legend>/);
   assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
   assert.match(html, /<strong>모집글<\/strong><small>공개 채널에서 상대 찾기<\/small>/);
-  assert.match(html, /<strong>거래 기록 카드<\/strong><small>조건·결제 QR·상세 정보<\/small>/);
+  assert.match(html, /<strong>거래 기록 카드<\/strong><small>조건·선택 결제정보<\/small>/);
   assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
   assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
   assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);

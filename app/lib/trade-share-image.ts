@@ -399,13 +399,13 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
     ? (/^bitcoin:/iu.test(input.payment.payload) ? "금액 포함 온체인 결제 QR" : "온체인 주소 QR")
     : input.payment?.rail === "lightning"
       ? (input.payment.address ? "라이트닝 주소 QR" : "고정금액 라이트닝 결제 QR")
-      : "상세 정보 QR";
+      : "거래 기록 열기";
   context.fillText(paymentQrTitle, 1_130, 718);
   context.fillStyle = PAPER;
   setFont(context, 23, 740);
-  context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : `기록 ID ${compactId(input.record.id)}`, 1_130, 762);
+  context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : "보관용 링크 QR", 1_130, 762);
   context.fillStyle = MUTED_PAPER;
-  const target = input.payment ? compactTarget(input.payment) : "결제정보는 이 기록에 포함되지 않았습니다.";
+  const target = input.payment ? compactTarget(input.payment) : `기록 ID ${compactId(input.record.id)}`;
   fitText(context, target, 390, 18, 14, 560, Boolean(input.payment));
   context.fillText(target, 1_130, 800);
 
