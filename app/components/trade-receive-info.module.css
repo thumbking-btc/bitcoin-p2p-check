@@ -232,6 +232,10 @@
   font-weight: 820;
 }
 
+.actions button:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
 .primary {
   background: var(--orange);
   color: #241303;
