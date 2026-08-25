@@ -904,8 +904,8 @@ export function P2PTradeTool() {
       const shareText = [
         "비트코인 P2P 거래 기록 카드",
         signed.record.payment ? "확인된 결제정보가 카드의 QR에 포함되어 있습니다." : "결제정보를 포함하지 않은 조건 기록입니다.",
-        `원본 확인: ${signed.verificationUrl}`,
-        "사이트가 만든 원본과 내용 일치 여부만 확인하며, 거래 완료 증명은 아닙니다.",
+        `거래 정보 확인·복사: ${signed.verificationUrl}`,
+        "이 사이트는 거래를 중개·보증하거나 입금·전송·거래 완료를 확인하지 않습니다.",
       ].join("\n");
       const outcome = await shareImageFile({
         file: shareFile,
@@ -916,7 +916,7 @@ export function P2PTradeTool() {
         download: downloadTradeImage,
       });
       if (outcome === "shared") {
-        setShareStatus("거래 기록 카드와 원본 확인 링크를 공유했습니다.");
+        setShareStatus("거래 기록 카드와 상세 정보 링크를 공유했습니다.");
       } else if (outcome === "downloaded") {
         setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
       } else if (outcome === "downloaded-after-error") {
@@ -1240,7 +1240,7 @@ export function P2PTradeTool() {
                     checked={outputMode === "trade-image"}
                     onChange={() => setOutputMode("trade-image")}
                   />
-                  <span><strong>거래 기록 카드</strong><small>조건·결제 QR·원본 확인</small></span>
+                  <span><strong>거래 기록 카드</strong><small>조건·결제 QR·상세 정보</small></span>
                 </label>
               </div>
             </fieldset>
@@ -1248,8 +1248,8 @@ export function P2PTradeTool() {
 
           <div className="output-panel" hidden={outputMode !== "trade-image"}>
             <div className="record-card-intro">
-              <strong>합의한 조건을 한 장의 원본 기록으로 만듭니다.</strong>
-              <p>결제 QR은 선택 사항이며, 생성 시각과 원본 확인 ID가 카드에 함께 표시됩니다.</p>
+              <strong>입력한 거래 조건을 한 장의 카드로 만듭니다.</strong>
+              <p>결제 QR은 선택 사항이며, 상세 링크에서 조건 확인과 주소·인보이스 복사가 가능합니다.</p>
             </div>
             <div className="trade-image-funding">
               <label className="fund-source-field" htmlFor="buyer-funding-source">
@@ -1277,7 +1277,7 @@ export function P2PTradeTool() {
               <strong>{paymentForRecord ? "결제 QR 포함 준비됨" : "결제 QR 미포함"}</strong>
               <span>{paymentForRecord
                 ? "확인된 고정금액 결제정보가 기록 카드에 들어갑니다."
-                : "지금 공유하면 원본 확인 QR이 대신 들어갑니다."}</span>
+                : "지금 공유하면 상세 정보 QR이 대신 들어갑니다."}</span>
             </p>
             <div className="tool-actions">
               <button
@@ -1298,7 +1298,7 @@ export function P2PTradeTool() {
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "원본 확인을 위해 서명된 검증 기록을 180일 보관합니다. 거래 완료 증명은 아닙니다." : "")}
+                {shareStatus || (!isSharing ? "상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다. 사이트는 거래를 중개·보증하지 않습니다." : "")}
               </p>
             </div>
           </div>

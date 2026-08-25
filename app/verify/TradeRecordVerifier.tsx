@@ -51,7 +51,63 @@ function formatKoreaPremium(value: number | null): string {
   }).format(value);
 }
 
-function RecordDetails({ record, paymentExpired }: Readonly<{ record: TradeRecord; paymentExpired: boolean }>) {
+async function copyText(value: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) throw new Error("copy unavailable");
+  await navigator.clipboard.writeText(value);
+}
+
+function PaymentDetails({ record, paymentExpired }: Readonly<{ record: TradeRecord; paymentExpired: boolean }>) {
+  const [copyStatus, setCopyStatus] = useState("");
+  if (!record.payment) {
+    return (
+      <section className={styles.card} aria-labelledby="shared-payment-title">
+        <div className={styles.cardHeading}>
+          <p>선택 사항</p>
+          <h2 id="shared-payment-title">BTC 결제정보</h2>
+        </div>
+        <p className={styles.emptyPayment}>이 공유 기록에는 주소나 인보이스가 포함되지 않았습니다.</p>
+      </section>
+    );
+  }
+
+  const onchain = record.payment.rail === "onchain";
+  const copyTarget = onchain ? record.payment.address : record.payment.payload;
+  async function handleCopy() {
+    try {
+      await copyText(copyTarget);
+      setCopyStatus(onchain ? "온체인 주소를 복사했습니다." : "BOLT11 인보이스를 복사했습니다.");
+    } catch {
+      setCopyStatus("자동 복사하지 못했습니다. 아래 내용을 길게 눌러 복사해 주세요.");
+    }
+  }
+
+  return (
+    <section className={`${styles.card} ${styles.paymentCard}`} aria-labelledby="shared-payment-title">
+      <div className={styles.cardHeading}>
+        <p>{onchain ? "온체인" : "라이트닝"}</p>
+        <h2 id="shared-payment-title">BTC 결제정보</h2>
+      </div>
+      <div className={styles.copyPanel}>
+        <span>{onchain ? "받을 주소" : "BOLT11 인보이스"}</span>
+        <code>{copyTarget}</code>
+        <button type="button" onClick={() => void handleCopy()}>{onchain ? "주소 복사" : "인보이스 복사"}</button>
+        <p className={styles.copyStatus} aria-live="polite">{copyStatus}</p>
+      </div>
+      {onchain ? (
+        <details className={styles.paymentExtra}>
+          <summary>금액이 포함된 결제 요청 보기</summary>
+          <code>{record.payment.payload}</code>
+        </details>
+      ) : (
+        <p className={`${styles.paymentMeta} ${paymentExpired ? styles.warning : ""}`}>
+          인보이스 만료: {formatTime(record.payment.expiresAt)} KST {paymentExpired ? "· 이미 만료됨" : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function RecordDetails({ record }: Readonly<{ record: TradeRecord }>) {
   const condition = record.condition;
   const bitcoinAmount = condition.bitcoinDisplayUnit === "btc" ? formatBtc(condition.sats) : formatSats(condition.sats);
   return (
@@ -59,7 +115,7 @@ function RecordDetails({ record, paymentExpired }: Readonly<{ record: TradeRecor
       <section className={styles.card} aria-labelledby="verified-condition-title">
         <div className={styles.cardHeading}>
           <p>{condition.role === "buyer" ? "비트코인 구매" : "비트코인 판매"}</p>
-          <h2 id="verified-condition-title">서명된 거래 조건</h2>
+          <h2 id="verified-condition-title">공유된 거래 조건</h2>
         </div>
         <dl className={styles.grid}>
           <div><dt>구매자 → 판매자</dt><dd>{formatKrw(condition.paymentKrw)}</dd></div>
@@ -74,34 +130,22 @@ function RecordDetails({ record, paymentExpired }: Readonly<{ record: TradeRecor
         </dl>
       </section>
 
-      {record.payment ? (
-        <section className={styles.card} aria-labelledby="verified-payment-title">
-          <div className={styles.cardHeading}>
-            <p>{record.payment.rail === "onchain" ? "온체인" : "라이트닝"}</p>
-            <h2 id="verified-payment-title">서명된 BTC 수취정보</h2>
-          </div>
-          {record.payment.rail === "onchain" ? (
-            <dl className={styles.paymentList}>
-              <div><dt>주소</dt><dd><code>{record.payment.address}</code></dd></div>
-              <div><dt>BIP21</dt><dd><code>{record.payment.payload}</code></dd></div>
-            </dl>
-          ) : (
-            <dl className={styles.paymentList}>
-              <div><dt>인보이스 만료</dt><dd>{formatTime(record.payment.expiresAt)} KST {paymentExpired ? "· 이미 만료됨" : ""}</dd></div>
-              <div><dt>BOLT11</dt><dd><code>{record.payment.payload}</code></dd></div>
-            </dl>
-          )}
-        </section>
-      ) : null}
-
-      <section className={styles.audit} aria-label="기록 정보">
-        <dl>
-          <div><dt>기록 ID</dt><dd><code>{record.id}</code></dd></div>
-          <div><dt>생성 시각</dt><dd>{formatTime(record.createdAt)} KST</dd></div>
-          <div><dt>보관 기한</dt><dd>{formatTime(record.expiresAt)} KST</dd></div>
-        </dl>
-      </section>
     </>
+  );
+}
+
+function AuditDetails({ record }: Readonly<{ record: TradeRecord }>) {
+  return (
+    <details className={styles.audit}>
+      <summary>기록 확인 정보</summary>
+      <p>이 링크를 제공하기 위해 아래 기록을 사이트 저장소에 생성 후 180일간 임시 보관합니다. 링크는 이후 열리지 않을 수 있습니다.</p>
+      <dl>
+        <div><dt>기록 ID</dt><dd><code>{record.id}</code></dd></div>
+        <div><dt>생성 시각</dt><dd>{formatTime(record.createdAt)} KST</dd></div>
+        <div><dt>링크 제공 기한</dt><dd>{formatTime(record.expiresAt)} KST</dd></div>
+      </dl>
+      <p className={styles.technicalNote}>전자서명은 표시 내용이 공유 당시 저장된 기록과 같은지 확인하는 보조 수단이며, 거래 당사자나 거래 완료를 인증하지 않습니다.</p>
+    </details>
   );
 }
 
@@ -115,7 +159,7 @@ export function TradeRecordVerifier() {
       const ids = url.searchParams.getAll("id");
       const id = ids.length === 1 ? ids[0] : "";
       if (!isTradeRecordId(id)) {
-        setState({ status: "error", message: "검증 링크의 거래 기록 ID를 확인해 주세요.", retryable: false });
+        setState({ status: "error", message: "공유 링크의 거래 기록 ID를 확인해 주세요.", retryable: false });
         return;
       }
       try {
@@ -139,7 +183,7 @@ export function TradeRecordVerifier() {
   }, []);
 
   if (state.status === "loading") {
-    return <section className={styles.status} role="status" aria-live="polite"><span className={styles.spinner} aria-hidden="true" />서명된 거래 기록을 확인하고 있습니다.</section>;
+    return <section className={styles.status} role="status" aria-live="polite"><span className={styles.spinner} aria-hidden="true" />공유된 거래 정보를 불러오고 있습니다.</section>;
   }
   if (state.status === "error") {
     return (
@@ -151,23 +195,27 @@ export function TradeRecordVerifier() {
     );
   }
   if (state.result.status !== "valid") {
-    return <section className={`${styles.status} ${styles.failure}`} role="alert"><strong>서명을 확인하지 못했습니다.</strong><p>{state.result.message}</p></section>;
+    return <section className={`${styles.status} ${styles.failure}`} role="alert"><strong>공유된 내용을 확인하지 못했습니다.</strong><p>{state.result.message}</p></section>;
   }
 
   return (
     <div className={styles.results}>
       <section className={`${styles.status} ${styles.success}`} role="status">
-        <strong>원본 서명이 확인됐습니다.</strong>
-        <p>이 기록은 이 사이트의 서명 키로 서명되었고, 서명 이후 내용이 변경되지 않았습니다.</p>
-        {state.result.recordExpired ? <p className={styles.warning}>기록의 180일 보관 기한은 지났습니다.</p> : null}
+        <strong>공유 당시 저장된 내용과 같습니다.</strong>
+        <p>아래 정보는 이 사이트가 공유 링크를 만들 때 저장한 기록과 일치합니다.</p>
+        {state.result.recordExpired ? <p className={styles.warning}>이 공유 링크의 제공 기한이 지났습니다.</p> : null}
       </section>
 
+      <PaymentDetails record={state.result.record} paymentExpired={state.result.paymentExpired} />
+
+      <RecordDetails record={state.result.record} />
+
       <aside className={styles.disclaimer}>
-        <strong>이 서명이 증명하지 않는 것</strong>
-        <p>기준 시세·프리미엄 참고값의 정확성이나 실제 업비트 관측 여부, 거래 당사자의 합의·신원, 원화 입금, BTC 전송·수령, 인보이스 결제 또는 거래 완료를 증명하지 않습니다. 표시된 기록의 사이트 서명·무변경 여부만 확인합니다.</p>
+        <strong>거래 당사자가 직접 확인하세요</strong>
+        <p>이 사이트는 거래를 중개·보증하지 않으며 기준 시세의 정확성이나 실제 업비트 관측 여부, 당사자의 신원·합의, 원화 입금, BTC 전송·수령, 인보이스 결제 또는 거래 완료를 확인하지 않습니다. 주소·인보이스·금액은 지갑과 상대방을 통해 다시 확인하세요.</p>
       </aside>
 
-      <RecordDetails record={state.result.record} paymentExpired={state.result.paymentExpired} />
+      <AuditDetails record={state.result.record} />
     </div>
   );
 }

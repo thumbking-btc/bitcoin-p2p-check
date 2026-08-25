@@ -311,7 +311,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "center";
   context.textBaseline = "middle";
   setFont(context, 23, 820);
-  context.fillText("사이트 생성 원본", 1_253, 74);
+  context.fillText("공유 정보 보기", 1_253, 74);
 
   context.fillStyle = INK;
   roundedRect(context, 40, 138, 1_360, 900, 14);
@@ -395,7 +395,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "center";
   context.fillStyle = ORANGE;
   setFont(context, 27, 800);
-  context.fillText(input.payment ? (input.payment.rail === "onchain" ? "금액 포함 온체인 결제 QR" : "고정금액 라이트닝 결제 QR") : "원본 확인 QR", 1_130, 718);
+  context.fillText(input.payment ? (input.payment.rail === "onchain" ? "금액 포함 온체인 결제 QR" : "고정금액 라이트닝 결제 QR") : "상세 정보 QR", 1_130, 718);
   context.fillStyle = PAPER;
   setFont(context, 23, 740);
   context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : `기록 ID ${compactId(input.record.id)}`, 1_130, 762);
@@ -414,7 +414,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "left";
   context.fillStyle = PAPER;
   setFont(context, 22, 780);
-  context.fillText(`원본 확인 ID  ${compactId(input.record.id)}`, 90, 910);
+  context.fillText(`공유 기록 ID  ${compactId(input.record.id)}`, 90, 910);
   context.fillStyle = MUTED_PAPER;
   setFont(context, 17, 560);
   context.fillText(`생성 ${formatTime(input.record.createdAt)}`, 90, 946);
@@ -423,7 +423,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "right";
   context.fillStyle = ORANGE;
   setFont(context, 19, 760);
-  context.fillText("사이트 원본 내용 일치 여부 확인 가능", 1_350, 916);
+  context.fillText("거래 조건 확인·결제정보 복사 가능", 1_350, 916);
   context.fillStyle = MUTED_PAPER;
   setFont(context, 16, 560);
   context.fillText("거래 합의·원화 입금·BTC 수령 완료 증명 아님", 1_350, 952);

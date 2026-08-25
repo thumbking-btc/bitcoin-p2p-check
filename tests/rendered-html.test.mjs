@@ -564,7 +564,7 @@ test("hydrates a local draft once and lets an imported share link win", async ()
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
   assert.match(component, /shareImageAllowed = Boolean\(quote\)[\s\S]*?&& draftHydrated/);
-  assert.match(component, /원본 확인을 위해 서명된 검증 기록을 180일 보관합니다/);
+  assert.match(component, /상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
   assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
@@ -597,9 +597,9 @@ test("renders a focused, capture-ready P2P calculator", async () => {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
   assert.match(html, /거래 기록 카드에만 포함됩니다/);
-  assert.match(html, /원본 확인을 위해 서명된 검증 기록을 180일 보관합니다/);
+  assert.match(html, /상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다/);
   assert.match(html, /거래 기록 카드 공유/);
-  assert.match(html, /합의한 조건을 한 장의 원본 기록으로 만듭니다/);
+  assert.match(html, /입력한 거래 조건을 한 장의 카드로 만듭니다/);
   assert.match(html, /결제 QR 미포함/);
   assert.doesNotMatch(html, /함께 공유되는 문구|읽기 전용 · 공유 전 확인/);
   assert.doesNotMatch(html, /기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
@@ -707,8 +707,8 @@ test("keeps market data official and interaction failures recoverable", async ()
     component.indexOf("].join(\"\\n\")", component.indexOf("const shareText =", component.indexOf("async function shareTrade()"))),
   );
   assert.match(shareTextBlock, /비트코인 P2P 거래 기록 카드/);
-  assert.match(shareTextBlock, /원본 확인: \$\{signed\.verificationUrl\}/);
-  assert.match(shareTextBlock, /사이트가 만든 원본과 내용 일치 여부만 확인하며, 거래 완료 증명은 아닙니다/);
+  assert.match(shareTextBlock, /거래 정보 확인·복사: \$\{signed\.verificationUrl\}/);
+  assert.match(shareTextBlock, /이 사이트는 거래를 중개·보증하거나 입금·전송·거래 완료를 확인하지 않습니다/);
   assert.doesNotMatch(shareTextBlock, /\[가격 계산\]|계산 시각:|구매자 → 판매자:|판매자 → 구매자:|구매자 자금 출처:/);
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
@@ -746,7 +746,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /const HEIGHT = 1_080/);
   assert.match(imageRenderer, /A signed trade record is required/);
   assert.match(imageRenderer, /비트코인 P2P 거래 기록/);
-  assert.match(imageRenderer, /사이트 생성 원본/);
+  assert.match(imageRenderer, /공유 정보 보기/);
   assert.match(imageRenderer, /비트코인 기준 가격/);
   assert.match(imageRenderer, /시세 \$\{formatTime\(input\.referenceTime\)\}/);
   assert.match(imageRenderer, /referencePriceKrw/);
@@ -768,12 +768,12 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /수수료 판매자 부담/);
   assert.match(imageRenderer, /금액 포함 온체인 결제 QR/);
   assert.match(imageRenderer, /고정금액 라이트닝 결제 QR/);
-  assert.match(imageRenderer, /원본 확인 QR/);
+  assert.match(imageRenderer, /상세 정보 QR/);
   assert.match(imageRenderer, /input\.payment\?\.payload \?\? input\.record\.verificationUrl/);
-  assert.match(imageRenderer, /원본 확인 ID/);
+  assert.match(imageRenderer, /공유 기록 ID/);
   assert.match(imageRenderer, /context\.moveTo\(870, 190\);\s*context\.lineTo\(870, 844\);/);
   assert.match(imageRenderer, /생성 \$\{formatTime\(input\.record\.createdAt\)\}/);
-  assert.match(imageRenderer, /사이트 원본 내용 일치 여부 확인 가능/);
+  assert.match(imageRenderer, /거래 조건 확인·결제정보 복사 가능/);
   assert.match(imageRenderer, /거래 합의·원화 입금·BTC 수령 완료 증명 아님/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.doesNotMatch(component, /buildTradeFragment|const browserOrigin|tradeFragment && browserOrigin/);
@@ -857,7 +857,7 @@ test("renders recruitment and signed record-card flows without DOM bridges", asy
   assert.match(html, /<legend class="visually-hidden" id="output-picker-title">만들 결과 선택<\/legend>/);
   assert.equal((html.match(/name="output-mode"/g) ?? []).length, 2);
   assert.match(html, /<strong>모집글<\/strong><small>공개 채널에서 상대 찾기<\/small>/);
-  assert.match(html, /<strong>거래 기록 카드<\/strong><small>조건·결제 QR·원본 확인<\/small>/);
+  assert.match(html, /<strong>거래 기록 카드<\/strong><small>조건·결제 QR·상세 정보<\/small>/);
   assert.match(calculator, /useState<OutputMode>\("recruitment"\)/);
   assert.match(calculator, /hidden=\{outputMode !== "trade-image"\}/);
   assert.match(calculator, /hidden=\{outputMode !== "recruitment"\}/);
@@ -1066,8 +1066,8 @@ test("ships an installable PWA with compact link metadata and no cached API data
   assert.doesNotMatch(html, /property="og:image|name="twitter:image|summary_large_image|og-v2\.png/);
 
   const verifyHtml = await (await render("/verify")).text();
-  assert.match(verifyHtml, /<title>거래 조건 원본 확인 \| 비트코인 P2P 계산기<\/title>/);
-  assert.match(verifyHtml, /property="og:title" content="거래 조건 원본 확인"/);
+  assert.match(verifyHtml, /<title>공유된 거래 정보 \| 비트코인 P2P 계산기<\/title>/);
+  assert.match(verifyHtml, /property="og:title" content="공유된 거래 정보"/);
   assert.match(verifyHtml, /name="twitter:card" content="summary"/);
   assert.doesNotMatch(verifyHtml, /property="og:image|name="twitter:image|summary_large_image/);
 });
