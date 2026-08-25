@@ -316,11 +316,6 @@
   line-height: 1.55;
 }
 
-.technicalNote {
-  border-top: 1px solid var(--line);
-  padding-top: 15px !important;
-}
-
 @keyframes verify-spin {
   to { transform: rotate(360deg); }
 }

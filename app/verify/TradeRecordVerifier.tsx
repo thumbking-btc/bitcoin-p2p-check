@@ -138,13 +138,12 @@ function AuditDetails({ record }: Readonly<{ record: TradeRecord }>) {
   return (
     <details className={styles.audit}>
       <summary>기록 확인 정보</summary>
-      <p>이 링크를 제공하기 위해 아래 기록을 사이트 저장소에 생성 후 180일간 임시 보관합니다. 링크는 이후 열리지 않을 수 있습니다.</p>
+      <p>상세 링크는 생성 후 180일간 제공됩니다.</p>
       <dl>
         <div><dt>기록 ID</dt><dd><code>{record.id}</code></dd></div>
         <div><dt>생성 시각</dt><dd>{formatTime(record.createdAt)} KST</dd></div>
         <div><dt>링크 제공 기한</dt><dd>{formatTime(record.expiresAt)} KST</dd></div>
       </dl>
-      <p className={styles.technicalNote}>전자서명은 표시 내용이 공유 당시 저장된 기록과 같은지 확인하는 보조 수단이며, 거래 당사자나 거래 완료를 인증하지 않습니다.</p>
     </details>
   );
 }
@@ -211,8 +210,8 @@ export function TradeRecordVerifier() {
       <RecordDetails record={state.result.record} />
 
       <aside className={styles.disclaimer}>
-        <strong>거래 당사자가 직접 확인하세요</strong>
-        <p>이 사이트는 거래를 중개·보증하지 않으며 기준 시세의 정확성이나 실제 업비트 관측 여부, 당사자의 신원·합의, 원화 입금, BTC 전송·수령, 인보이스 결제 또는 거래 완료를 확인하지 않습니다. 주소·인보이스·금액은 지갑과 상대방을 통해 다시 확인하세요.</p>
+        <strong>거래 전 확인</strong>
+        <p>주소·인보이스·금액을 상대방과 지갑에서 다시 확인하고, 원화 입금과 BTC 수령 내역도 각각 확인하세요.</p>
       </aside>
 
       <AuditDetails record={state.result.record} />

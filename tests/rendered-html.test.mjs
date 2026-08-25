@@ -564,7 +564,7 @@ test("hydrates a local draft once and lets an imported share link win", async ()
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
   assert.match(component, /shareImageAllowed = Boolean\(quote\)[\s\S]*?&& draftHydrated/);
-  assert.match(component, /상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다/);
+  assert.match(component, /상세 링크는 생성 후 180일간 열 수 있습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
   assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
@@ -597,7 +597,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
   assert.match(html, /거래 기록 카드에만 포함됩니다/);
-  assert.match(html, /상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다/);
+  assert.match(html, /상세 링크는 생성 후 180일간 열 수 있습니다/);
   assert.match(html, /거래 기록 카드 공유/);
   assert.match(html, /입력한 거래 조건을 한 장의 카드로 만듭니다/);
   assert.match(html, /결제 QR 미포함/);
@@ -612,7 +612,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
   assert.match(html, /<b>수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
   assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
-  assert.match(html, /<b>확인용:<\/b><span>원화 입금·BTC 수령 증빙 아님<\/span>/);
+  assert.match(html, /<b>거래 확인:<\/b><span>원화 입금·BTC 수령 내역 확인<\/span>/);
   assert.match(html, /현재 온체인 수수료율/);
   assert.match(html, /· 참고용/);
   assert.match(html, /다음 블록/);
@@ -708,7 +708,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   );
   assert.match(shareTextBlock, /비트코인 P2P 거래 기록 카드/);
   assert.match(shareTextBlock, /거래 정보 확인·복사: \$\{signed\.verificationUrl\}/);
-  assert.match(shareTextBlock, /이 사이트는 거래를 중개·보증하거나 입금·전송·거래 완료를 확인하지 않습니다/);
+  assert.match(shareTextBlock, /주소·금액·입금·수령 내역을 상대방과 함께 확인하세요/);
   assert.doesNotMatch(shareTextBlock, /\[가격 계산\]|계산 시각:|구매자 → 판매자:|판매자 → 구매자:|구매자 자금 출처:/);
   assert.match(component, /buildTradeIntent/);
   assert.match(component, /title: tradeIntent/);
@@ -774,7 +774,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /context\.moveTo\(870, 190\);\s*context\.lineTo\(870, 844\);/);
   assert.match(imageRenderer, /생성 \$\{formatTime\(input\.record\.createdAt\)\}/);
   assert.match(imageRenderer, /거래 조건 확인·결제정보 복사 가능/);
-  assert.match(imageRenderer, /거래 합의·원화 입금·BTC 수령 완료 증명 아님/);
+  assert.match(imageRenderer, /주소·금액·입금·수령 내역을 서로 확인/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.doesNotMatch(component, /buildTradeFragment|const browserOrigin|tradeFragment && browserOrigin/);
   assert.match(component, /aria-live="polite"/);

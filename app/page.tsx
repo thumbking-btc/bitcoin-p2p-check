@@ -50,7 +50,7 @@ export default function Home() {
                   <p className="section-label">데이터와 한계</p>
                   <h2 id="source-title">공식 출처와 계산 한계</h2>
                 </div>
-                <p>업비트 최근 체결가, 업비트 데이터랩 프리미엄과 mempool.space 권장 수수료율을 사용합니다. 이 사이트는 계산만 제공하며 원화·비트코인을 보관하거나 거래를 중개하지 않습니다.</p>
+                <p>업비트 최근 체결가, 업비트 데이터랩 프리미엄과 mempool.space 권장 수수료율을 사용합니다. 계산 결과와 실제 입금·전송 내역을 함께 확인하세요.</p>
                 <div className="reference-links">
                   <a href="https://global-docs.upbit.com/docs/upbit-quotation-restful-api" target="_blank" rel="noreferrer">업비트 시세 API 문서 ↗</a>
                   <a href="https://datalab.upbit.com/assets/BTC/upbit-premium" target="_blank" rel="noreferrer">업비트 프리미엄 기준 ↗</a>
@@ -73,7 +73,7 @@ export default function Home() {
       </main>
       <footer className="site-footer">
         <SiteRouteNav current="calculator" />
-        <p>입금 확인과 온체인 전송 확인은 거래 당사자가 직접 해야 합니다.</p>
+        <p>입금 내역과 온체인 전송 상태를 각각 확인하세요.</p>
       </footer>
     </>
   );

@@ -408,7 +408,7 @@ test("committed deployment public JWK is structurally valid and verification rou
   assert.match(prerender, /isTradeRecordApiPath/);
   assert.match(page, /images:\s*\[\]/);
   assert.match(page, /robots:\s*\{\s*index:\s*false/);
-  assert.match(verifier, /실제 업비트 관측 여부/);
+  assert.match(verifier, /주소·인보이스·금액을 상대방과 지갑에서 다시 확인/);
   assert.match(verifier, /retryNotFound:\s*true/);
   assert.match(wrangler, /"ratelimits"/);
   assert.match(wrangler, /"name":\s*"TRADE_RECORD_CREATE_RATE_LIMITER"/);

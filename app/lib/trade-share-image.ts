@@ -426,7 +426,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.fillText("거래 조건 확인·결제정보 복사 가능", 1_350, 916);
   context.fillStyle = MUTED_PAPER;
   setFont(context, 16, 560);
-  context.fillText("거래 합의·원화 입금·BTC 수령 완료 증명 아님", 1_350, 952);
+  context.fillText("주소·금액·입금·수령 내역을 서로 확인", 1_350, 952);
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((result) => result ? resolve(result) : reject(new Error("PNG encoding failed.")), "image/png");

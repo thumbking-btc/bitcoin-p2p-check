@@ -905,7 +905,7 @@ export function P2PTradeTool() {
         "비트코인 P2P 거래 기록 카드",
         signed.record.payment ? "확인된 결제정보가 카드의 QR에 포함되어 있습니다." : "결제정보를 포함하지 않은 조건 기록입니다.",
         `거래 정보 확인·복사: ${signed.verificationUrl}`,
-        "이 사이트는 거래를 중개·보증하거나 입금·전송·거래 완료를 확인하지 않습니다.",
+        "주소·금액·입금·수령 내역을 상대방과 함께 확인하세요.",
       ].join("\n");
       const outcome = await shareImageFile({
         file: shareFile,
@@ -1179,7 +1179,7 @@ export function P2PTradeTool() {
         <div className="capture-meta" id="trade-rounding" role="note" aria-label="거래 계산 참고사항">
           <span className="capture-meta-fee" aria-label="수수료: 판매자 부담, 구매자 수령량 차감 없음"><b>수수료:</b><span>판매자 부담 · 구매자 수령량 차감 없음</span></span>
           <span className="capture-meta-rounding" aria-label="반올림: 1 sat, 1원"><b>반올림:</b><span>1 sat·1원</span></span>
-          <span className="capture-meta-disclaimer" aria-label="확인용: 원화 입금과 비트코인 수령 증빙 아님"><b>확인용:</b><span>원화 입금·BTC 수령 증빙 아님</span></span>
+          <span className="capture-meta-disclaimer" aria-label="거래 확인: 원화 입금과 비트코인 수령 내역 확인"><b>거래 확인:</b><span>원화 입금·BTC 수령 내역 확인</span></span>
         </div>
       </article>
 
@@ -1298,7 +1298,7 @@ export function P2PTradeTool() {
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "상세 링크 제공을 위해 거래 정보를 180일간 임시 보관합니다. 사이트는 거래를 중개·보증하지 않습니다." : "")}
+                {shareStatus || (!isSharing ? "상세 링크는 생성 후 180일간 열 수 있습니다." : "")}
               </p>
             </div>
           </div>
