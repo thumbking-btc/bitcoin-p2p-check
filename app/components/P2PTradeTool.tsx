@@ -866,7 +866,7 @@ export function P2PTradeTool() {
           ? paymentForRecord.rail === "onchain" && paymentForRecord.address
             ? { rail: "onchain", payload: paymentForRecord.payload, address: paymentForRecord.address }
             : paymentForRecord.rail === "lightning"
-              ? paymentForRecord.kind === "lightning-address" && paymentForRecord.address
+              ? paymentForRecord.address
                 ? { rail: "lightning", payload: paymentForRecord.payload, address: paymentForRecord.address }
                 : { rail: "lightning", payload: paymentForRecord.payload }
               : null

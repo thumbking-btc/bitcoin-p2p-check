@@ -51,4 +51,5 @@ test("holds the visible quote while exact-amount payment information is active",
   assert.match(calculator, /if \(pendingSnapshot && !paymentLockRef\.current\)/u);
   assert.match(calculator, /verifiedReceiveInfo \? "금액 고정 중"/u);
   assert.match(calculator, /const receiveConditionKey = JSON\.stringify\(\{ tradeRole, sats: quote\?\.sats \?\? null \}\)/u);
+  assert.match(calculator, /paymentForRecord\.rail === "lightning"[\s\S]*\? paymentForRecord\.address[\s\S]*\{ rail: "lightning", payload: paymentForRecord\.payload, address: paymentForRecord\.address \}/u);
 });
