@@ -1,6 +1,29 @@
 const PRICE_MAX_AGE_MS = 5 * 60_000;
 const TRADE_SHARE_REQUEST_TYPE = "application/x-bitcoin-p2p-trade-image+json";
 
+/** @typedef {"shared" | "cancelled" | "downloaded" | "downloaded-after-error"} ShareImageOutcome */
+/** @typedef {"available" | "copied" | "copy-failed" | "unavailable"} VerificationUrlDelivery */
+/**
+ * @typedef {Readonly<{
+ *   outcome: "downloaded" | "downloaded-after-error";
+ *   verificationUrl: string | null;
+ *   verificationUrlDelivery: VerificationUrlDelivery;
+ * }>} DownloadFallbackDetails
+ */
+/**
+ * @typedef {Readonly<{
+ *   file: File;
+ *   title: string;
+ *   text: string;
+ *   nativeShare?: ((data: ShareData) => Promise<void>) | null;
+ *   nativeCanShare?: ((data: ShareData) => boolean) | null;
+ *   download: (file: File) => void;
+ *   verificationUrl?: string;
+ *   copyVerificationUrl?: (url: string) => Promise<void> | void;
+ *   onDownloadFallback?: (details: DownloadFallbackDetails) => Promise<void> | void;
+ * }>} ShareImageFileOptions
+ */
+
 export function isReferenceShareable(
   { marketState, referenceTime },
   now = Date.now(),
@@ -35,6 +58,57 @@ async function prepareShareFile(file) {
   return normalizePngFilename(file);
 }
 
+/**
+ * @param {Readonly<{
+ *   file: File;
+ *   outcome: "downloaded" | "downloaded-after-error";
+ *   download: (file: File) => void;
+ *   verificationUrl?: string;
+ *   copyVerificationUrl?: (url: string) => Promise<void> | void;
+ *   onDownloadFallback?: (details: DownloadFallbackDetails) => Promise<void> | void;
+ * }>} options
+ * @returns {Promise<"downloaded" | "downloaded-after-error">}
+ */
+async function finishDownloadFallback({
+  file,
+  outcome,
+  download,
+  verificationUrl,
+  copyVerificationUrl,
+  onDownloadFallback,
+}) {
+  download(file);
+  let verificationUrlDelivery = verificationUrl ? "available" : "unavailable";
+  if (verificationUrl && typeof copyVerificationUrl === "function") {
+    try {
+      await copyVerificationUrl(verificationUrl);
+      verificationUrlDelivery = "copied";
+    } catch {
+      verificationUrlDelivery = "copy-failed";
+    }
+  }
+  if (typeof onDownloadFallback === "function") {
+    try {
+      await onDownloadFallback(Object.freeze({
+        outcome,
+        verificationUrl: verificationUrl || null,
+        verificationUrlDelivery,
+      }));
+    } catch {
+      // A status callback must never prevent the already-completed download.
+    }
+  }
+  return outcome;
+}
+
+/**
+ * Download fallbacks cannot carry clickable metadata inside a PNG. Callers
+ * should pass the record verificationUrl and surface onDownloadFallback so a
+ * copied link (or a manual copy action after copy-failed) accompanies the file.
+ *
+ * @param {ShareImageFileOptions} options
+ * @returns {Promise<ShareImageOutcome>}
+ */
 export async function shareImageFile({
   file,
   title,
@@ -42,6 +116,9 @@ export async function shareImageFile({
   nativeShare,
   nativeCanShare,
   download,
+  verificationUrl = "",
+  copyVerificationUrl = undefined,
+  onDownloadFallback = undefined,
 }) {
   file = await prepareShareFile(file);
   let canShareFile = false;
@@ -54,8 +131,14 @@ export async function shareImageFile({
   }
 
   if (!canShareFile) {
-    download(file);
-    return "downloaded";
+    return finishDownloadFallback({
+      file,
+      outcome: "downloaded",
+      download,
+      verificationUrl,
+      copyVerificationUrl,
+      onDownloadFallback,
+    });
   }
 
   try {
@@ -63,7 +146,13 @@ export async function shareImageFile({
     return "shared";
   } catch (error) {
     if (isAbortError(error)) return "cancelled";
-    download(file);
-    return "downloaded-after-error";
+    return finishDownloadFallback({
+      file,
+      outcome: "downloaded-after-error",
+      download,
+      verificationUrl,
+      copyVerificationUrl,
+      onDownloadFallback,
+    });
   }
 }

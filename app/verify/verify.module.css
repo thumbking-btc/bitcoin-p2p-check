@@ -284,6 +284,23 @@
   font-weight: 720;
 }
 
+.expiredPayment {
+  padding: 18px 20px;
+  border-bottom: 1px solid color-mix(in srgb, #b42318 35%, var(--line));
+  background: color-mix(in srgb, #fff0ee 76%, var(--surface));
+  color: #8f1d15;
+  line-height: 1.55;
+}
+
+.expiredPayment strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.expiredPayment p {
+  margin: 0;
+}
+
 .paymentExtra {
   border-top: 1px solid var(--line);
 }

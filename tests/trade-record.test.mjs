@@ -4,14 +4,20 @@ import test from "node:test";
 
 import { createOnchainRequest } from "../app/lib/onchain-request.mjs";
 import {
+  canonicalTradeRecordJson,
+  canonicalizeTradeRecord,
   canonicalizeTradeRecordApiSuccess,
+  getTradeRecordRetentionPolicy,
+  TRADE_RECORD_RETENTION_POLICIES,
   TRADE_RECORD_RETENTION_SECONDS,
+  TRADE_RECORD_SCHEMA,
+  TRADE_RECORD_SCHEMA_V1,
 } from "../app/lib/trade-record.ts";
 import {
   TRADE_RECORD_PUBLIC_KEYS,
   verifyTradeRecordSignature,
 } from "../app/lib/trade-record-verification.ts";
-import { fetchTradeRecord } from "../app/lib/trade-record-client.ts";
+import { fetchTradeRecord, TradeRecordNetworkError } from "../app/lib/trade-record-client.ts";
 import { handleTradeRecordRequest } from "../worker/trade-record.ts";
 
 const ADDRESS = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
@@ -105,21 +111,78 @@ function validDraft(payment = null) {
   };
 }
 
+function createCapability() {
+  return Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+}
+
 function createRequest(draft, path = "/api/trade-record") {
   return new Request(`https://records.example${path}`, {
     method: "POST",
     headers: {
       "CF-Connecting-IP": "203.0.113.10",
       "Content-Type": "application/json",
+      "Idempotency-Key": createCapability(),
+      "X-Trade-Record-Lifecycle": "pending",
       Accept: "application/json",
     },
     body: JSON.stringify(draft),
   });
 }
 
-test("creates, stores, fetches, and independently verifies a signed trade record", async () => {
+test("pins the v1 retention policy and canonical signed representation", () => {
+  const policy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1);
+  assert.equal(TRADE_RECORD_SCHEMA, TRADE_RECORD_SCHEMA_V1);
+  assert.equal(policy.schema, "bitcoin-p2p-trade-record/v1");
+  assert.equal(policy.retentionSeconds, 15_552_000);
+  assert.equal(TRADE_RECORD_RETENTION_SECONDS, policy.retentionSeconds);
+  assert.equal(getTradeRecordRetentionPolicy("bitcoin-p2p-trade-record/v2"), null);
+  assert.equal(Object.isFrozen(TRADE_RECORD_RETENTION_POLICIES), true);
+  assert.equal(Object.isFrozen(policy), true);
+
+  const v1Record = {
+    schema: TRADE_RECORD_SCHEMA_V1,
+    payment: null,
+    expiresAt: "2026-06-30T00:00:00.000Z",
+    condition: {
+      fundingSource: null,
+      sellerPremiumBps: 0,
+      koreaPremiumRatio: null,
+      marketObservedAt: "2026-01-01T00:00:00.000Z",
+      referencePriceKrw: 100_000_000,
+      sats: 1_000_000,
+      paymentKrw: 1_000_000,
+      bitcoinDisplayUnit: "sats",
+      amountBasis: "krw",
+      role: "buyer",
+    },
+    id: "AAAAAAAAAAAAAAAA",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+  const expectedCanonicalJson = [
+    '{"schema":"bitcoin-p2p-trade-record/v1","id":"AAAAAAAAAAAAAAAA",',
+    '"createdAt":"2026-01-01T00:00:00.000Z","expiresAt":"2026-06-30T00:00:00.000Z",',
+    '"condition":{"role":"buyer","amountBasis":"krw","bitcoinDisplayUnit":"sats",',
+    '"paymentKrw":1000000,"sats":1000000,"referencePriceKrw":100000000,',
+    '"marketObservedAt":"2026-01-01T00:00:00.000Z","koreaPremiumRatio":null,',
+    '"sellerPremiumBps":0,"fundingSource":null},"payment":null}',
+  ].join("");
+  assert.equal(canonicalTradeRecordJson(v1Record), expectedCanonicalJson);
+
+  assert.throws(
+    () => canonicalizeTradeRecord({ ...v1Record, expiresAt: "2026-06-30T00:00:01.000Z" }),
+    (error) => error?.code === "INVALID_RECORD",
+  );
+  assert.throws(
+    () => canonicalizeTradeRecord({ ...v1Record, schema: "bitcoin-p2p-trade-record/v2" }),
+    (error) => error?.code === "INVALID_RECORD",
+  );
+});
+
+test("creates privately, finalizes, fetches, and independently verifies a signed trade record", async () => {
   const { handle, publicKeys, records } = await signingEnvironment();
-  const createResponse = await handle(createRequest(validDraft()));
+  const request = createRequest(validDraft());
+  const capability = request.headers.get("Idempotency-Key");
+  const createResponse = await handle(request);
   assert.equal(createResponse.status, 201);
   assert.equal(createResponse.headers.get("cache-control"), "no-store");
 
@@ -127,21 +190,66 @@ test("creates, stores, fetches, and independently verifies a signed trade record
   assert.match(created.id, /^[A-Za-z0-9_-]{16}$/u);
   assert.equal(created.id, created.record.id);
   assert.equal(created.verificationUrl, `https://records.example/verify/?id=${created.id}`);
+  assert.equal(created.record.schema, TRADE_RECORD_SCHEMA_V1);
+  assert.equal(
+    Date.parse(created.record.expiresAt) - Date.parse(created.record.createdAt),
+    getTradeRecordRetentionPolicy(created.record.schema).retentionSeconds * 1_000,
+  );
   assert.equal(records.puts.length, 1);
-  assert.equal(records.puts[0].options.expirationTtl, TRADE_RECORD_RETENTION_SECONDS);
+  assert.equal(records.puts[0].options.expirationTtl, 15 * 60);
 
   const verified = await verifyTradeRecordSignature(created, { publicKeys });
   assert.equal(verified.status, "valid");
   assert.equal(verified.record.condition.fundingSource, "근로소득");
   assert.equal(verified.record.payment, null);
 
+  const recordUrl = `https://records.example/api/trade-record/${created.id}`;
+  const hiddenResponse = await handle(
+    new Request(recordUrl, { headers: { Accept: "application/json" } }),
+  );
+  assert.equal(hiddenResponse.status, 404);
+
+  const finalizeResponse = await handle(new Request(`${recordUrl}/finalize`, {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Bearer ${capability}` },
+  }));
+  assert.equal(finalizeResponse.status, 200);
+  assert.equal(records.puts.length, 2);
+  assert.equal(records.puts[1].options.expirationTtl, TRADE_RECORD_RETENTION_SECONDS);
+
   const getResponse = await handle(
-    new Request(`https://records.example/api/trade-record/${created.id}`, { headers: { Accept: "application/json" } }),
+    new Request(recordUrl, { headers: { Accept: "application/json" } }),
   );
   assert.equal(getResponse.status, 200);
   const fetched = canonicalizeTradeRecordApiSuccess(await getResponse.json());
   assert.deepEqual(fetched.record, created.record);
   assert.equal(fetched.signature, created.signature);
+});
+
+test("refuses to finalize a pending record whose Lightning invoice has under 120 seconds left", async () => {
+  const { handle, records } = await signingEnvironment();
+  const request = createRequest(validDraft());
+  const capability = request.headers.get("Idempotency-Key");
+  const createResponse = await handle(request);
+  assert.equal(createResponse.status, 201);
+  const created = canonicalizeTradeRecordApiSuccess(await createResponse.json());
+
+  const storedKey = records.puts[0].key;
+  const stored = JSON.parse(records.values.get(storedKey));
+  stored.signed.record.payment = {
+    rail: "lightning",
+    payload: "lnbc-test-finalize-boundary",
+    expiresAt: new Date(Date.now() + 119_000).toISOString(),
+  };
+  records.values.set(storedKey, JSON.stringify(stored));
+
+  const response = await handle(new Request(`https://records.example/api/trade-record/${created.id}/finalize`, {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Bearer ${capability}` },
+  }));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "PAYMENT_EXPIRING");
+  assert.equal(records.puts.length, 1, "an expiring pending record must not be made public");
 });
 
 test("binds one exact canonical BIP21 payment target to the signed sats", async () => {
@@ -292,29 +400,39 @@ test("independently checks the submitted reference against fresh Upbit REST data
   assert.equal(records.puts.length, 0);
 });
 
-test("follows only bounded, allowlisted Upbit redirects before signing", async () => {
-  const allowed = await signingEnvironment();
-  const allowedCalls = [];
-  const allowedRedirect = await allowed.handle(createRequest(validDraft()), undefined, {
-    fetcher: async (input, init) => {
-      assert.equal(init?.redirect, "manual");
-      allowedCalls.push(String(input));
-      if (allowedCalls.length === 1) {
-        return new Response(null, {
-          status: 302,
-          headers: { Location: "/v1/ticker?markets=KRW-BTC" },
-        });
-      }
-      return Response.json([{
-        market: "KRW-BTC",
-        trade_price: 100_000_000,
-        trade_timestamp: Date.now(),
-      }]);
-    },
-  });
-  assert.equal(allowedRedirect.status, 201);
-  assert.equal(allowedCalls.length, 2);
-  assert.equal(allowed.records.puts.length, 1);
+test("accepts exactly 0, 1, or 2 allowlisted Upbit redirects before signing", async () => {
+  for (const redirectCount of [0, 1, 2]) {
+    const allowed = await signingEnvironment();
+    const allowedCalls = [];
+    const response = await allowed.handle(createRequest(validDraft()), undefined, {
+      fetcher: async (input, init) => {
+        assert.equal(init?.redirect, "manual");
+        assert.ok(init?.signal instanceof AbortSignal);
+        allowedCalls.push(String(input));
+        if (allowedCalls.length <= redirectCount) {
+          return new Response(null, {
+            status: 302,
+            headers: { Location: "/v1/ticker?markets=KRW-BTC" },
+          });
+        }
+        return Response.json([{
+          market: "KRW-BTC",
+          trade_price: 100_000_000,
+          trade_timestamp: Date.now(),
+        }]);
+      },
+    });
+    assert.equal(response.status, 201, `${redirectCount} redirects must be accepted`);
+    assert.equal(allowedCalls.length, redirectCount + 1);
+    assert.ok(
+      allowedCalls.every((url) => url === "https://api.upbit.com/v1/ticker?markets=KRW-BTC"),
+      "every followed request must remain on the exact allowlisted endpoint",
+    );
+    assert.equal(allowed.records.puts.length, 1);
+  }
+});
+
+test("rejects untrusted or more than 2 Upbit redirects before signing", async () => {
 
   for (const location of [
     "https://example.com/v1/ticker?markets=KRW-BTC",
@@ -355,6 +473,54 @@ test("follows only bounded, allowlisted Upbit redirects before signing", async (
   assert.equal((await redirectLoop.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
   assert.equal(loopCalls, 3);
   assert.equal(looping.records.puts.length, 0);
+});
+
+test("fails closed on Upbit 429 and aborts the in-flight verification at its deadline", async (t) => {
+  const throttled = await signingEnvironment();
+  let throttledCalls = 0;
+  const throttledResponse = await throttled.handle(createRequest(validDraft()), undefined, {
+    fetcher: async (_input, init) => {
+      throttledCalls += 1;
+      assert.equal(init?.redirect, "manual");
+      return Response.json({ error: { name: "too_many_requests" } }, { status: 429 });
+    },
+  });
+  assert.equal(throttledResponse.status, 503);
+  assert.equal((await throttledResponse.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+  assert.equal(throttledCalls, 1);
+  assert.equal(throttled.records.puts.length, 0);
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const timedOut = await signingEnvironment();
+  let observedSignal;
+  let markFetchStarted;
+  const fetchStarted = new Promise((resolve) => {
+    markFetchStarted = resolve;
+  });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const pendingResponse = timedOut.handle(createRequest(validDraft()), undefined, {
+      fetcher: async (_input, init) => {
+        observedSignal = init?.signal;
+        markFetchStarted();
+        return await new Promise((_resolve, reject) => {
+          observedSignal.addEventListener("abort", () => reject(observedSignal.reason), { once: true });
+        });
+      },
+    });
+    await fetchStarted;
+    assert.equal(observedSignal.aborted, false);
+    t.mock.timers.tick(4_000);
+    const timeoutResponse = await pendingResponse;
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(timeoutResponse.status, 503);
+    assert.equal((await timeoutResponse.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+    assert.equal(timedOut.records.puts.length, 0);
+  } finally {
+    console.error = originalError;
+    t.mock.timers.reset();
+  }
 });
 
 test("rate-limits create calls by Cloudflare connecting IP before external work or KV writes", async () => {
@@ -401,10 +567,19 @@ test("retries a fresh-record 404 and lets AbortSignal stop propagation waiting",
     queueMicrotask(() => controller.abort());
     await assert.rejects(pending, (error) => error?.name === "AbortError");
 
-    globalThis.fetch = async () => new Response("x".repeat(17_000), { status: 200 });
+    globalThis.fetch = async () => new Response("x".repeat(17_000), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
     await assert.rejects(
       fetchTradeRecord(created.id, { endpointBase: "https://records.example/api/trade-record" }),
       /응답이 너무 큽니다/u,
+    );
+
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(
+      fetchTradeRecord(created.id, { endpointBase: "https://records.example/api/trade-record" }),
+      (error) => error instanceof TradeRecordNetworkError && error.cause instanceof TypeError,
     );
   } finally {
     globalThis.fetch = originalFetch;

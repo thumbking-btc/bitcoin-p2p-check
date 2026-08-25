@@ -1,11 +1,34 @@
-import { calculateP2PQuote, MAX_SATS } from "./p2p-quote.mjs";
+import { calculateP2PQuote, MAX_SATS, roundedAppliedPriceKrw } from "./p2p-quote.mjs";
 
-export const TRADE_RECORD_SCHEMA = "bitcoin-p2p-trade-record/v1" as const;
-export const TRADE_RECORD_RETENTION_SECONDS = 180 * 24 * 60 * 60;
+export const TRADE_RECORD_SCHEMA_V1 = "bitcoin-p2p-trade-record/v1" as const;
+
+/** Compatibility alias pinned to v1. New writers must select an explicit schema version. */
+export const TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
+
+export const TRADE_RECORD_RETENTION_POLICIES = Object.freeze({
+  [TRADE_RECORD_SCHEMA_V1]: Object.freeze({
+    schema: TRADE_RECORD_SCHEMA_V1,
+    retentionSeconds: 180 * 24 * 60 * 60,
+  }),
+});
+
+export type TradeRecordSchema = keyof typeof TRADE_RECORD_RETENTION_POLICIES;
+export type TradeRecordRetentionPolicy = typeof TRADE_RECORD_RETENTION_POLICIES[TradeRecordSchema];
+
+export function getTradeRecordRetentionPolicy(schema: TradeRecordSchema): TradeRecordRetentionPolicy;
+export function getTradeRecordRetentionPolicy(schema: unknown): TradeRecordRetentionPolicy | null;
+export function getTradeRecordRetentionPolicy(schema: unknown): TradeRecordRetentionPolicy | null {
+  if (typeof schema !== "string" || !Object.hasOwn(TRADE_RECORD_RETENTION_POLICIES, schema)) return null;
+  return TRADE_RECORD_RETENTION_POLICIES[schema as TradeRecordSchema];
+}
+
+/** @deprecated v1-only compatibility alias. Query the policy by schema for version-aware code. */
+export const TRADE_RECORD_RETENTION_SECONDS = TRADE_RECORD_RETENTION_POLICIES[TRADE_RECORD_SCHEMA_V1].retentionSeconds;
 export const TRADE_RECORD_MAX_CANONICAL_BYTES = 6_144;
 export const TRADE_RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{16}$/u;
 export const TRADE_RECORD_KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/u;
 export const TRADE_RECORD_SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/u;
+export const TRADE_RECORD_REVOKE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 
 const MAX_KRW = 999_999_999_999_999;
 const MAX_PREMIUM_BPS = 99_999;
@@ -60,7 +83,7 @@ export type TradeRecordDraft = Readonly<{
 }>;
 
 export type TradeRecord = Readonly<{
-  schema: typeof TRADE_RECORD_SCHEMA;
+  schema: typeof TRADE_RECORD_SCHEMA_V1;
   id: string;
   createdAt: string;
   expiresAt: string;
@@ -78,6 +101,14 @@ export type TradeRecordApiSuccess = SignedTradeRecord & Readonly<{
   ok: true;
   id: string;
   verificationUrl: string;
+  lifecycle?: "pending" | "finalized";
+  revokeToken?: string;
+}>;
+
+export type TradeRecordRevokeSuccess = Readonly<{
+  ok: true;
+  id: string;
+  lifecycle: "revoked";
 }>;
 
 export type TradeRecordApiError = Readonly<{
@@ -86,7 +117,7 @@ export type TradeRecordApiError = Readonly<{
   message: string;
 }>;
 
-export type TradeRecordApiResponse = TradeRecordApiSuccess | TradeRecordApiError;
+export type TradeRecordApiResponse = TradeRecordApiSuccess | TradeRecordRevokeSuccess | TradeRecordApiError;
 
 export class TradeRecordValidationError extends TypeError {
   readonly code: string;
@@ -143,8 +174,10 @@ export function isTradeRecordId(value: unknown): value is string {
   return typeof value === "string" && TRADE_RECORD_ID_PATTERN.test(value);
 }
 
-export function deriveAppliedPriceKrw(condition: Pick<TradeRecordCondition, "referencePriceKrw" | "sellerPremiumBps">): number {
-  return condition.referencePriceKrw * (10_000 + condition.sellerPremiumBps) / 10_000;
+export function deriveAppliedPriceKrw(condition: Pick<TradeRecordCondition, "referencePriceKrw" | "sellerPremiumBps">): string {
+  const rounded = roundedAppliedPriceKrw(condition.referencePriceKrw, condition.sellerPremiumBps);
+  if (rounded === null) throw new RangeError("The applied KRW price is outside the supported range.");
+  return rounded;
 }
 
 export function canonicalizeTradeRecordCondition(value: unknown): TradeRecordCondition {
@@ -249,16 +282,17 @@ function canonicalizeStoredPayment(value: unknown): TradeRecordPayment | null {
   });
 }
 
-export function canonicalizeTradeRecord(value: unknown): TradeRecord {
-  if (!isRecord(value) || !hasExactKeys(value, ["schema", "id", "createdAt", "expiresAt", "condition", "payment"])) {
+function canonicalizeTradeRecordV1(value: Record<string, unknown>): TradeRecord {
+  if (!hasExactKeys(value, ["schema", "id", "createdAt", "expiresAt", "condition", "payment"])) {
     fail("INVALID_RECORD", "거래 기록 항목을 확인하지 못했습니다.");
   }
-  if (value.schema !== TRADE_RECORD_SCHEMA || !isTradeRecordId(value.id)) fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
+  if (value.schema !== TRADE_RECORD_SCHEMA_V1 || !isTradeRecordId(value.id)) fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
 
   const createdAt = canonicalIso(value.createdAt, "기록 생성");
   const expiresAt = canonicalIso(value.expiresAt, "기록 보관 만료");
   const createdAtMs = Date.parse(createdAt);
-  if (Date.parse(expiresAt) !== createdAtMs + TRADE_RECORD_RETENTION_SECONDS * 1_000) {
+  const retentionPolicy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1);
+  if (Date.parse(expiresAt) !== createdAtMs + retentionPolicy.retentionSeconds * 1_000) {
     fail("INVALID_RECORD", "거래 기록 보관 기간을 확인하지 못했습니다.");
   }
 
@@ -269,13 +303,24 @@ export function canonicalizeTradeRecord(value: unknown): TradeRecord {
   }
 
   return Object.freeze({
-    schema: TRADE_RECORD_SCHEMA,
+    schema: TRADE_RECORD_SCHEMA_V1,
     id: value.id,
     createdAt,
     expiresAt,
     condition,
     payment,
   });
+}
+
+export function canonicalizeTradeRecord(value: unknown): TradeRecord {
+  if (!isRecord(value)) fail("INVALID_RECORD", "거래 기록 항목을 확인하지 못했습니다.");
+
+  switch (value.schema) {
+    case TRADE_RECORD_SCHEMA_V1:
+      return canonicalizeTradeRecordV1(value);
+    default:
+      fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
+  }
 }
 
 export function canonicalTradeRecordJson(value: unknown): string {
@@ -308,7 +353,10 @@ export function canonicalizeSignedTradeRecord(value: unknown): SignedTradeRecord
 }
 
 export function canonicalizeTradeRecordApiSuccess(value: unknown): TradeRecordApiSuccess {
-  if (!isRecord(value) || !hasExactKeys(value, ["ok", "record", "signature", "keyId", "id", "verificationUrl"]) || value.ok !== true) {
+  const baseKeys = ["ok", "record", "signature", "keyId", "id", "verificationUrl"] as const;
+  const managedKeys = [...baseKeys, "lifecycle", "revokeToken"] as const;
+  const managed = isRecord(value) && hasExactKeys(value, managedKeys);
+  if (!isRecord(value) || (!hasExactKeys(value, baseKeys) && !managed) || value.ok !== true) {
     fail("INVALID_RESPONSE", "거래 기록 서버 응답을 확인하지 못했습니다.");
   }
   const signed = canonicalizeSignedTradeRecord({ record: value.record, signature: value.signature, keyId: value.keyId });
@@ -328,6 +376,16 @@ export function canonicalizeTradeRecordApiSuccess(value: unknown): TradeRecordAp
   if (verificationUrl.pathname !== "/verify/" || verificationUrl.searchParams.getAll("id").length !== 1 || verificationUrl.searchParams.get("id") !== signed.record.id || verificationUrl.hash) {
     fail("INVALID_RESPONSE", "거래 기록 검증 링크를 확인하지 못했습니다.");
   }
+  if (
+    managed
+    && (
+      (value.lifecycle !== "pending" && value.lifecycle !== "finalized")
+      || typeof value.revokeToken !== "string"
+      || !TRADE_RECORD_REVOKE_TOKEN_PATTERN.test(value.revokeToken)
+    )
+  ) {
+    fail("INVALID_RESPONSE", "거래 기록 관리 capability를 확인하지 못했습니다.");
+  }
   return Object.freeze({
     ok: true,
     record: signed.record,
@@ -335,5 +393,19 @@ export function canonicalizeTradeRecordApiSuccess(value: unknown): TradeRecordAp
     keyId: signed.keyId,
     id: signed.record.id,
     verificationUrl: verificationUrl.toString(),
+    ...(managed ? { lifecycle: value.lifecycle as "pending" | "finalized", revokeToken: value.revokeToken as string } : {}),
   });
+}
+
+export function canonicalizeTradeRecordRevokeSuccess(value: unknown): TradeRecordRevokeSuccess {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ["ok", "id", "lifecycle"])
+    || value.ok !== true
+    || !isTradeRecordId(value.id)
+    || value.lifecycle !== "revoked"
+  ) {
+    fail("INVALID_RESPONSE", "거래 기록 폐기 응답을 확인하지 못했습니다.");
+  }
+  return Object.freeze({ ok: true, id: value.id, lifecycle: "revoked" });
 }

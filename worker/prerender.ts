@@ -1,6 +1,11 @@
 import vinextHandler from "vinext/server/app-router-entry";
 import { handleMarketRequest } from "./market";
-import type { WorkerEnvironment, WorkerExecutionContext } from "./index";
+import {
+  apiNotFoundResponse,
+  type WorkerEnvironment,
+  type WorkerExecutionContext,
+  versionResponse,
+} from "./index";
 import { handleTradeRecordRequest, isTradeRecordApiPath } from "./trade-record";
 
 type FetchHandler = {
@@ -13,18 +18,33 @@ export default {
   fetch(request: Request, environment: unknown, context: unknown) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/version" || url.pathname === "/api/version/") {
+      return versionResponse(request, environment as WorkerEnvironment);
+    }
+
     if (url.pathname === "/api/market" || url.pathname === "/api/market/") {
-      return handleMarketRequest(request, context as WorkerExecutionContext);
+      return handleMarketRequest(
+        request,
+        context as WorkerExecutionContext,
+        environment as WorkerEnvironment,
+      );
     }
 
     if (isTradeRecordApiPath(url.pathname)) {
       return handleTradeRecordRequest(request, environment as WorkerEnvironment);
     }
 
+    if (url.pathname.startsWith("/api/")) return apiNotFoundResponse();
+
     // vinext beta.2 asks the un-slashed route while exporting, while its own
     // trailingSlash middleware redirects that request. Canonicalizing only the
     // build-time page request avoids the 308 and still emits install/index.html.
-    if (url.pathname === "/install" || url.pathname === "/verify" || url.pathname === "/_not-found") {
+    if (
+      url.pathname === "/install"
+      || url.pathname === "/privacy"
+      || url.pathname === "/verify"
+      || url.pathname === "/_not-found"
+    ) {
       url.pathname += "/";
       request = new Request(url.toString(), request);
     }

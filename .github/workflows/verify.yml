@@ -5,20 +5,36 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Deploy the verified artifact to production
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
 
       - name: Use Node.js 22.19.0
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22.19.0
           cache: npm
@@ -26,8 +42,121 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Lint, build, and test
-        run: npm run verify
+      - name: Install the verified browser runtime
+        run: npx playwright install --with-deps chromium
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Run the complete release gate
+        run: npm run verify:ci
+
+      - name: Generate dependency and notice evidence
+        shell: bash
+        run: |
+          npm sbom --sbom-format cyclonedx > sbom.cdx.json
+          npm query "*" --json > npm-inventory.json
+          sha256sum sbom.cdx.json npm-inventory.json THIRD_PARTY_NOTICES.md .wrangler/dry-run/production/index.js .wrangler/dry-run/production/index.js.map > release-evidence.SHA256SUMS
+
+      - name: Attest verified static and Worker artifacts
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/client/**
+            .wrangler/dry-run/production/index.js
+            .wrangler/dry-run/production/index.js.map
+
+      - name: Bind the CycloneDX SBOM to the verified Worker bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: .wrangler/dry-run/production/index.js
+          sbom-path: sbom.cdx.json
+
+      - name: Preserve dependency and notice evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: |
+            sbom.cdx.json
+            npm-inventory.json
+            THIRD_PARTY_NOTICES.md
+            release-evidence.SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve the exact verified static artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-dist-${{ github.sha }}
+          path: dist/client
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Preserve the exact verified Worker bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-worker-${{ github.sha }}
+          path: |
+            .wrangler/dry-run/production/index.js
+            .wrangler/dry-run/production/index.js.map
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy-production:
+    needs: verify
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: production-deployment
+      cancel-in-progress: false
+    steps:
+      - name: Check out the verified revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Restore the exact verified static artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-dist-${{ github.sha }}
+          path: dist/client
+
+      - name: Restore the exact verified Worker bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-worker-${{ github.sha }}
+          path: .verified-worker
+
+      - name: Refuse to supersede a newer main revision
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "${{ github.sha }}"
+
+      - name: Deploy the explicit production configuration
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          npm run deploy:production -- --tag "${{ github.sha }}" --message "GitHub Actions ${{ github.run_id }} · v${APP_VERSION} · ${{ github.sha }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_DEPLOY_APPROVED: "true"
+
+      - name: Verify the deployed release without creating records
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_WORKER_TAG="${{ github.sha }}" node scripts/smoke-deployment.mjs https://bitcoin-p2p-check.thumbking-btc.workers.dev

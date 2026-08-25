@@ -3,6 +3,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
+import { getPaymentExpiryState, PAYMENT_EXPIRING_THRESHOLD_SECONDS } from "../lib/payment-lifecycle";
+import { normalizeLightningAddress } from "../lib/lightning-address-normalize";
 import styles from "./trade-receive-info.module.css";
 
 export type ReceiveRail = "onchain" | "lightning";
@@ -18,6 +20,11 @@ export type VerifiedReceiveInfo = Readonly<{
   address?: string;
   expiresAt?: number;
 }>;
+export type ReceiveInfoLifecycleState =
+  | Readonly<{ status: "empty"; info: null; remainingSeconds: null }>
+  | Readonly<{ status: "ready"; info: VerifiedReceiveInfo; remainingSeconds: number | null }>
+  | Readonly<{ status: "stale"; info: VerifiedReceiveInfo; remainingSeconds: number | null }>
+  | Readonly<{ status: "expiring" | "expired"; info: VerifiedReceiveInfo; remainingSeconds: number }>;
 type Result = VerifiedReceiveInfo & {
   conditionKey: string;
   ownerRole: "buyer" | "seller";
@@ -32,7 +39,7 @@ type LightningPayResponse = {
   address?: string;
 };
 
-const MIN_SHARE_REMAINING_SECONDS = 120;
+const MIN_SHARE_REMAINING_SECONDS = PAYMENT_EXPIRING_THRESHOLD_SECONDS;
 
 function formatSats(value: number) {
   return `${value.toLocaleString("ko-KR")} sats`;
@@ -64,7 +71,12 @@ function invoiceLike(value: string) {
 }
 
 function lightningAddressLike(value: string) {
-  return /^[^\s@]+@[^\s@]+$/u.test(value.trim());
+  try {
+    normalizeLightningAddress(value.trim());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseBip21AmountSats(value: string) {
@@ -119,9 +131,14 @@ export type TradeReceiveInfoProps = {
   conditionKey: string;
   ownerRole: "buyer" | "seller";
   onResultChange: (info: VerifiedReceiveInfo | null) => void;
+  /**
+   * Unlike the compatibility callback above, this reports why an existing
+   * payment request became unusable instead of reducing every state to null.
+   */
+  onLifecycleChange?: (state: ReceiveInfoLifecycleState) => void;
 };
 
-export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange }: TradeReceiveInfoProps) {
+export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange, onLifecycleChange }: TradeReceiveInfoProps) {
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
@@ -135,18 +152,20 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   const generationRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
   const onResultChangeRef = useRef(onResultChange);
+  const onLifecycleChangeRef = useRef(onLifecycleChange);
 
-  const remainingSeconds = useMemo(() => {
-    if (!result?.expiresAt) return null;
-    return Math.max(0, result.expiresAt - nowSeconds);
-  }, [nowSeconds, result?.expiresAt]);
+  const paymentExpiry = useMemo(
+    () => getPaymentExpiryState(result?.expiresAt, nowSeconds),
+    [nowSeconds, result?.expiresAt],
+  );
+  const remainingSeconds = paymentExpiry.remainingSeconds;
 
   const resultStale = Boolean(result && (
     expectedSats !== result.amountSats
     || conditionKey !== result.conditionKey
     || ownerRole !== result.ownerRole
   ));
-  const resultExpiring = remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS;
+  const resultExpiring = paymentExpiry.status === "expiring" || paymentExpiry.status === "expired";
   const resultReady = Boolean(result && !resultStale && !resultExpiring);
 
   useEffect(() => {
@@ -157,10 +176,11 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
 
   useLayoutEffect(() => {
     onResultChangeRef.current = onResultChange;
-  }, [onResultChange]);
+    onLifecycleChangeRef.current = onLifecycleChange;
+  }, [onLifecycleChange, onResultChange]);
 
-  const verifiedInfo = useMemo<VerifiedReceiveInfo | null>(() => {
-    if (!result || !resultReady) return null;
+  const resultInfo = useMemo<VerifiedReceiveInfo | null>(() => {
+    if (!result) return null;
     return Object.freeze({
       kind: result.kind,
       rail: result.rail,
@@ -170,17 +190,38 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       address: result.address,
       expiresAt: result.expiresAt,
     });
-  }, [result, resultReady]);
+  }, [result]);
+
+  const lifecycleState = useMemo<ReceiveInfoLifecycleState>(() => {
+    if (!resultInfo) return Object.freeze({ status: "empty", info: null, remainingSeconds: null });
+    if (paymentExpiry.status === "expired") {
+      return Object.freeze({ status: "expired", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    if (paymentExpiry.status === "expiring") {
+      return Object.freeze({ status: "expiring", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    if (resultStale) {
+      return Object.freeze({ status: "stale", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    return Object.freeze({ status: "ready", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+  }, [paymentExpiry, resultInfo, resultStale]);
+
+  const verifiedInfo = resultReady && lifecycleState.status === "ready" ? lifecycleState.info : null;
 
   useLayoutEffect(() => {
     onResultChangeRef.current(verifiedInfo);
   }, [verifiedInfo]);
+
+  useLayoutEffect(() => {
+    onLifecycleChangeRef.current?.(lifecycleState);
+  }, [lifecycleState]);
 
   useEffect(() => () => {
     generationRef.current += 1;
     requestAbortRef.current?.abort();
     requestAbortRef.current = null;
     onResultChangeRef.current(null);
+    onLifecycleChangeRef.current?.(Object.freeze({ status: "empty", info: null, remainingSeconds: null }));
   }, []);
 
   useEffect(() => {
@@ -188,7 +229,14 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     const tick = () => setNowSeconds(Math.floor(Date.now() / 1_000));
     tick();
     const timer = window.setInterval(tick, 1_000);
-    return () => window.clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [result?.expiresAt]);
 
   function clear() {
@@ -264,8 +312,10 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   }
 
   function makeLightningAddressResult(source: string, amountSats: number): Result {
-    const address = source.trim();
-    if (!lightningAddressLike(address)) {
+    let address: string;
+    try {
+      address = normalizeLightningAddress(source.trim()).address;
+    } catch {
       throw new Error("주소만 포함하려면 사용자명@도메인 형식의 라이트닝 주소를 입력하십시오.");
     }
     return {
@@ -300,7 +350,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
           conditionKey,
           ownerRole,
           payload: amountIncluded ? request.uri : request.address,
-          copyTarget: request.address,
+          copyTarget: amountIncluded ? request.uri : request.address,
           address: request.address,
         });
         setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소만 거래 기록 카드에 포함합니다.");
@@ -316,7 +366,9 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         return;
       }
       try {
-        setResult(makeLightningInvoiceResult(invoice, expectedSats, false));
+        const next = makeLightningInvoiceResult(invoice, expectedSats, false);
+        setNowSeconds(Math.floor(Date.now() / 1_000));
+        setResult(next);
         setFeedback("인보이스의 메인넷·금액·서명·만료시간을 확인했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "라이트닝 인보이스를 확인하지 못했습니다.");
@@ -359,6 +411,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       if (generationRef.current !== generation) return;
       const next = makeLightningInvoiceResult(data.invoice, expectedSats, true);
       if (generationRef.current !== generation) return;
+      setNowSeconds(Math.floor(Date.now() / 1_000));
       setResult(next);
       const normalized = isAddress ? data.address : data.normalizedSource;
       if (typeof normalized === "string") setLightningSource(normalized);
@@ -397,8 +450,6 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     }
   }
 
-  const inputRowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px", alignItems: "stretch" } as const;
-
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
       <div className={styles.header}>
@@ -424,7 +475,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       {rail === "onchain" ? (
         <div className={styles.field}>
           <label htmlFor="receive-onchain">온체인 수취 주소</label>
-          <div style={inputRowStyle}>
+          <div className={styles.inputRow}>
             <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
@@ -443,7 +494,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
           {lightningMode === "address" ? (
             <div className={styles.field}>
               <label htmlFor="receive-lightning">라이트닝 주소 / LNURL-pay</label>
-              <div style={inputRowStyle}>
+              <div className={styles.inputRow}>
                 <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
@@ -452,8 +503,8 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
           ) : (
             <div className={styles.field}>
               <label htmlFor="receive-invoice">BOLT11 인보이스</label>
-              <div style={inputRowStyle}>
-                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+              <div className={styles.inputRow}>
+                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} maxLength={MAX_BOLT11_LENGTH} onChange={(event) => { clear(); setInvoice(event.target.value.slice(0, MAX_BOLT11_LENGTH)); }} placeholder="lnbc... 또는 lightning:lnbc..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("invoice")}>붙여넣기</button>
               </div>
               <small>메인넷·서명·만료시간과 현재 거래의 받을 sats가 정확히 같은지 확인합니다.</small>
@@ -484,10 +535,12 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
             <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
                 <dl>
-                  <div className={styles.resultState}><dt>상태</dt><dd>카드에 포함됨</dd></div>
+                  <div className={styles.resultState}><dt>상태</dt><dd>{lifecycleState.status === "ready" ? "카드에 포함됨" : lifecycleState.status === "expiring" ? "곧 만료 · 포함 중지" : lifecycleState.status === "expired" ? "만료 · 포함 중지" : "조건 변경 · 포함 중지"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
             {resultStale ? <p className={styles.stale} role="alert">거래 조건이 바뀌었습니다. 현재 금액으로 다시 만들어야 공유할 수 있습니다.</p> : null}
+            {lifecycleState.status === "expiring" ? <p className={styles.stale} role="alert">인보이스가 2분 안에 만료됩니다. 현재 인보이스는 거래 기록에 포함되지 않습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
+            {lifecycleState.status === "expired" ? <p className={styles.stale} role="alert">인보이스가 만료되어 거래 기록에 포함되지 않습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
                 <details className={styles.resultDetails}>
                   <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
               <div className={styles.resultTarget}>

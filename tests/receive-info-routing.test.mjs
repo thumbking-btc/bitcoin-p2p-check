@@ -10,18 +10,19 @@ test("routes market and signed-record APIs through the Worker", async () => {
     readFile(new URL("../worker/trade-record.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(wrangler, /"run_worker_first"\s*:\s*\["\/api\/\*"\]/);
-  assert.doesNotMatch(wrangler, /"run_worker_first"\s*:\s*true/);
+  assert.match(wrangler, /"binding"\s*:\s*"ASSETS"/);
+  assert.match(wrangler, /"run_worker_first"\s*:\s*true/);
 
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.match(worker, /isTradeRecordApiPath\(url\.pathname\)/);
   assert.match(worker, /handleTradeRecordRequest\(request, environment\)/);
+  assert.match(worker, /staticAssetResponse\(request, environment\)/);
   assert.match(market, /receiveMode === "lightning-address"/);
-  assert.match(market, /handleLightningAddressRequest\(request\)/);
+  assert.match(market, /handleLightningAddressRequest\(request, environment\)/);
   assert.match(market, /receiveMode === "lightning-pay"/);
-  assert.match(market, /handleLightningPayRequest\(request\)/);
+  assert.match(market, /handleLightningPayRequest\(request, environment\)/);
   assert.match(tradeRecord, /pathname === "\/api\/trade-record"/);
   assert.match(tradeRecord, /crypto\.subtle\.sign/);
   assert.match(tradeRecord, /TRADE_RECORDS/);
-  assert.match(tradeRecord, /expirationTtl:\s*TRADE_RECORD_RETENTION_SECONDS/);
+  assert.match(tradeRecord, /recordTtl\(signed, createdAtMs\)/);
 });

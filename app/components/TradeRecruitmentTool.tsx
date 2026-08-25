@@ -30,7 +30,6 @@ type RecruitmentPost = {
 
 type RecruitmentPreviewProps = {
   generated: RecruitmentPost;
-  structuredKey: string;
   customizationSummary: string;
   children: ReactNode;
 };
@@ -59,7 +58,7 @@ function legacyCopy(value: string) {
   textarea.style.position = "fixed";
   textarea.style.opacity = "0";
   try {
-    document.body.append(textarea);
+  document.body.appendChild(textarea);
     textarea.select();
     return document.execCommand("copy");
   } finally {
@@ -76,11 +75,10 @@ function legacyCopy(value: string) {
   }
 }
 
-function RecruitmentPreview({ generated, structuredKey, customizationSummary, children }: RecruitmentPreviewProps) {
+function RecruitmentPreview({ generated, customizationSummary, children }: RecruitmentPreviewProps) {
   const [previewState, setPreviewState] = useState(() => ({
     preview: generated.text,
     generatedText: generated.text,
-    structuredKey,
   }));
   const [copyFeedback, setCopyFeedback] = useState<{
     generatedText: string;
@@ -88,21 +86,11 @@ function RecruitmentPreview({ generated, structuredKey, customizationSummary, ch
     message: string;
   } | null>(null);
   const [sharing, setSharing] = useState(false);
-  const structuredChanged = previewState.structuredKey !== structuredKey;
-  if (structuredChanged) {
-    setPreviewState({
-      preview: generated.text,
-      generatedText: generated.text,
-      structuredKey,
-    });
-  }
-  const syncedPreview = structuredChanged
-    ? { preview: generated.text, dirty: false }
-    : syncTradeRecruitmentPreview({
-        preview: previewState.preview,
-        previousGenerated: previewState.generatedText,
-        nextGenerated: generated.text,
-      });
+  const syncedPreview = syncTradeRecruitmentPreview({
+    preview: previewState.preview,
+    previousGenerated: previewState.generatedText,
+    nextGenerated: generated.text,
+  });
   const previewText = syncedPreview.preview;
   const previewDirty = syncedPreview.dirty;
   const copyStatus = copyFeedback?.generatedText === generated.text
@@ -114,7 +102,6 @@ function RecruitmentPreview({ generated, structuredKey, customizationSummary, ch
     setPreviewState({
       preview: generated.text,
       generatedText: generated.text,
-      structuredKey,
     });
     setCopyFeedback(null);
   }
@@ -189,7 +176,6 @@ function RecruitmentPreview({ generated, structuredKey, customizationSummary, ch
                 setPreviewState({
                   preview: event.target.value,
                   generatedText: generated.text,
-                  structuredKey,
                 });
                 setCopyFeedback(null);
               }}
@@ -332,8 +318,8 @@ function TradeRecruitmentToolComponent({
         </fieldset>
 
         <RecruitmentPreview
+          key={structuredKey}
           generated={generated}
-          structuredKey={structuredKey}
           customizationSummary={customizationSummary}
         >
           <fieldset className="recruitment-option-group">

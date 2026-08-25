@@ -4,23 +4,14 @@ import { SiteRouteNav } from "./components/SiteRouteNav";
 
 export const dynamic = "force-static";
 
-const REFERENCE_SECTION_GAP = 16;
-const MAIN_STYLE = { paddingBottom: REFERENCE_SECTION_GAP } as const;
-const REFERENCE_STACK_STYLE = {
-  display: "grid",
-  gap: REFERENCE_SECTION_GAP,
-  marginTop: REFERENCE_SECTION_GAP,
-} as const;
-const REFERENCE_CARD_STYLE = { marginTop: 0 } as const;
-
 export default function Home() {
   return (
     <>
-      <main className="site-main" style={MAIN_STYLE}>
+      <main className="site-main site-main-with-references">
         <P2PTradeTool />
 
-        <div className="reference-stack" style={REFERENCE_STACK_STYLE}>
-          <details className="reference-details" style={REFERENCE_CARD_STYLE}>
+        <div className="reference-stack">
+          <details className="reference-details">
             <summary>
               <span>계산 기준·데이터 출처</span>
               <small>프리미엄, 계산식과 공식 출처</small>
@@ -60,7 +51,7 @@ export default function Home() {
             </div>
           </details>
 
-          <details className="reference-details" style={REFERENCE_CARD_STYLE}>
+          <details className="reference-details">
             <summary>
               <span>제작자 보기</span>
               <small>제작자 정보와 후원</small>

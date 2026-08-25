@@ -5,7 +5,6 @@ import {
   TRADE_RECORD_KEY_ID_PATTERN,
   type SignedTradeRecord,
   type TradeRecord,
-// @ts-expect-error -- Node 22's native TypeScript test runner requires the explicit extension; this project emits no JS through tsc.
 } from "./trade-record.ts";
 
 export type TradeRecordPublicJwk = JsonWebKey & Readonly<{ kid: string }>;

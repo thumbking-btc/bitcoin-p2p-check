@@ -1,6 +1,7 @@
 # 비트코인 P2P 계산기
 
 현재 운영 버전: **v2.2.0**
+이 브랜치의 검증 대상 릴리스 후보: **v2.3.0**
 
 구매자와 판매자가 한 화면에서 거래 조건을 계산하고, 거래 모집글 또는 원본 확인이 가능한 거래 기록 카드로 공유할 수 있는 설치형 웹 앱(PWA)입니다.
 
@@ -38,7 +39,7 @@
 - 업비트 프리미엄과 mempool.space 수수료율은 각각 독립된 짧은 캐시를 사용해 동일 외부 데이터를 불필요하게 반복 조회하지 않습니다.
 - 입력한 거래 금액·판매자 프리미엄·자금 출처·모집글 메모는 업비트 WebSocket이나 시세 API로 전송하지 않습니다.
 - 공개 모집글에는 실제 자금 출처 종류, 비트코인 주소, 인보이스, QR, 지급 요청을 넣지 않습니다.
-- 거래 기록 카드 공유를 누르면 조건과 사용자가 선택한 수취정보가 `/api/trade-record`로 전송됩니다. 서버는 금액 일치 여부를 다시 확인하고 서명된 기록을 180일간 보관합니다.
+- 거래 기록 카드를 준비하면 조건과 사용자가 선택한 수취정보가 `/api/trade-record`로 전송됩니다. 서버는 금액 일치 여부를 다시 확인하고 15분짜리 비공개 준비 기록을 만듭니다. 사용자가 별도의 공유 동작을 완료한 기록만 확정되어 최대 180일간 공개-by-link로 제공되며, 취소·실패한 준비 기록은 철회합니다.
 - 원본 확인 링크를 아는 사람은 보관 기간 동안 조건과 카드에 포함한 주소 또는 인보이스를 볼 수 있습니다. 공개하면 안 되는 수취정보는 카드에 포함하지 마세요.
 - 거래 기록 PNG 자체는 사용자의 브라우저에서 공유 버튼을 누른 순간에만 생성됩니다.
 - Lightning Address에서 인보이스를 만들 때는 해당 주소 제공자의 표준 LNURL-pay 엔드포인트에 거래 금액을 요청합니다. 사이트는 발급받은 BOLT11을 검증한 뒤 사용자에게 표시합니다.
@@ -56,13 +57,13 @@
 - WebSocket 연결이 끊기면 화면이 보이고 온라인인 동안 12초마다 재연결을 시도합니다. 백그라운드 또는 오프라인 상태에서는 재연결을 시도하지 않습니다.
 - 외부 조회가 잠시 실패하면 최근 성공값을 확인용으로 표시하되, 오래되거나 갱신하지 못한 시세로는 거래 조건을 공유할 수 없습니다.
 - 거래 금액·판매자 프리미엄·선택한 자금 출처는 시세 API나 WebSocket에 전달되지 않으며, 거래 기록 카드를 만들 때만 서명 API로 전달됩니다.
-- `/api/trade-record`는 최신 시세, 계산 결과와 선택한 고정금액 결제정보를 재검증해 서명하고 Cloudflare KV에 180일간 저장합니다.
-- `/api/trade-record/:id`는 원본 확인 화면이 서명된 기록을 불러올 때 사용하며 응답을 캐시하지 않습니다.
+- `/api/trade-record`는 최신 시세, 계산 결과와 선택한 고정금액 결제정보를 재검증해 서명하고 15분짜리 pending 기록을 만듭니다. `/api/trade-record/:id/finalize`로 확정한 기록만 최대 180일간 공개 조회할 수 있습니다.
+- `/api/trade-record/:id`는 원본 확인 화면의 공개 조회와 capability를 가진 작성자의 철회에 사용하며, 응답을 캐시하지 않습니다. 화면의 공개 기록 관리에서 철회하면 기존 링크는 더 이상 열리지 않습니다.
 - 서비스 워커 등록 URL과 캐시 이름은 앱 버전에 연결되어 새 릴리스에서 오프라인 앱 셸도 함께 교체됩니다.
 
 ## 로컬 실행과 검증
 
-Node.js 22.19.0을 사용합니다. 잠금 파일 기준으로 의존성을 설치한 뒤 `verify` 한 번으로 린트, 프로덕션 빌드와 빌드 결과 테스트를 순서대로 실행합니다.
+Node.js 22.19.0을 사용합니다. 잠금 파일 기준으로 의존성을 설치한 뒤 `verify` 한 번으로 lint, typecheck, production build, 전체 빌드 결과 test, Worker type drift와 production/preview Wrangler dry run을 순서대로 실행합니다.
 
 ```bash
 npm ci
@@ -70,20 +71,34 @@ npm run verify
 npm run dev
 ```
 
-개별 테스트만 다시 실행할 때는 기존 빌드 결과를 대상으로 `npm run test:built`를 사용합니다. 빌드부터 테스트까지 다시 실행하려면 `npm test`를 사용합니다.
+주요 명령은 다음과 같습니다.
+
+- `npm run dev`: vinext 개발 서버를 실행합니다.
+- `npm run start`: `wrangler.jsonc`의 production 형태를 로컬 Worker로 실행합니다. 거래 기록 시험에는 commit하지 않은 local signing secret이 필요합니다.
+- `npm run start:preview`: KV와 signing secret 없이 거래 기록 기능이 fail closed인 `wrangler.preview.jsonc`를 실행합니다.
+- `npm run test:built`: 기존 `dist`를 대상으로 모든 `tests/*.test.mjs`를 실행합니다.
+- `npm test`: 새로 build한 뒤 전체 빌드 결과 test를 실행합니다.
+- `npm run verify:ci`: `verify` 뒤 개발·빌드 도구를 포함한 전체 의존성의 high severity 보안 감사를 실행합니다.
+
+local secret은 `.dev.vars` 또는 `.env` 계열에만 두고 commit하지 마십시오. production KV, production signing key와 preview 환경을 함께 사용하지 마십시오.
 
 ## 배포
 
-GitHub의 기능 브랜치는 Cloudflare 프리뷰로 빌드되고, 승인된 릴리스가 `main`에 반영되면 프로덕션 Worker가 자동 배포됩니다. 정식 버전 태그는 실제 프로덕션 릴리스에만 부여합니다.
+Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 합니다. production 배포의 유일한 정상 경로는 `.github/workflows/verify.yml`입니다. 최신 `main` SHA에서 `verify`가 성공하고 GitHub `production` environment의 required reviewer가 승인한 뒤에만, 같은 run이 보존한 `verified-dist-<SHA>`와 `verified-worker-<SHA>`를 다시 빌드하지 않고 `wrangler.jsonc`로 `bitcoin-p2p-check` Worker에 배포합니다. 두 산출물에는 provenance를, Worker bundle에는 CycloneDX SBOM attestation을 연결합니다.
 
-Pull Request와 `main` 변경에는 GitHub Actions 검증을 실행합니다. 검증은 잠금 파일 기반 설치 후 `npm run verify`와 실제 배포 의존성 보안 감사를 수행하며, 실제 병합·배포 차단 여부는 저장소의 브랜치 보호 설정에서 해당 검사를 필수 조건으로 지정해야 합니다.
+`wrangler.jsonc`는 production 거래 기록 KV와 필수 `TRADE_RECORD_SIGNING_KEY`를 사용하고 production preview URL을 끕니다. `wrangler.preview.jsonc`는 별도 Worker 이름, 별도 rate-limit namespace, `DEPLOYMENT_ENV=preview`, `TRADE_RECORDS_ENABLED=false`를 사용하며 production KV와 signing secret을 선언하지 않습니다. 명시적 preview가 필요한 운영자만 `npm run deploy:preview`를 사용하십시오. branch push에 연결하지 마십시오.
 
-수동 배포가 필요한 비상 상황에서는 Cloudflare 로그인 후 아래 명령으로 검증을 먼저 통과한 정적 PWA와 시세·거래 기록 Worker를 함께 배포할 수 있습니다. 거래 기록 기능에는 KV 바인딩과 `TRADE_RECORD_SIGNING_KEY` secret이 필요합니다.
+저장소 설정과 Cloudflare 대시보드 상태는 코드만으로 강제하거나 확인할 수 없습니다. `main` 보호, required status check, environment reviewer, Cloudflare Build 연결 해제, secret, 경보와 backup은 [프로덕션 운영 런북](./docs/production-operations.md)의 수동 체크리스트에 따라 확인하고 증적을 남기십시오. 개발자 PC의 `npm run deploy`, `npm run deploy:production` 또는 직접 `wrangler deploy`는 production 승인 gate를 우회하므로 정상 운영에 사용하지 마십시오.
+
+배포 직후에는 거래 기록을 만들지 않는 읽기 전용 smoke를 실행합니다.
 
 ```bash
-npm run deploy
+node scripts/smoke-deployment.mjs https://<PRODUCTION_HOST>
+# 또는 BASE_URL=https://<PRODUCTION_HOST> node scripts/smoke-deployment.mjs
 ```
 
-컴퓨터나 개발 도구를 켜 두지 않아도 배포된 서비스는 계속 동작합니다. 초기 규모에서는 Cloudflare Workers 무료 한도 안에서 운영할 수 있으며, 사용량이 커지면 계정의 사용량과 과금 설정을 확인해야 합니다.
+smoke는 정적 HTML의 hash 기반 CSP, `sw.js`의 `no-store`, 버전 metadata, 시장 API, 유효 형식이지만 존재하지 않는 거래 기록 ID의 JSON 404, 알 수 없는 API의 JSON 404를 모두 읽기 전용 `GET`으로 확인합니다. 거래 기록을 생성·변경·삭제하지 않습니다.
+
+Cloudflare Worker version ID, 전체 Git SHA, GitHub Actions run과 annotated release tag를 서로 연결하고, rollback도 새 검증·승인을 거쳐 수행하십시오. 실제 iPhone, Android, Windows PWA와 native share는 [실기기 릴리스 체크리스트](./docs/release-device-checklist.md)를 사용하십시오. **법률 검토는 완료되지 않았으며**, 이 프로젝트의 기술 검증이 규제·개인정보·소비자 보호 적합성을 뜻하지 않습니다.
 
 릴리스별 변경 사항은 [CHANGELOG.md](./CHANGELOG.md)와 GitHub Releases에서 확인할 수 있습니다.

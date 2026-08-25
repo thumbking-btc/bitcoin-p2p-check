@@ -27,15 +27,17 @@ test("keeps the PWA cache tied to the app release and precaches rendered assets"
 });
 
 test("keeps compact, balanced spacing around the reference cards", async () => {
-  const home = await source("../app/page.tsx");
+  const [home, css] = await Promise.all([
+    source("../app/page.tsx"),
+    source("../app/globals.css"),
+  ]);
 
-  assert.match(home, /const REFERENCE_SECTION_GAP = 16;/);
-  assert.match(home, /const MAIN_STYLE = \{ paddingBottom: REFERENCE_SECTION_GAP \} as const;/);
-  assert.match(home, /gap: REFERENCE_SECTION_GAP/);
-  assert.match(home, /marginTop: REFERENCE_SECTION_GAP/);
-  assert.match(home, /const REFERENCE_CARD_STYLE = \{ marginTop: 0 \} as const;/);
-  assert.equal((home.match(/style=\{REFERENCE_CARD_STYLE\}/g) ?? []).length, 2);
-  assert.doesNotMatch(home, /paddingBottom:\s*0/);
+  assert.match(home, /site-main site-main-with-references/);
+  assert.equal((home.match(/className="reference-details"/g) ?? []).length, 2);
+  assert.doesNotMatch(home, /style=\{/);
+  assert.match(css, /\.site-main-with-references\s*\{[^}]*padding-bottom:\s*16px/s);
+  assert.match(css, /\.reference-stack\s*\{[^}]*gap:\s*16px;[^}]*margin-top:\s*16px/s);
+  assert.match(css, /\.reference-stack > \.reference-details\s*\{[^}]*margin-top:\s*0/s);
 });
 
 test("keeps Samsung Internet on the tested Android Chrome install guide", async () => {
@@ -86,12 +88,14 @@ test("materializes the final 4:3 trade card without DOM transform bridges", asyn
   assert.ok(materializeIndex >= 0 && normalizeIndex > materializeIndex);
 });
 
-test("shares premium upstream work and caches the result independently", async () => {
+test("caches premium work without request-scoped module globals", async () => {
   const marketWorker = await source("../worker/market.ts");
 
   assert.match(marketWorker, /PREMIUM_FRESH_CACHE_SECONDS\s*=\s*60/);
   assert.match(marketWorker, /PREMIUM_RETRY_BACKOFF_SECONDS\s*=\s*30/);
-  assert.match(marketWorker, /pendingPremiumFetch/);
+  assert.doesNotMatch(marketWorker, /let\s+pendingPremiumFetch/);
+  assert.doesNotMatch(marketWorker, /let\s+pendingSnapshot/);
+  assert.match(marketWorker, /readBoundedJson\(response, MAX_UPSTREAM_JSON_BYTES\)/);
   assert.match(marketWorker, /fresh-premium/);
   assert.match(marketWorker, /premium-backoff/);
   assert.match(marketWorker, /resolvePremium/);

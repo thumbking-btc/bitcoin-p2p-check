@@ -2,15 +2,14 @@
   "id": "/",
   "name": "비트코인 P2P 계산기",
   "short_name": "P2P 계산기",
-  "description": "업비트 최근 체결가와 판매자 프리미엄으로 비트코인 P2P 거래 조건을 계산하고 이미지로 공유합니다.",
+  "description": "업비트 최근 체결가와 판매자 프리미엄으로 비트코인 P2P 거래 조건을 계산하고 서명된 공유 기록을 만듭니다.",
   "lang": "ko-KR",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#f5f0e5",
   "theme_color": "#f7931a",
-  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "/icons/icon-192-v2.png",

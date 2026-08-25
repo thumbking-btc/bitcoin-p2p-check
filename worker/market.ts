@@ -1,6 +1,19 @@
-import type { WorkerExecutionContext } from "./index";
-import { handleLightningAddressRequest } from "./lightning-address";
-import { handleLightningPayRequest } from "./lightning-pay";
+import type { WorkerExecutionContext } from "./index.ts";
+import { cancelBody, readBoundedJson } from "./http-body.ts";
+import { handleLightningAddressRequest } from "./lightning-address.ts";
+import { handleLightningPayRequest } from "./lightning-pay.ts";
+import type { LightningRequestEnvironment } from "./lightning-rate-limit.ts";
+import {
+  parseFeePayload,
+  parsePremiumPayload,
+  parsePricePayload,
+  type FeeRates,
+  type FeeValue,
+  type PremiumValue,
+  type PriceValue,
+  type SourceResult,
+  type UpstreamFailure,
+} from "./market-source-parsers.ts";
 
 const UPBIT_TICKER = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
@@ -15,8 +28,8 @@ const PREMIUM_RETRY_BACKOFF_SECONDS = 30;
 const FEE_FRESH_CACHE_SECONDS = 60;
 const FEE_RETRY_BACKOFF_SECONDS = 30;
 const STALE_CACHE_SECONDS = 5 * 60;
-const MAX_PRICE_OBSERVATION_AGE_MS = 2 * 60_000;
-const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
+const MAX_UPSTREAM_JSON_BYTES = 256_000;
+const MAX_CACHED_JSON_BYTES = 256_000;
 
 const REQUEST_HEADERS = {
   Accept: "application/json",
@@ -33,29 +46,6 @@ const API_HEADERS = {
 };
 
 type SourceState = "current" | "stale" | "unavailable";
-type UpstreamFailure = "timeout" | "http" | "network" | "invalid";
-
-type PriceValue = {
-  priceKrw: number;
-  priceObservedAt: string;
-  retrievedAt: string;
-};
-
-type PremiumValue = {
-  koreaPremium: number;
-  retrievedAt: string;
-};
-
-type FeeRates = {
-  nextBlock: number;
-  halfHour: number;
-  hour: number;
-};
-
-type FeeValue = {
-  feeRates: FeeRates;
-  retrievedAt: string;
-};
 
 type PremiumBackoff = {
   failure: UpstreamFailure;
@@ -64,10 +54,6 @@ type PremiumBackoff = {
 type FeeBackoff = {
   failure: UpstreamFailure;
 };
-
-type SourceResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; failure: UpstreamFailure };
 
 type ResolvedSource<T> = {
   value: T | null;
@@ -110,24 +96,6 @@ type MarketSnapshot = {
 
 type CloudflareCacheStorage = CacheStorage & { default: Cache };
 
-let pendingSnapshotWithPrice: Promise<MarketSnapshot> | null = null;
-let pendingReferenceSnapshot: Promise<MarketSnapshot> | null = null;
-let pendingPremiumFetch: Promise<SourceResult<PremiumValue>> | null = null;
-
-function finite(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isoTimestamp(value: number): string | null {
-  try {
-    return new Date(value).toISOString();
-  } catch {
-    return null;
-  }
-}
-
 async function fetchJson(url: string, timeoutMs: number): Promise<SourceResult<unknown>> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -137,13 +105,20 @@ async function fetchJson(url: string, timeoutMs: number): Promise<SourceResult<u
       headers: REQUEST_HEADERS,
       signal: controller.signal,
     });
-    if (!response.ok) return { ok: false, failure: "http" };
-    return { ok: true, value: await response.json() };
+    if (!response.ok) {
+      await cancelBody(response.body);
+      return { ok: false, failure: "http" };
+    }
+    return { ok: true, value: await readBoundedJson(response, MAX_UPSTREAM_JSON_BYTES) };
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       return { ok: false, failure: "timeout" };
     }
-    return { ok: false, failure: "network" };
+    if (error instanceof TypeError) {
+      console.error(JSON.stringify({ event: "market_upstream_request_failed", errorName: error.name }));
+      return { ok: false, failure: "network" };
+    }
+    return { ok: false, failure: "invalid" };
   } finally {
     clearTimeout(timeout);
   }
@@ -152,95 +127,19 @@ async function fetchJson(url: string, timeoutMs: number): Promise<SourceResult<u
 async function fetchPrice(nowMs: number, retrievedAt: string): Promise<SourceResult<PriceValue>> {
   const result = await fetchJson(UPBIT_TICKER, PRICE_TIMEOUT_MS);
   if (!result.ok) return result;
-
-  const ticker = Array.isArray(result.value) ? result.value[0] : null;
-  const priceKrw = finite(ticker?.trade_price);
-  const tradeTimestamp = finite(ticker?.trade_timestamp);
-  const priceObservedAt = tradeTimestamp === null ? null : isoTimestamp(tradeTimestamp);
-
-  if (priceKrw === null || priceKrw <= 0 || tradeTimestamp === null || priceObservedAt === null) {
-    return { ok: false, failure: "invalid" };
-  }
-
-  const observationAge = nowMs - tradeTimestamp;
-  if (observationAge > MAX_PRICE_OBSERVATION_AGE_MS || observationAge < -MAX_FUTURE_CLOCK_SKEW_MS) {
-    return { ok: false, failure: "invalid" };
-  }
-
-  return {
-    ok: true,
-    value: { priceKrw, priceObservedAt, retrievedAt },
-  };
+  return parsePricePayload(result.value, nowMs, retrievedAt);
 }
 
 async function fetchPremium(retrievedAt: string): Promise<SourceResult<PremiumValue>> {
   const result = await fetchJson(UPBIT_PREMIUM, PREMIUM_TIMEOUT_MS);
   if (!result.ok) return result;
-
-  const data = result.value as {
-    data?: { records?: Array<{ code?: unknown; pair?: unknown; disparityRate?: unknown }> };
-  } | null;
-  const records = Array.isArray(data?.data?.records) ? data.data.records : [];
-  const btcPremium = records.find((record) =>
-    record?.code === "CRIX.UPBIT.KRW-BTC" || record?.pair === "BTC/KRW");
-  const premiumPercent = finite(btcPremium?.disparityRate);
-  const koreaPremium = premiumPercent === null ? null : premiumPercent / 100;
-
-  if (koreaPremium === null || Math.abs(koreaPremium) > 0.5) {
-    return { ok: false, failure: "invalid" };
-  }
-
-  return { ok: true, value: { koreaPremium, retrievedAt } };
-}
-
-function fetchPremiumShared(retrievedAt: string): Promise<SourceResult<PremiumValue>> {
-  if (pendingPremiumFetch) return pendingPremiumFetch;
-  pendingPremiumFetch = fetchPremium(retrievedAt).finally(() => {
-    pendingPremiumFetch = null;
-  });
-  return pendingPremiumFetch;
+  return parsePremiumPayload(result.value, retrievedAt);
 }
 
 async function fetchFees(retrievedAt: string): Promise<SourceResult<FeeValue>> {
   const result = await fetchJson(MEMPOOL_FEES, FEE_TIMEOUT_MS);
   if (!result.ok) return result;
-
-  const data = result.value as {
-    fastestFee?: unknown;
-    halfHourFee?: unknown;
-    hourFee?: unknown;
-    economyFee?: unknown;
-    minimumFee?: unknown;
-  } | null;
-  const fastest = finite(data?.fastestFee);
-  const halfHour = finite(data?.halfHourFee);
-  const hour = finite(data?.hourFee);
-  const economy = finite(data?.economyFee);
-  const minimum = finite(data?.minimumFee);
-  const values = [fastest, halfHour, hour, economy, minimum];
-
-  if (
-    values.some((value) => value === null || value <= 0 || value > 10_000)
-    || fastest === null
-    || halfHour === null
-    || hour === null
-    || economy === null
-    || minimum === null
-    || fastest < halfHour
-    || halfHour < hour
-    || hour < economy
-    || economy < minimum
-  ) {
-    return { ok: false, failure: "invalid" };
-  }
-
-  return {
-    ok: true,
-    value: {
-      feeRates: { nextBlock: fastest, halfHour, hour },
-      retrievedAt,
-    },
-  };
+  return parseFeePayload(result.value, retrievedAt);
 }
 
 type CacheName =
@@ -265,7 +164,7 @@ async function readCachedJson<T>(cache: Cache, key: Request): Promise<T | null> 
   const response = await cache.match(key);
   if (!response) return null;
   try {
-    return await response.json() as T;
+    return await readBoundedJson(response, MAX_CACHED_JSON_BYTES) as T;
   } catch {
     return null;
   }
@@ -321,7 +220,7 @@ async function resolvePremium(
     };
   }
 
-  const result = await fetchPremiumShared(retrievedAt);
+  const result = await fetchPremium(retrievedAt);
   if (result.ok) {
     context.waitUntil(Promise.all([
       cache.put(
@@ -495,13 +394,14 @@ async function buildSnapshot(
 export async function handleMarketRequest(
   request: Request,
   context: WorkerExecutionContext,
+  environment?: LightningRequestEnvironment,
 ): Promise<Response> {
   const receiveMode = new URL(request.url).searchParams.get("receive");
   if (request.method === "POST" && receiveMode === "lightning-address") {
-    return handleLightningAddressRequest(request);
+    return handleLightningAddressRequest(request, environment);
   }
   if (request.method === "POST" && receiveMode === "lightning-pay") {
-    return handleLightningPayRequest(request);
+    return handleLightningPayRequest(request, environment);
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -519,17 +419,7 @@ export async function handleMarketRequest(
   const cached = await readCachedJson<MarketSnapshot>(cache, freshKey);
   if (cached) return publicResponse(cached, "HIT", request.method);
 
-  let pendingSnapshot = includePrice ? pendingSnapshotWithPrice : pendingReferenceSnapshot;
-  if (!pendingSnapshot) {
-    pendingSnapshot = buildSnapshot(request, cache, context, includePrice).finally(() => {
-      if (includePrice) pendingSnapshotWithPrice = null;
-      else pendingReferenceSnapshot = null;
-    });
-    if (includePrice) pendingSnapshotWithPrice = pendingSnapshot;
-    else pendingReferenceSnapshot = pendingSnapshot;
-  }
-
-  const snapshot = await pendingSnapshot;
+  const snapshot = await buildSnapshot(request, cache, context, includePrice);
   if (snapshot.status !== "unavailable") {
     context.waitUntil(cache.put(
       freshKey,

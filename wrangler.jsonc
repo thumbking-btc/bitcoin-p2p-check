@@ -2,8 +2,16 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "bitcoin-p2p-check",
   "main": "./worker/index.ts",
-  "compatibility_date": "2026-05-22",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "preview_urls": false,
+  "vars": {
+    "DEPLOYMENT_ENV": "production",
+    "TRADE_RECORDS_ENABLED": "true"
+  },
+  "secrets": {
+    "required": ["TRADE_RECORD_SIGNING_KEY"]
+  },
   "kv_namespaces": [
     {
       "binding": "TRADE_RECORDS",
@@ -18,12 +26,41 @@
         "limit": 6,
         "period": 60
       }
+    },
+    {
+      "name": "LIGHTNING_REQUEST_RATE_LIMITER",
+      "namespace_id": "2026082502",
+      "simple": {
+        "limit": 12,
+        "period": 60
+      }
     }
   ],
+  "version_metadata": {
+    "binding": "WORKER_VERSION"
+  },
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 0,
+    "logs": {
+      "enabled": false,
+      "head_sampling_rate": 0,
+      "invocation_logs": false,
+      "persist": false,
+      "destinations": []
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 0,
+      "persist": false,
+      "destinations": []
+    }
+  },
   "assets": {
     "directory": "./dist/client",
+    "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": true
   }
 }

@@ -1,17 +1,61 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { calculateP2PQuote, SATS_PER_BTC, stepPremiumPercent } from "../lib/p2p-quote.mjs";
+import {
+  calculateP2PQuote,
+  MAX_PREMIUM_PERCENT,
+  SATS_PER_BTC,
+  stepPremiumPercent,
+} from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { parseTradeFragment } from "../lib/trade-link.mjs";
-import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
+import {
+  readTradeDraft,
+  removeTradeDraft,
+  TRADE_DRAFT_STORAGE_KEY,
+  writeTradeDraft,
+} from "../lib/trade-draft.mjs";
 import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";
-import { createTradeRecord } from "../lib/trade-record-client";
+import {
+  isLiveStreamStalled,
+  LIVE_STREAM_STALL_TIMEOUT_MS,
+  markMarketPriceStale,
+  mergeLiveMarketSnapshot,
+  mergeRestMarketSnapshot,
+} from "../lib/market-freshness.mjs";
+import { runWithAbortTimeout } from "../lib/operation-timeout.mjs";
+import {
+  createPendingTradeRecord,
+  createTradeRecordRevokeToken,
+  finalizeTradeRecord,
+  revokeTradeRecord,
+} from "../lib/trade-record-client";
 import { deriveAppliedPriceKrw } from "../lib/trade-record";
+import {
+  cacheAttemptFile,
+  cacheAttemptRecord,
+  createLargeTradeConfirmationKey,
+  createPreparedTradeShare,
+  createShareAttempt,
+  isTradeShareTransitionSafe,
+  matchingShareAttempt,
+  recordShareDelivery,
+  removeManagedTradeRecord,
+  tradeRecordPaymentExpiresAt,
+  toManagedTradeRecord,
+  upsertManagedTradeRecord,
+  type ManagedTradeRecord,
+  type PreparedTradeShare,
+  type ShareAttemptCache,
+} from "../lib/trade-share-session";
 import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
-import { TradeReceiveInfoPortal, type VerifiedReceiveInfo } from "./TradeReceiveInfoPortal";
+import {
+  TradeReceiveInfoPortal,
+  type ReceiveInfoLifecycleState,
+  type VerifiedReceiveInfo,
+} from "./TradeReceiveInfoPortal";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
@@ -35,6 +79,8 @@ const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
 const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
+const MARKET_REQUEST_TIMEOUT_MS = 12_000;
+const TRADE_RECORD_CREATE_TIMEOUT_MS = 15_000;
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -71,6 +117,28 @@ const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
   fundingSource: "기재하지 않음",
   bitcoinDisplayUnit: "sats",
 };
+
+function freshDefaultTradeDraft(): TradeDraftFields {
+  return {
+    ...DEFAULT_TRADE_DRAFT,
+    krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
+    bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
+    amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
+  };
+}
+
+function fieldsFromStoredTradeDraft(stored: ReturnType<typeof readTradeDraft>): TradeDraftFields {
+  if (!stored) return freshDefaultTradeDraft();
+  return {
+    tradeRole: stored.tradeRole as TradeRole,
+    krwAmounts: { ...stored.krwAmounts },
+    bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
+    amountBasisByRole: { ...stored.amountBasisByRole },
+    premiumInput: stored.premiumInput,
+    fundingSource: DEFAULT_TRADE_DRAFT.fundingSource,
+    bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
+  };
+}
 
 function getTradeDraftStorage() {
   try {
@@ -117,29 +185,18 @@ type MarketSnapshot = {
 };
 
 async function requestMarketSnapshot(includePrice: boolean) {
-  const response = await fetch(`/api/market?price=${includePrice ? "1" : "0"}`, { cache: "no-store" });
-  if (!response.ok) throw new Error("market request failed");
-  const data = await response.json() as MarketSnapshot;
-  if (includePrice && (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0)) {
-    throw new Error("price unavailable");
-  }
-  return data;
-}
-
-function withLivePrice(snapshot: MarketSnapshot, price: LivePrice): MarketSnapshot {
-  const priceObservedAt = new Date(price.observedAtMs).toISOString();
-  return {
-    ...snapshot,
-    status: snapshot.sourceStatus?.premium === "current" ? "current" : "partial",
-    priceKrw: price.priceKrw,
-    priceObservedAt,
-    sourceStatus: snapshot.sourceStatus
-      ? { ...snapshot.sourceStatus, price: "current" }
-      : snapshot.sourceStatus,
-    staleAgeSeconds: snapshot.staleAgeSeconds
-      ? { ...snapshot.staleAgeSeconds, price: null }
-      : snapshot.staleAgeSeconds,
-  };
+  return runWithAbortTimeout(async (signal: AbortSignal) => {
+    const response = await fetch(`/api/market?price=${includePrice ? "1" : "0"}`, {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok) throw new Error("market request failed");
+    const data = await response.json() as MarketSnapshot;
+    if (includePrice && (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0)) {
+      throw new Error("price unavailable");
+    }
+    return data;
+  }, MARKET_REQUEST_TIMEOUT_MS, "시세 조회 시간이 초과되었습니다.");
 }
 
 async function parseUpbitTickerMessage(data: unknown): Promise<LivePrice | null> {
@@ -208,7 +265,11 @@ function grouped(value: string) {
   return parsed === null ? value : parsed.toLocaleString("ko-KR");
 }
 
-function formatKrw(value: number | null | undefined) {
+function formatKrw(value: number | string | null | undefined) {
+  if (typeof value === "string") {
+    if (!/^(?:0|[1-9]\d*)$/u.test(value)) return "—";
+    return `${BigInt(value).toLocaleString("ko-KR")}원`;
+  }
   if (value == null || !Number.isFinite(value)) return "—";
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
@@ -319,7 +380,7 @@ function downloadTradeImage(file: File) {
   link.href = url;
   link.download = file.name;
   link.style.display = "none";
-  document.body.append(link);
+  document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
@@ -343,9 +404,15 @@ export function P2PTradeTool() {
   const [marketError, setMarketError] = useState("");
   const [priceExpired, setPriceExpired] = useState(false);
   const [livePriceActive, setLivePriceActive] = useState(false);
-  const [resultAnnouncement, setResultAnnouncement] = useState("");
+  const [resultLiveMode, setResultLiveMode] = useState<"off" | "polite">("polite");
   const [shareStatus, setShareStatus] = useState("");
+  const [preparedTradeShare, setPreparedTradeShare] = useState<PreparedTradeShare | null>(null);
+  const [managedTradeRecords, setManagedTradeRecords] = useState<ManagedTradeRecord[]>([]);
   const [isSharing, setIsSharing] = useState(false);
+  const [confirmedLargeTradeKey, setConfirmedLargeTradeKey] = useState("");
+  const [draftStatus, setDraftStatus] = useState("");
+  const [draftSyncRevision, setDraftSyncRevision] = useState(0);
+  const [receiveInfoLifecycleStatus, setReceiveInfoLifecycleStatus] = useState<ReceiveInfoLifecycleState["status"]>("empty");
   const [verifiedReceiveInfo, setVerifiedReceiveInfo] = useState<VerifiedReceiveInfo | null>(null);
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
@@ -354,22 +421,34 @@ export function P2PTradeTool() {
   const livePriceActiveRef = useRef(false);
   const isSharingRef = useRef(false);
   const paymentLockRef = useRef(false);
+  const receiveInfoLifecycleStatusRef = useRef<ReceiveInfoLifecycleState["status"]>("empty");
   const pendingMarketSnapshotRef = useRef<MarketSnapshot | null>(null);
-  const suppressNextResultAnnouncementRef = useRef(false);
+  const shareAttemptCacheRef = useRef<ShareAttemptCache | null>(null);
+  const preparedTradeShareRef = useRef<PreparedTradeShare | null>(null);
+  const currentShareAttemptKeyRef = useRef("");
+  const sharePreparationAllowedRef = useRef(false);
+  const autoRevokingRecordIdRef = useRef("");
+
+  const replaceDraftFields = useCallback((fields: TradeDraftFields) => {
+    setTradeRole(fields.tradeRole);
+    setKrwAmounts(fields.krwAmounts);
+    setBitcoinAmountInputs(fields.bitcoinAmountInputs);
+    setAmountBasisByRole(fields.amountBasisByRole);
+    setPremiumInput(fields.premiumInput);
+    setFundingSource(fields.fundingSource);
+    setBitcoinDisplayUnit(fields.bitcoinDisplayUnit);
+  }, []);
 
   const applyMarketSnapshot = useCallback((data: MarketSnapshot, silent: boolean) => {
     const current = marketRef.current;
-    const nextData = livePriceActiveRef.current && current?.priceKrw && current.priceObservedAt
-      ? withLivePrice(data, {
-          priceKrw: current.priceKrw,
-          observedAtMs: new Date(current.priceObservedAt).getTime(),
-        })
-      : data;
-    if (isSharingRef.current || paymentLockRef.current) {
+    const referenceLocked = Boolean(isSharingRef.current || paymentLockRef.current || preparedTradeShareRef.current);
+    const latest = referenceLocked ? pendingMarketSnapshotRef.current ?? current : current;
+    const nextData = mergeRestMarketSnapshot(data, latest, livePriceActiveRef.current) as MarketSnapshot;
+    if (referenceLocked) {
       pendingMarketSnapshotRef.current = nextData;
       return;
     }
-    suppressNextResultAnnouncementRef.current = silent;
+    if (silent) setResultLiveMode("off");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
@@ -379,24 +458,36 @@ export function P2PTradeTool() {
 
   const applyLivePrice = useCallback((price: LivePrice) => {
     const current = marketRef.current;
-    if (!current) return false;
-
-    const currentObservedAt = current.priceObservedAt ? new Date(current.priceObservedAt).getTime() : 0;
-    if (Number.isFinite(currentObservedAt) && currentObservedAt > price.observedAtMs) return true;
-
-    const nextData = withLivePrice(current, price);
-    if (isSharingRef.current || paymentLockRef.current) {
+    const referenceLocked = Boolean(isSharingRef.current || paymentLockRef.current || preparedTradeShareRef.current);
+    const latest = referenceLocked ? pendingMarketSnapshotRef.current ?? current : current;
+    if (!latest) return false;
+    const nextData = mergeLiveMarketSnapshot(latest, price) as MarketSnapshot;
+    if (nextData === latest) return true;
+    if (referenceLocked) {
       pendingMarketSnapshotRef.current = nextData;
       return true;
     }
 
-    suppressNextResultAnnouncementRef.current = true;
+    setResultLiveMode("off");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
     setMarketError("");
     setPriceExpired(false);
     return true;
+  }, []);
+
+  const markMarketStale = useCallback((message: string) => {
+    const current = marketRef.current;
+    const stale = markMarketPriceStale(current);
+    if (stale) {
+      marketRef.current = stale;
+      setMarket(stale);
+    }
+    setResultLiveMode("off");
+    setMarketState("error");
+    setPriceExpired(true);
+    setMarketError(message);
   }, []);
 
   const refreshMarket = useCallback((mode: MarketRefreshMode) => {
@@ -420,12 +511,15 @@ export function P2PTradeTool() {
     refresh.promise = requestMarketSnapshot(includePrice).then(
       (data) => applyMarketSnapshot(data, refresh.mode === "silent"),
       () => {
-        if (refresh.mode === "silent" && marketRef.current) return;
+        if (marketRef.current) {
+          markMarketStale(refresh.mode === "silent"
+            ? "자동 시세 갱신에 실패했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다."
+            : "시세를 새로 불러오지 못했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다.");
+          return;
+        }
         setMarketState("error");
         setPriceExpired(true);
-        setMarketError(refresh.mode === "manual"
-          ? "시세를 새로 불러오지 못했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다."
-          : "업비트 최근 체결가를 불러오지 못했습니다. 잠시 후 시세 새로고침을 눌러 다시 확인하세요.");
+        setMarketError("업비트 최근 체결가를 불러오지 못했습니다. 시세 새로고침을 눌러 다시 확인하세요.");
       },
     ).finally(() => {
       lastMarketRefreshAtRef.current = Date.now();
@@ -433,18 +527,30 @@ export function P2PTradeTool() {
     });
     marketRequestRef.current = refresh;
     return refresh.promise;
-  }, [applyMarketSnapshot]);
+  }, [applyMarketSnapshot, markMarketStale]);
 
   const loadMarket = useCallback(async () => {
-    if (paymentLockRef.current) return;
+    if (paymentLockRef.current || preparedTradeShareRef.current) return;
     await refreshMarket("manual");
   }, [refreshMarket]);
 
   const handleVerifiedReceiveInfo = useCallback((info: VerifiedReceiveInfo | null) => {
-    const wasLocked = paymentLockRef.current;
-    paymentLockRef.current = Boolean(info);
     setVerifiedReceiveInfo(info);
-    if (!wasLocked || info) return;
+    if (!info) return;
+    paymentLockRef.current = true;
+  }, []);
+
+  const handleReceiveInfoLifecycle = useCallback((state: ReceiveInfoLifecycleState) => {
+    receiveInfoLifecycleStatusRef.current = state.status;
+    setReceiveInfoLifecycleStatus((current) => current === state.status ? current : state.status);
+    if (state.status !== "empty") {
+      paymentLockRef.current = true;
+      return;
+    }
+    const wasLocked = paymentLockRef.current;
+    paymentLockRef.current = false;
+    setVerifiedReceiveInfo(null);
+    if (!wasLocked) return;
     const pendingSnapshot = pendingMarketSnapshotRef.current;
     if (!pendingSnapshot) return;
     pendingMarketSnapshotRef.current = null;
@@ -507,6 +613,8 @@ export function P2PTradeTool() {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let renderTimer: number | null = null;
+    let watchdogTimer: number | null = null;
+    let lastMessageAt = 0;
     let lastRenderedAt = 0;
     let queuedPrice: LivePrice | null = null;
 
@@ -527,12 +635,20 @@ export function P2PTradeTool() {
       renderTimer = null;
     };
 
+    const clearWatchdogTimer = () => {
+      if (watchdogTimer === null) return;
+      window.clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    };
+
     const browserIsActive = () => document.visibilityState === "visible" && navigator.onLine !== false;
 
     const disconnect = () => {
       clearReconnectTimer();
       clearRenderTimer();
+      clearWatchdogTimer();
       queuedPrice = null;
+      lastMessageAt = 0;
       setStreamActive(false);
       const activeSocket = socket;
       socket = null;
@@ -568,6 +684,27 @@ export function P2PTradeTool() {
       reconnectTimer = window.setTimeout(connect, LIVE_PRICE_RECONNECT_DELAY_MS);
     };
 
+    const armWatchdog = (activeSocket: WebSocket) => {
+      clearWatchdogTimer();
+      watchdogTimer = window.setTimeout(() => {
+        watchdogTimer = null;
+        if (disposed || socket !== activeSocket || !browserIsActive()) return;
+        if (!isLiveStreamStalled(lastMessageAt)) {
+          armWatchdog(activeSocket);
+          return;
+        }
+        markMarketStale("실시간 시세 수신이 중단되었습니다. 최신 시세를 다시 확인하고 있습니다.");
+        setStreamActive(false);
+        activeSocket.close();
+        const activeRefresh = marketRequestRef.current?.promise;
+        void (async () => {
+          if (activeRefresh) await activeRefresh;
+          if (disposed || !browserIsActive()) return;
+          await refreshMarket("manual");
+        })();
+      }, LIVE_STREAM_STALL_TIMEOUT_MS);
+    };
+
     const connect = () => {
       if (disposed || !browserIsActive() || socket) return;
       clearReconnectTimer();
@@ -577,6 +714,8 @@ export function P2PTradeTool() {
 
       nextSocket.onopen = () => {
         if (disposed || socket !== nextSocket || !browserIsActive()) return;
+        lastMessageAt = Date.now();
+        armWatchdog(nextSocket);
         nextSocket.send(JSON.stringify([
           { ticket: `bitcoin-p2p-check-${Date.now()}` },
           { type: "trade", codes: ["KRW-BTC"], is_only_realtime: true },
@@ -587,6 +726,8 @@ export function P2PTradeTool() {
       nextSocket.onmessage = (event) => {
         void parseUpbitTickerMessage(event.data).then((price) => {
           if (!price || disposed || socket !== nextSocket || !browserIsActive()) return;
+          lastMessageAt = Date.now();
+          armWatchdog(nextSocket);
           queuePrice(price);
         });
       };
@@ -597,6 +738,8 @@ export function P2PTradeTool() {
 
       nextSocket.onclose = () => {
         if (socket !== nextSocket) return;
+        clearWatchdogTimer();
+        lastMessageAt = 0;
         socket = null;
         setStreamActive(false);
         scheduleReconnect();
@@ -631,27 +774,14 @@ export function P2PTradeTool() {
       window.removeEventListener("offline", handleOffline);
       disconnect();
     };
-  }, [applyLivePrice]);
+  }, [applyLivePrice, markMarketStale, refreshMarket]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       const imported = parseTradeFragment(window.location.hash);
       const storage = getTradeDraftStorage();
       const stored = readTradeDraft(storage);
-      const hydratedDraft: TradeDraftFields = stored ? {
-        tradeRole: stored.tradeRole as TradeRole,
-        krwAmounts: { ...stored.krwAmounts },
-        bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
-        amountBasisByRole: { ...stored.amountBasisByRole },
-        premiumInput: stored.premiumInput,
-        fundingSource: stored.fundingSource as FundingSource,
-        bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
-      } : {
-        ...DEFAULT_TRADE_DRAFT,
-        krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
-        bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
-        amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
-      };
+      const hydratedDraft = fieldsFromStoredTradeDraft(stored);
 
       if (imported) {
         const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
@@ -679,17 +809,11 @@ export function P2PTradeTool() {
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
 
-      setTradeRole(hydratedDraft.tradeRole);
-      setKrwAmounts(hydratedDraft.krwAmounts);
-      setBitcoinAmountInputs(hydratedDraft.bitcoinAmountInputs);
-      setAmountBasisByRole(hydratedDraft.amountBasisByRole);
-      setPremiumInput(hydratedDraft.premiumInput);
-      setFundingSource(hydratedDraft.fundingSource);
-      setBitcoinDisplayUnit(hydratedDraft.bitcoinDisplayUnit);
+      replaceDraftFields(hydratedDraft);
       setDraftHydrated(true);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [replaceDraftFields]);
 
   useEffect(() => {
     if (!draftHydrated) return;
@@ -703,10 +827,28 @@ export function P2PTradeTool() {
       bitcoinAmountInputs,
       amountBasisByRole,
       premiumInput,
-      fundingSource,
       bitcoinDisplayUnit,
     });
-  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSource, krwAmounts, premiumInput, tradeRole]);
+  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, draftSyncRevision, krwAmounts, premiumInput, tradeRole]);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const storage = getTradeDraftStorage();
+    if (!storage) return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== storage || event.key !== TRADE_DRAFT_STORAGE_KEY) return;
+      skipNextDraftPersistence.current = true;
+      replaceDraftFields(fieldsFromStoredTradeDraft(readTradeDraft(storage)));
+      setDraftSyncRevision((current) => current + 1);
+      setDraftStatus(event.newValue === null
+        ? "다른 탭에서 저장된 초안을 삭제하여 기본값으로 되돌렸습니다."
+        : "다른 탭에서 변경한 초안을 반영했습니다.");
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [draftHydrated, replaceDraftFields]);
 
   useEffect(() => {
     if (!market?.priceObservedAt) return;
@@ -722,8 +864,13 @@ export function P2PTradeTool() {
     ? "판매자 프리미엄을 입력하세요."
     : premiumPercent <= -100
       ? "판매자 프리미엄은 -100%보다 크게 입력하세요."
+      : premiumPercent > MAX_PREMIUM_PERCENT
+        ? `판매자 프리미엄은 ${MAX_PREMIUM_PERCENT}% 이하로 입력하세요.`
       : "";
-  const premiumWarning = premiumPercent !== null && premiumPercent > -100 && Math.abs(premiumPercent) >= 10;
+  const premiumWarning = premiumPercent !== null
+    && premiumPercent > -100
+    && premiumPercent <= MAX_PREMIUM_PERCENT
+    && Math.abs(premiumPercent) >= 10;
   const referencePrice = market?.priceKrw ?? null;
   const referenceLabel = "업비트 최근 체결가";
   const referenceTime = market?.priceObservedAt ?? null;
@@ -763,6 +910,18 @@ export function P2PTradeTool() {
       premiumPercent,
     });
   }, [amount, amountBasis, premiumPercent, referencePrice]);
+  const largeTradeKey = quote ? createLargeTradeConfirmationKey({
+    role: tradeRole,
+    amountBasis,
+    paymentKrw: quote.paymentKrw,
+    sats: quote.sats,
+  }) : "";
+  const largeTradeConfirmed = !largeTradeKey || confirmedLargeTradeKey === largeTradeKey;
+  const tinyTradeWarning = quote && quote.sats <= 1_000
+    ? quote.sats === 1
+      ? "1 sat은 Lightning에서 전송 가능한 단위이지만, 온체인에서는 dust 기준에 미달할 수 있고 네트워크 수수료가 거래액을 넘을 수 있습니다. 결제 방식을 확인하세요."
+      : `${formatSats(quote.sats)}의 극소액 거래입니다. Lightning을 고려할 수 있지만, 온체인에서는 dust 기준에 미달하거나 네트워크 수수료가 거래액을 넘을 수 있습니다.`
+    : "";
 
   const multiplier = premiumPercent === null ? null : 1 + premiumPercent / 100;
   const premiumSummary = premiumPercent === null
@@ -803,12 +962,10 @@ export function P2PTradeTool() {
     : resultUnavailable;
 
   useEffect(() => {
-    if (suppressNextResultAnnouncementRef.current) {
-      suppressNextResultAnnouncementRef.current = false;
-      return;
-    }
-    setResultAnnouncement(currentResultAnnouncement);
-  }, [currentResultAnnouncement, market]);
+    if (resultLiveMode !== "off") return;
+    const frame = window.requestAnimationFrame(() => setResultLiveMode("polite"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentResultAnnouncement, resultLiveMode]);
 
   const tradeIntent = quote ? buildTradeIntent({
     tradeRole,
@@ -829,27 +986,13 @@ export function P2PTradeTool() {
         expiresAt: verifiedReceiveInfo.expiresAt,
       }
     : null;
-  const shareImageAllowed = Boolean(quote)
-    && referencePrice !== null
-    && premiumPercent !== null
-    && draftHydrated
-    && !stalePrice
-    && marketState === "ready";
-  const shareStatusIsError = Boolean(shareStatus)
-    && (shareStatus.startsWith("오류:") || shareStatus.includes("못") || shareStatus.includes("다시"));
-
-  async function shareTrade() {
-    if (!shareImageAllowed || !quote || referencePrice === null || referenceTime === null || premiumPercent === null || isSharing) return;
-    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
-      setPriceExpired(true);
-      setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
-      return;
-    }
-    setShareStatus("");
-    isSharingRef.current = true;
-    setIsSharing(true);
-    try {
-      const signed = await createTradeRecord({
+  const paymentLifecycleBlocksShare = receiveInfoLifecycleStatus === "stale"
+    || receiveInfoLifecycleStatus === "expiring"
+    || receiveInfoLifecycleStatus === "expired";
+  const paymentReferenceLocked = receiveInfoLifecycleStatus !== "empty";
+  const marketReferenceLocked = paymentReferenceLocked || Boolean(preparedTradeShare);
+  const tradeRecordDraft = quote && referencePrice !== null && referenceTime !== null && premiumPercent !== null
+    ? {
         condition: {
           role: tradeRole,
           amountBasis,
@@ -864,17 +1007,101 @@ export function P2PTradeTool() {
         },
         payment: paymentForRecord
           ? paymentForRecord.rail === "onchain" && paymentForRecord.address
-            ? { rail: "onchain", payload: paymentForRecord.payload, address: paymentForRecord.address }
+            ? { rail: "onchain" as const, payload: paymentForRecord.payload, address: paymentForRecord.address }
             : paymentForRecord.rail === "lightning"
               ? paymentForRecord.address
-                ? { rail: "lightning", payload: paymentForRecord.payload, address: paymentForRecord.address }
-                : { rail: "lightning", payload: paymentForRecord.payload }
+                ? { rail: "lightning" as const, payload: paymentForRecord.payload, address: paymentForRecord.address }
+                : { rail: "lightning" as const, payload: paymentForRecord.payload }
               : null
           : null,
+      } satisfies Parameters<typeof createPendingTradeRecord>[0]
+    : null;
+  const shareAttemptKey = tradeRecordDraft ? JSON.stringify(tradeRecordDraft) : "";
+  const preparedShareIsCurrent = Boolean(preparedTradeShare && preparedTradeShare.key === shareAttemptKey);
+  const shareImageAllowed = Boolean(quote)
+    && outputMode === "trade-image"
+    && referencePrice !== null
+    && premiumPercent !== null
+    && draftHydrated
+    && largeTradeConfirmed
+    && !paymentLifecycleBlocksShare
+    && !stalePrice
+    && marketState === "ready";
+  const shareStatusIsError = Boolean(shareStatus)
+    && (shareStatus.startsWith("오류:") || shareStatus.includes("못") || shareStatus.includes("다시"));
+
+  useEffect(() => {
+    currentShareAttemptKeyRef.current = shareAttemptKey;
+  }, [shareAttemptKey]);
+
+  useEffect(() => {
+    sharePreparationAllowedRef.current = shareImageAllowed;
+  }, [shareImageAllowed]);
+
+  function releasePreparedReference() {
+    if (preparedTradeShareRef.current || paymentLockRef.current || isSharingRef.current) return;
+    const pendingSnapshot = pendingMarketSnapshotRef.current;
+    if (!pendingSnapshot) return;
+    pendingMarketSnapshotRef.current = null;
+    applyMarketSnapshot(pendingSnapshot, true);
+  }
+
+  function rememberManagedRecord(record: ManagedTradeRecord) {
+    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, record));
+  }
+
+  async function revokeKnownRecord(record: ManagedTradeRecord, successMessage: string) {
+    try {
+      await revokeTradeRecord(record.id, record.revokeToken, { timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS });
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+      if (preparedTradeShareRef.current?.signed.id === record.id) {
+        preparedTradeShareRef.current = null;
+        setPreparedTradeShare(null);
+      }
+      if (shareAttemptCacheRef.current?.signed?.id === record.id) shareAttemptCacheRef.current = null;
+      setShareStatus(successMessage);
+      return true;
+    } catch (reason) {
+      rememberManagedRecord(record);
+      setShareStatus(reason instanceof Error
+        ? `오류: 거래 기록을 철회하지 못했습니다. ${reason.message}`
+        : "오류: 거래 기록을 철회하지 못했습니다. 다시 시도해 주세요.");
+      return false;
+    } finally {
+      releasePreparedReference();
+    }
+  }
+
+  async function prepareTradeShare() {
+    if (!shareImageAllowed || !quote || !tradeRecordDraft || !shareAttemptKey || referenceTime === null || isSharing) return;
+    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
+      setPriceExpired(true);
+      setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
+      return;
+    }
+
+    setShareStatus("");
+    isSharingRef.current = true;
+    setIsSharing(true);
+    let stage: "creating" | "rendering" = "creating";
+    let attempt = matchingShareAttempt(shareAttemptCacheRef.current, shareAttemptKey);
+    if (!attempt) {
+      attempt = createShareAttempt(shareAttemptKey, createTradeRecordRevokeToken());
+      shareAttemptCacheRef.current = attempt;
+    }
+
+    try {
+      const pending = attempt.signed ?? await createPendingTradeRecord(tradeRecordDraft, {
+        revokeToken: attempt.revokeToken,
+        timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
       });
-      const signedCondition = signed.record.condition;
-      const { createTradeShareImage } = await import("../lib/trade-share-image");
-      const shareFile = await createTradeShareImage({
+      attempt = cacheAttemptRecord(attempt, pending);
+      shareAttemptCacheRef.current = attempt;
+
+      stage = "rendering";
+      const signedCondition = pending.record.condition;
+      const { createTradeShareImage, materializeTradeShareImage } = await import("../lib/trade-share-image");
+      const shareFile = attempt.file ?? await materializeTradeShareImage(await createTradeShareImage({
         tradeRole: signedCondition.role,
         amountBasis: signedCondition.amountBasis,
         bitcoinDisplayUnit: signedCondition.bitcoinDisplayUnit,
@@ -888,57 +1115,264 @@ export function P2PTradeTool() {
         sats: signedCondition.sats,
         btcAmount: signedCondition.sats / SATS_PER_BTC,
         appliedPriceKrw: deriveAppliedPriceKrw(signedCondition),
-        payment: signed.record.payment?.rail === "onchain"
-          ? signed.record.payment
-          : signed.record.payment
+        payment: pending.record.payment?.rail === "onchain"
+          ? pending.record.payment
+          : pending.record.payment
             ? {
                 rail: "lightning",
-                payload: signed.record.payment.payload,
-                ...(signed.record.payment.address ? { address: signed.record.payment.address } : {}),
-                ...(signed.record.payment.expiresAt ? { expiresAt: Math.floor(Date.parse(signed.record.payment.expiresAt) / 1_000) } : {}),
+                payload: pending.record.payment.payload,
+                ...(pending.record.payment.address ? { address: pending.record.payment.address } : {}),
+                ...(pending.record.payment.expiresAt ? { expiresAt: Math.floor(Date.parse(pending.record.payment.expiresAt) / 1_000) } : {}),
               }
             : null,
         record: {
-          id: signed.id,
-          createdAt: signed.record.createdAt,
-          verificationUrl: signed.verificationUrl,
+          id: pending.id,
+          createdAt: pending.record.createdAt,
+          verificationUrl: pending.verificationUrl,
         },
+      }));
+      attempt = cacheAttemptFile(attempt, shareFile);
+      shareAttemptCacheRef.current = attempt;
+
+      const preparationStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: attempt.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: pending.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(pending),
       });
-      const shareText = [
-        "비트코인 P2P 거래 기록 카드",
-        signed.record.payment ? "확인된 결제정보가 카드의 QR에 포함되어 있습니다." : "결제정보를 포함하지 않은 조건 기록입니다.",
-        `거래 정보 확인·복사: ${signed.verificationUrl}`,
-        "주소·금액·입금·수령 내역을 상대방과 함께 확인하세요.",
-      ].join("\n");
-      const outcome = await shareImageFile({
-        file: shareFile,
-        title: tradeIntent,
-        text: shareText,
-        nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
-        nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
-        download: downloadTradeImage,
-      });
-      if (outcome === "shared") {
-        setShareStatus("거래 기록 카드와 상세 정보 링크를 공유했습니다.");
-      } else if (outcome === "downloaded") {
-        setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
-      } else if (outcome === "downloaded-after-error") {
-        setShareStatus("공유 창을 열지 못해 PNG 이미지를 저장했습니다.");
-      }
+      if (!preparationStillSafe) throw new Error("준비 중 거래 조건 또는 시세 유효성이 바뀌었습니다.");
+
+      const prepared = createPreparedTradeShare(attempt, pending, shareFile, tradeIntent);
+      preparedTradeShareRef.current = prepared;
+      setPreparedTradeShare(prepared);
+      setShareStatus("비공개 카드 준비를 마쳤습니다. 아래 버튼을 다시 눌러 공유한 뒤 상세 기록을 공개 확정하십시오.");
     } catch (reason) {
-      setShareStatus(reason instanceof Error
-        ? `오류: ${reason.message}`
-        : "오류: 거래 기록 카드를 만들거나 공유하지 못했습니다. 다시 시도해 주세요.");
+      if (stage === "rendering" && attempt.signed) {
+        const record = toManagedTradeRecord(attempt.signed, attempt.revokeToken);
+        const revoked = await revokeKnownRecord(record, "준비에 실패한 비공개 거래 기록을 폐기했습니다.");
+        if (revoked) shareAttemptCacheRef.current = null;
+      }
+      if (stage !== "rendering" || shareAttemptCacheRef.current) {
+        setShareStatus(reason instanceof Error
+          ? `오류: ${reason.message} 같은 조건으로 재시도하면 동일한 준비 기록을 확인합니다.`
+          : "오류: 거래 기록 카드를 준비하지 못했습니다. 다시 시도해 주세요.");
+      }
     } finally {
       isSharingRef.current = false;
       setIsSharing(false);
-      const pendingSnapshot = pendingMarketSnapshotRef.current;
-      if (pendingSnapshot && !paymentLockRef.current) {
-        pendingMarketSnapshotRef.current = null;
-        applyMarketSnapshot(pendingSnapshot, true);
-      }
+      releasePreparedReference();
     }
   }
+
+  async function sharePreparedTrade() {
+    const prepared = preparedTradeShareRef.current;
+    if (!prepared || isSharing || prepared.key !== currentShareAttemptKeyRef.current || !sharePreparationAllowedRef.current) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    setShareStatus("");
+    let activePrepared = prepared;
+    let stage: "sharing" | "finalizing" = prepared.deliveryOutcome ? "finalizing" : "sharing";
+    try {
+      const sharingStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: activePrepared.signed.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(activePrepared.signed),
+      });
+      if (!sharingStillSafe) {
+        await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 직전 인보이스가 만료 임박 상태가 되었거나 거래 조건·시세가 바뀌어 비공개 준비 기록을 폐기했습니다.",
+        );
+        return;
+      }
+
+      if (!activePrepared.deliveryOutcome) {
+        let verificationUrlDelivery: NonNullable<PreparedTradeShare["verificationUrlDelivery"]> = "unavailable";
+        const outcome = await shareImageFile({
+          file: activePrepared.file,
+          title: activePrepared.title,
+          text: activePrepared.text,
+          nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
+          nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
+          download: downloadTradeImage,
+          verificationUrl: activePrepared.signed.verificationUrl,
+          copyVerificationUrl: async (url: string) => {
+            if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+            await navigator.clipboard.writeText(url);
+          },
+          onDownloadFallback: (details: { verificationUrlDelivery: NonNullable<PreparedTradeShare["verificationUrlDelivery"]> }) => {
+            verificationUrlDelivery = details.verificationUrlDelivery;
+          },
+        });
+        if (outcome === "cancelled") {
+          await revokeKnownRecord(
+            toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+            "공유를 취소하여 비공개 준비 기록을 폐기했습니다.",
+          );
+          return;
+        }
+        activePrepared = recordShareDelivery(activePrepared, outcome, verificationUrlDelivery);
+        preparedTradeShareRef.current = activePrepared;
+        setPreparedTradeShare(activePrepared);
+        stage = "finalizing";
+      }
+
+      const finalizationStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: activePrepared.signed.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(activePrepared.signed),
+      });
+      if (!finalizationStillSafe) {
+        await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 뒤 조건 또는 시세가 바뀌어 비공개 기록을 폐기했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
+        );
+        return;
+      }
+
+      const finalized = activePrepared.signed.lifecycle === "finalized"
+        ? activePrepared.signed
+        : await finalizeTradeRecord(activePrepared.signed.id, activePrepared.revokeToken, {
+            timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+          });
+      const finalizedRecord = toManagedTradeRecord(finalized, activePrepared.revokeToken, "finalized");
+      const finalizationRemainsSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: finalized.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(finalized),
+      });
+      if (!finalizationRemainsSafe) {
+        await revokeKnownRecord(finalizedRecord, "공개 확정 직후 조건 또는 시세가 바뀌어 기록을 철회했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.");
+        return;
+      }
+
+      rememberManagedRecord(finalizedRecord);
+      preparedTradeShareRef.current = null;
+      setPreparedTradeShare(null);
+      shareAttemptCacheRef.current = null;
+      if (activePrepared.deliveryOutcome === "shared") {
+        setShareStatus("거래 기록 카드 공유 후 상세 기록을 공개 확정했습니다. 아래에서 공개 기록을 철회할 수 있습니다.");
+      } else if (activePrepared.deliveryOutcome === "downloaded") {
+        setShareStatus(activePrepared.verificationUrlDelivery === "copied"
+          ? "PNG를 저장하고 상세 링크를 복사한 뒤 기록을 공개 확정했습니다. 두 항목을 함께 보내 주세요."
+          : "PNG를 저장하고 상세 기록을 공개 확정했습니다. 아래 상세 링크도 함께 보내 주세요.");
+      } else {
+        setShareStatus(activePrepared.verificationUrlDelivery === "copied"
+          ? "공유 창을 열지 못해 PNG와 상세 링크를 준비하고 기록을 공개 확정했습니다."
+          : "공유 창을 열지 못해 PNG를 저장하고 상세 기록을 공개 확정했습니다. 아래 링크도 함께 보내 주세요.");
+      }
+    } catch (reason) {
+      if (stage === "sharing") {
+        const revoked = await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 실패 후 비공개 준비 기록을 폐기했습니다.",
+        );
+        if (!revoked) {
+          setShareStatus(reason instanceof Error
+            ? `오류: 카드를 공유하지 못했고 준비 기록도 자동 폐기하지 못했습니다. ${reason.message}`
+            : "오류: 카드를 공유하지 못했고 준비 기록도 자동 폐기하지 못했습니다. 아래 철회 버튼으로 다시 시도해 주세요.");
+        }
+      } else {
+        rememberManagedRecord(toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken));
+        setShareStatus(reason instanceof Error
+          ? `오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. ${reason.message} 같은 버튼으로 확정을 재시도하거나 준비 기록을 철회하십시오.`
+          : "오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. 같은 버튼으로 재시도하거나 준비 기록을 철회하십시오.");
+      }
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  async function cancelPreparedTrade() {
+    const prepared = preparedTradeShareRef.current;
+    if (!prepared || isSharing) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    try {
+      await revokeKnownRecord(
+        toManagedTradeRecord(prepared.signed, prepared.revokeToken),
+        prepared.deliveryOutcome
+          ? "전달 후 공개 확정하지 못한 준비 기록을 철회했습니다. 카드의 상세 링크는 열리지 않습니다."
+          : "준비한 비공개 카드와 거래 기록을 폐기했습니다.",
+      );
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  async function revokeManagedTradeRecord(record: ManagedTradeRecord) {
+    if (isSharing) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    try {
+      await revokeKnownRecord(record, "공개 거래 기록을 철회했습니다. 기존 상세 링크는 더 이상 열리지 않습니다.");
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  useEffect(() => {
+    const prepared = preparedTradeShare;
+    if (!prepared) {
+      autoRevokingRecordIdRef.current = "";
+      return;
+    }
+    if (preparedShareIsCurrent && shareImageAllowed) {
+      if (!isSharingRef.current) autoRevokingRecordIdRef.current = "";
+      return;
+    }
+    if (isSharingRef.current || autoRevokingRecordIdRef.current === prepared.signed.id) return;
+
+    autoRevokingRecordIdRef.current = prepared.signed.id;
+    isSharingRef.current = true;
+    void (async () => {
+      setIsSharing(true);
+      try {
+        await revokeTradeRecord(prepared.signed.id, prepared.revokeToken, {
+          timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+        });
+        setManagedTradeRecords((current) => removeManagedTradeRecord(current, prepared.signed.id));
+        if (preparedTradeShareRef.current?.signed.id === prepared.signed.id) {
+          preparedTradeShareRef.current = null;
+          setPreparedTradeShare(null);
+        }
+        if (shareAttemptCacheRef.current?.signed?.id === prepared.signed.id) shareAttemptCacheRef.current = null;
+        setShareStatus("거래 조건 또는 시세가 바뀌어 비공개 준비 기록을 자동으로 폐기했습니다.");
+      } catch (reason) {
+        rememberManagedRecord(toManagedTradeRecord(prepared.signed, prepared.revokeToken));
+        setShareStatus(reason instanceof Error
+          ? `오류: 준비 기록을 자동 폐기하지 못했습니다. ${reason.message}`
+          : "오류: 준비 기록을 자동 폐기하지 못했습니다. 아래 철회 버튼으로 다시 시도해 주세요.");
+      } finally {
+        isSharingRef.current = false;
+        setIsSharing(false);
+        if (!preparedTradeShareRef.current && !paymentLockRef.current) {
+          const pendingSnapshot = pendingMarketSnapshotRef.current;
+          if (pendingSnapshot) {
+            pendingMarketSnapshotRef.current = null;
+            applyMarketSnapshot(pendingSnapshot, true);
+          }
+        }
+      }
+    })();
+  }, [applyMarketSnapshot, preparedShareIsCurrent, preparedTradeShare, shareImageAllowed]);
 
   function changeBitcoinDisplayUnit(nextUnit: BitcoinDisplayUnit) {
     if (nextUnit === bitcoinDisplayUnit) return;
@@ -980,6 +1414,47 @@ export function P2PTradeTool() {
     if (nextPremium !== null) setPremiumInput(String(nextPremium));
   }
 
+  function changeTradeRole(nextRole: TradeRole) {
+    if (nextRole === tradeRole) return;
+    if (amountBasis === "krw") {
+      const nextKrw = quote ? String(quote.paymentKrw) : krwAmount;
+      setKrwAmounts((current) => ({ ...current, [nextRole]: nextKrw }));
+      setAmountBasisByRole((current) => ({ ...current, [nextRole]: "krw" }));
+    } else {
+      const nextBitcoin = quote
+        ? bitcoinDisplayUnit === "btc" ? satsToBtcInput(quote.sats) : String(quote.sats)
+        : bitcoinAmountInput;
+      setBitcoinAmountInputs((current) => ({ ...current, [nextRole]: nextBitcoin }));
+      setAmountBasisByRole((current) => ({ ...current, [nextRole]: "bitcoin" }));
+    }
+    setTradeRole(nextRole);
+    setDraftStatus("역할을 바꾸어도 현재 거래 금액과 입력 단위를 유지했습니다.");
+  }
+
+  function clearSavedDraft() {
+    const storage = getTradeDraftStorage();
+    const removed = removeTradeDraft(storage);
+    skipNextDraftPersistence.current = true;
+    replaceDraftFields(freshDefaultTradeDraft());
+    setDraftSyncRevision((current) => current + 1);
+    setImportedTradeLink(false);
+    setConfirmedLargeTradeKey("");
+    setDraftStatus(removed
+      ? "이 브라우저에 저장된 초안을 삭제하고 기본값으로 되돌렸습니다."
+      : "초안 저장소에 접근하지 못했지만 화면은 기본값으로 되돌렸습니다.");
+  }
+
+  async function copyVerificationUrl(url: string) {
+    if (!url) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(url);
+      setShareStatus("상세 정보 링크를 클립보드에 복사했습니다.");
+    } catch {
+      setShareStatus("오류: 상세 정보 링크를 자동으로 복사하지 못했습니다. 링크를 직접 열어 복사해 주세요.");
+    }
+  }
+
   return (
     <section
       className={`trade-tool ${draftHydrated ? "is-draft-hydrated" : "is-draft-hydrating"}`}
@@ -995,13 +1470,15 @@ export function P2PTradeTool() {
           <button
             className="refresh-button"
             type="button"
-            aria-label={verifiedReceiveInfo
-              ? "결제 QR 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
+            aria-label={marketReferenceLocked
+              ? paymentReferenceLocked
+                ? "결제 QR 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
+                : "준비한 거래 기록의 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
               : marketState === "loading" ? "업비트 시세와 온체인 수수료율 조회 중" : "업비트 시세와 온체인 수수료율 새로고침"}
             onClick={() => void loadMarket()}
-            disabled={marketState === "loading" || isSharing || Boolean(verifiedReceiveInfo)}
+            disabled={marketState === "loading" || isSharing || marketReferenceLocked}
           >
-            {verifiedReceiveInfo ? "금액 고정 중" : marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
+            {marketReferenceLocked ? "금액 고정 중" : marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
           </button>
         </header>
 
@@ -1010,8 +1487,8 @@ export function P2PTradeTool() {
             <span>{referenceLabel}</span>
             <strong>{formatKrw(referencePrice)} <small>/ BTC</small></strong>
             <small className="live-market-time">
-              {verifiedReceiveInfo
-                ? <>결제 QR 금액 고정 · {formatTime(referenceTime)}</>
+              {marketReferenceLocked
+                ? <>{paymentReferenceLocked ? "결제 QR" : "공유 카드"} 금액 고정 · {formatTime(referenceTime)}</>
                 : <LiveMarketTime active={livePriceActive} tradeObservedAt={referenceTime} />}
             </small>
           </div>
@@ -1035,6 +1512,11 @@ export function P2PTradeTool() {
             공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
           </p>
         ) : null}
+        <p className="draft-storage-notice">
+          <span>역할·금액·프리미엄은 이 브라우저에 12시간 자동 저장됩니다. 자금 출처는 저장하지 않습니다.</span>
+          <button type="button" onClick={clearSavedDraft}>저장된 초안 삭제</button>
+        </p>
+        {draftStatus ? <p className="visually-hidden" role="status">{draftStatus}</p> : null}
 
         <fieldset className="role-fieldset">
           <legend>
@@ -1043,11 +1525,11 @@ export function P2PTradeTool() {
           </legend>
           <div className="role-options">
             <label htmlFor="trade-role-buyer" aria-label="비트코인을 삽니다. 원화를 보내고 비트코인을 받습니다.">
-              <input id="trade-role-buyer" type="radio" name="trade-role" checked={tradeRole === "buyer"} onChange={() => setTradeRole("buyer")} />
+              <input id="trade-role-buyer" type="radio" name="trade-role" checked={tradeRole === "buyer"} onChange={() => changeTradeRole("buyer")} />
               <span><strong>삽니다</strong><small>원화 보내고 BTC 받기</small></span>
             </label>
             <label htmlFor="trade-role-seller" aria-label="비트코인을 팝니다. 비트코인을 보내고 원화를 받습니다.">
-              <input id="trade-role-seller" type="radio" name="trade-role" checked={tradeRole === "seller"} onChange={() => setTradeRole("seller")} />
+              <input id="trade-role-seller" type="radio" name="trade-role" checked={tradeRole === "seller"} onChange={() => changeTradeRole("seller")} />
               <span><strong>팝니다</strong><small>BTC 보내고 원화 받기</small></span>
             </label>
           </div>
@@ -1079,7 +1561,7 @@ export function P2PTradeTool() {
                   const normalized = normalizeBtcInput(event.target.value);
                   if (normalized !== null) setBitcoinAmountInputs((current) => ({ ...current, [tradeRole]: normalized }));
                 }}
-                aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
+                aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}${tinyTradeWarning ? " tiny-trade-warning" : ""}${largeTradeKey ? " large-trade-warning" : ""}`}
                 aria-invalid={Boolean(bitcoinAmountError) || undefined}
               />
               <span className="amount-unit-control">
@@ -1099,8 +1581,8 @@ export function P2PTradeTool() {
             </span>
           </div>
 
-          <label className="field" htmlFor="seller-premium">
-            <span>판매자 프리미엄 (%)</span>
+          <div className="field">
+            <label htmlFor="seller-premium">판매자 프리미엄 (%)</label>
             <span className="input-with-unit">
               <input
                 id="seller-premium"
@@ -1115,6 +1597,7 @@ export function P2PTradeTool() {
                 <button
                   type="button"
                   onClick={() => adjustPremium(1)}
+                  disabled={premiumPercent !== null && premiumPercent >= MAX_PREMIUM_PERCENT}
                   aria-label="판매자 프리미엄 0.1% 올리기"
                   title="0.1% 올리기"
                 >
@@ -1131,11 +1614,25 @@ export function P2PTradeTool() {
                 </button>
               </span>
             </span>
-          </label>
+          </div>
           <p className="premium-note" id="premium-note">{premiumSummary}</p>
           {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
           {bitcoinAmountError ? <p className="input-alert" id="bitcoin-amount-error" role="alert">{bitcoinAmountError}</p> : null}
+          {tinyTradeWarning ? <p className="input-alert" id="tiny-trade-warning" role="status">{tinyTradeWarning}</p> : null}
+          {largeTradeKey ? (
+            <div className="input-alert large-trade-confirmation" id="large-trade-warning" role="status">
+              <strong>계산된 원화 금액이 10억원 이상입니다.</strong>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={largeTradeConfirmed}
+                  onChange={(event) => setConfirmedLargeTradeKey(event.target.checked ? largeTradeKey : "")}
+                />
+                자릿수와 거래 금액을 다시 확인했습니다.
+              </label>
+            </div>
+          ) : null}
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -1155,8 +1652,8 @@ export function P2PTradeTool() {
           </header>
           {quote && multiplier !== null ? (
             <>
-              <output className="visually-hidden" aria-live="polite" aria-atomic="true">
-                {resultAnnouncement || currentResultAnnouncement}
+              <output className="visually-hidden" aria-live={resultLiveMode} aria-atomic="true">
+                {currentResultAnnouncement}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
@@ -1172,7 +1669,7 @@ export function P2PTradeTool() {
                 </div>
                 <div className="result-row">
                   <dt>적용 BTC 단가</dt>
-                  <dd>{formatKrw(quote.appliedPrice)}<small>{referenceLabel} {formatKrw(referencePrice)} × {multiplier.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</small></dd>
+                  <dd>{formatKrw(quote.appliedPriceKrw)}<small>{referenceLabel} {formatKrw(referencePrice)} × {multiplier.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</small></dd>
                 </div>
               </dl>
             </>
@@ -1274,35 +1771,94 @@ export function P2PTradeTool() {
                 conditionKey={receiveConditionKey}
                 ownerRole={tradeRole}
                 onResultChange={handleVerifiedReceiveInfo}
+                onLifecycleChange={handleReceiveInfoLifecycle}
               />
             ) : null}
-            {!paymentForRecord ? (
+            {paymentLifecycleBlocksShare ? (
+              <p className="record-payment-state" role="alert">
+                <strong>결제정보를 다시 확인해야 합니다.</strong>
+                <span>{receiveInfoLifecycleStatus === "stale"
+                  ? "역할 또는 금액이 달라졌습니다. 현재 조건으로 결제정보를 다시 만들거나 삭제해 주세요."
+                  : "인보이스가 만료되었거나 곧 만료됩니다. 새 인보이스를 발급하거나 결제정보를 삭제해 주세요."}</span>
+              </p>
+            ) : !paymentForRecord ? (
               <p className="record-payment-state" role="status">
                 <strong>결제정보 미포함</strong>
                 <span>카드에는 보관용 거래 기록 QR이 들어갑니다.</span>
               </p>
             ) : null}
+            <aside className="share-disclosure" aria-label="거래 기록 저장과 공개 안내">
+              <strong>공유 전 확인</strong>
+              <ul>
+                <li>거래 역할·금액·시세·프리미엄과 선택한 자금 출처·결제정보가 거래 기록 서버에 저장됩니다.</li>
+                <li>공유 완료 후 상세 링크를 가진 사람은 로그인 없이 해당 기록을 최대 180일간 열 수 있습니다.</li>
+                <li>철회 권한은 이 화면에만 보관됩니다. 화면을 닫으면 공개 기록을 직접 철회할 수 없으므로 필요한 철회를 먼저 완료하십시오.</li>
+                <li>서명은 기록이 바뀌지 않았다는 점만 확인하며 상대방의 신원, 입금, BTC 수령 또는 거래 완료를 증명하지 않습니다.</li>
+              </ul>
+              <a href="/privacy/">개인정보 처리 안내 보기</a>
+            </aside>
             <div className="tool-actions">
               <button
                 className="share-button"
                 type="button"
-                onClick={() => void shareTrade()}
-                disabled={!shareImageAllowed || isSharing}
+                onClick={() => {
+                  if (preparedShareIsCurrent) void sharePreparedTrade();
+                  else void prepareTradeShare();
+                }}
+                disabled={isSharing || !shareImageAllowed || (Boolean(preparedTradeShare) && !preparedShareIsCurrent)}
                 aria-busy={isSharing}
               >
                 {isSharing
-                  ? "거래 기록 카드 만드는 중"
-                  : stalePrice
-                    ? "시세 새로고침 후 공유"
-                    : "거래 기록 카드 공유"}
+                  ? preparedTradeShare?.deliveryOutcome
+                    ? "상세 기록 공개 확정 중"
+                    : preparedTradeShare ? "공유 처리 중" : "거래 기록 카드 준비 중"
+                  : preparedShareIsCurrent
+                    ? preparedTradeShare?.deliveryOutcome ? "상세 기록 공개 확정 재시도" : "공유 창 열기"
+                  : !largeTradeConfirmed
+                    ? "고액 거래 확인 후 준비"
+                    : paymentLifecycleBlocksShare
+                      ? "결제정보 재확인 후 준비"
+                      : stalePrice
+                        ? "시세 새로고침 후 준비"
+                        : "거래 기록 카드 준비"}
               </button>
+              {preparedTradeShare ? (
+                <button
+                  className="share-cancel-button"
+                  type="button"
+                  onClick={() => void cancelPreparedTrade()}
+                  disabled={isSharing}
+                >
+                  {preparedTradeShare.deliveryOutcome ? "준비 기록 철회" : "준비 취소·기록 철회"}
+                </button>
+              ) : null}
               <p
                 className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "상세 링크는 생성 후 180일간 열 수 있습니다." : "")}
+                {shareStatus || (!isSharing ? "첫 단계에서는 15분짜리 비공개 준비 기록만 만듭니다." : "")}
               </p>
+              {managedTradeRecords.length > 0 ? (
+                <section className="managed-trade-records" aria-label="이 화면에서 만든 거래 기록 관리">
+                  <strong>거래 기록 관리</strong>
+                  <p>철회 권한은 이 화면을 닫기 전까지만 유지됩니다.</p>
+                  <ul>
+                    {managedTradeRecords.map((record) => (
+                      <li key={record.id}>
+                        <span>{record.lifecycle === "finalized" ? "공개 기록" : "준비 기록"}</span>
+                        {record.lifecycle === "finalized" ? (
+                          <>
+                            <a href={record.verificationUrl} target="_blank" rel="noreferrer">열기</a>
+                            <button type="button" onClick={() => void copyVerificationUrl(record.verificationUrl)} disabled={isSharing}>복사</button>
+                          </>
+                        ) : null}
+                        <button type="button" onClick={() => void revokeManagedTradeRecord(record)} disabled={isSharing}>철회</button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
             </div>
           </div>
 

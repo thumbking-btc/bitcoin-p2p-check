@@ -3,38 +3,47 @@ import { createOnchainRequest } from "../app/lib/onchain-request.mjs";
 import {
   TRADE_RECORD_PUBLIC_KEYS,
   type TradeRecordPublicJwk,
-// @ts-expect-error -- Node 22's native TypeScript test runner requires the explicit extension; this project emits no JS through tsc.
 } from "../app/lib/trade-record-verification.ts";
 import {
   assertFreshTradeRecordReference,
   canonicalTradeRecordBytes,
-  canonicalizeSignedTradeRecord,
   canonicalizeTradeRecord,
   canonicalizeTradeRecordCondition,
+  getTradeRecordRetentionPolicy,
   isTradeRecordId,
   TRADE_RECORD_KEY_ID_PATTERN,
-  TRADE_RECORD_RETENTION_SECONDS,
-  TRADE_RECORD_SCHEMA,
+  TRADE_RECORD_SCHEMA_V1,
   TradeRecordValidationError,
   type SignedTradeRecord,
   type TradeRecordPayment,
-// @ts-expect-error -- Node 22's native TypeScript test runner requires the explicit extension; this project emits no JS through tsc.
 } from "../app/lib/trade-record.ts";
-
-const API_HEADERS = {
-  "Cache-Control": "no-store",
-  "Content-Type": "application/json; charset=utf-8",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-};
+import { BoundedBodyError, cancelBody, readBoundedBytes, readBoundedJson } from "./http-body.ts";
+import { LightningAddressNormalizationError, normalizeLightningAddress } from "./lightning-address-normalize.ts";
+import { fail, json, methodNotAllowed, TradeRecordRequestError } from "./trade-record-http.ts";
+import {
+  authorizationToken,
+  assertTradeRecordPaymentFinalizable,
+  base64Url,
+  createRevokeToken,
+  managementKey,
+  MIN_LIGHTNING_PAYMENT_REMAINING_SECONDS,
+  parseCreateLifecycle,
+  parseManagementIndex,
+  parseStoredRecord,
+  PENDING_RECORD_TTL_SECONDS,
+  recordsExplicitlyDisabled,
+  recordTtl,
+  sha256Base64Url,
+  storageKey,
+  storedManagedRecord,
+  type ManagementIndex,
+  type RecordLifecycle,
+} from "./trade-record-lifecycle.ts";
 
 const MAX_REQUEST_BYTES = 8_192;
 const MAX_PRIVATE_JWK_BYTES = 2_048;
 const MAX_UPBIT_RESPONSE_BYTES = 16_384;
-const MIN_LIGHTNING_REMAINING_SECONDS = 120;
-const RECORD_KEY_PREFIX = "trade-record:v1:";
+const WRITTEN_TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
 const UPBIT_PRICE_URL = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PRICE_TIMEOUT_MS = 4_000;
 const UPBIT_PRICE_MAX_AGE_MS = 2 * 60_000;
@@ -48,6 +57,7 @@ const CF_CONNECTING_IP_PATTERN = /^[0-9A-Fa-f:.]{3,64}$/u;
 export interface TradeRecordKvNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options: Readonly<{ expirationTtl: number }>): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export interface TradeRecordRateLimit {
@@ -55,10 +65,14 @@ export interface TradeRecordRateLimit {
 }
 
 export interface TradeRecordEnvironment {
+  /** Non-secret deployment label. `preview` disables this API before binding access. */
+  DEPLOYMENT_ENV?: string;
   TRADE_RECORDS?: TradeRecordKvNamespace;
   TRADE_RECORD_CREATE_RATE_LIMITER?: TradeRecordRateLimit;
   /** Secret: JSON-encoded private P-256 JWK with a public `kid`. */
   TRADE_RECORD_SIGNING_KEY?: string;
+  /** Non-secret feature flag. Explicit false values disable this API before binding access. */
+  TRADE_RECORDS_ENABLED?: string | boolean;
 }
 
 export type TradeRecordHandlerOptions = Readonly<{
@@ -68,20 +82,6 @@ export type TradeRecordHandlerOptions = Readonly<{
   fetcher?: typeof fetch;
 }>;
 
-class TradeRecordRequestError extends Error {
-  readonly code: string;
-  readonly headers?: HeadersInit;
-  readonly status: number;
-
-  constructor(code: string, message: string, status = 400, headers?: HeadersInit) {
-    super(message);
-    this.name = "TradeRecordRequestError";
-    this.code = code;
-    this.headers = headers;
-    this.status = status;
-  }
-}
-
 type PrivateSigningJwk = JsonWebKey & {
   crv: "P-256";
   d: string;
@@ -90,16 +90,6 @@ type PrivateSigningJwk = JsonWebKey & {
   x: string;
   y: string;
 };
-
-function json(body: unknown, status = 200, extraHeaders?: HeadersInit): Response {
-  const headers = new Headers(API_HEADERS);
-  if (extraHeaders) new Headers(extraHeaders).forEach((value, key) => headers.set(key, value));
-  return Response.json(body, { status, headers });
-}
-
-function fail(code: string, message: string, status = 400, headers?: HeadersInit): never {
-  throw new TradeRecordRequestError(code, message, status, headers);
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -112,75 +102,26 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 }
 
 async function readLimitedJson(request: Request): Promise<unknown> {
-  const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_REQUEST_BYTES) fail("REQUEST_TOO_LARGE", "요청 내용이 너무 큽니다.", 413);
-  if (!request.body) fail("INVALID_REQUEST", "요청 내용을 확인하지 못했습니다.");
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > MAX_REQUEST_BYTES) {
-        await reader.cancel();
-        fail("REQUEST_TOO_LARGE", "요청 내용이 너무 큽니다.", 413);
-      }
-      chunks.push(value);
+    return await readBoundedJson(request, MAX_REQUEST_BYTES);
+  } catch (error) {
+    if (error instanceof BoundedBodyError && error.failure === "too-large") {
+      fail("REQUEST_TOO_LARGE", "요청 내용이 너무 큽니다.", 413);
     }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-  } catch {
+    if (error instanceof BoundedBodyError && error.failure === "invalid-media-type") {
+      fail("INVALID_REQUEST", "JSON 요청만 사용할 수 있습니다.", 415);
+    }
     fail("INVALID_REQUEST", "요청 JSON을 확인하지 못했습니다.");
   }
 }
 
 async function readLimitedResponseJson(response: Response, maximumBytes: number): Promise<unknown> {
-  if (!response.body) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답을 확인하지 못했습니다.", 503);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > maximumBytes) {
-        try {
-          await reader.cancel("response too large");
-        } catch {
-          // Keep the bounded-response error if cancellation also fails.
-        }
-        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답이 너무 큽니다.", 503);
-      }
-      chunks.push(value);
+    return await readBoundedJson(response, maximumBytes);
+  } catch (error) {
+    if (error instanceof BoundedBodyError && error.failure === "too-large") {
+      fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답이 너무 큽니다.", 503);
     }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (received === 0) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답을 확인하지 못했습니다.", 503);
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-  } catch {
     fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답 형식을 확인하지 못했습니다.", 503);
   }
 }
@@ -226,6 +167,7 @@ async function verifyUpbitReferencePrice(
         signal: controller.signal,
       });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      await cancelBody(response.body);
       if (redirectCount === UPBIT_PRICE_MAX_REDIRECTS) {
         fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답의 이동 횟수를 확인하지 못했습니다.", 503);
       }
@@ -253,6 +195,7 @@ async function verifyUpbitReferencePrice(
     if (!response) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답을 확인하지 못했습니다.", 503);
     const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
     if (response.status !== 200 || mediaType !== "application/json") {
+      await cancelBody(response.body);
       fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가 응답을 확인하지 못했습니다.", 503);
     }
     const value = await readLimitedResponseJson(response, MAX_UPBIT_RESPONSE_BYTES);
@@ -280,9 +223,8 @@ async function verifyUpbitReferencePrice(
   } catch (error) {
     if (error instanceof TradeRecordRequestError) throw error;
     console.error(JSON.stringify({
-      message: "trade_record_market_verification_failed",
+      event: "trade_record_market_verification_failed",
       errorName: error instanceof Error ? error.name : "UnknownError",
-      errorMessage: error instanceof Error ? error.message : "Unknown error",
     }));
     fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
   } finally {
@@ -357,30 +299,6 @@ function assertPublishedSigningKey(
   }
 }
 
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-}
-
-function randomRecordId(): string {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  return base64Url(bytes);
-}
-
-function storageKey(id: string): string {
-  return `${RECORD_KEY_PREFIX}${id}`;
-}
-
-async function unusedRecordId(records: TradeRecordKvNamespace): Promise<string> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const id = randomRecordId();
-    if (await records.get(storageKey(id)) === null) return id;
-  }
-  fail("ID_UNAVAILABLE", "거래 기록 식별자를 만들지 못했습니다.", 503);
-}
-
 function canonicalizePaymentDraft(value: unknown, sats: number, createdAtMs: number): TradeRecordPayment | null {
   if (value === null) return null;
   if (!isRecord(value) || (value.rail !== "onchain" && value.rail !== "lightning")) {
@@ -404,10 +322,16 @@ function canonicalizePaymentDraft(value: unknown, sats: number, createdAtMs: num
   }
 
   if (hasExactKeys(value, ["rail", "payload", "address"]) && typeof value.payload === "string" && typeof value.address === "string") {
-    const address = value.address.trim();
-    if (address !== value.address || value.payload !== address || address.length > 254 || !/^[^\s@]+@[^\s@]+$/u.test(address)) {
+    let address: string;
+    let payload: string;
+    try {
+      address = normalizeLightningAddress(value.address).address;
+      payload = normalizeLightningAddress(value.payload).address;
+    } catch (error) {
+      if (!(error instanceof LightningAddressNormalizationError)) throw error;
       fail("INVALID_PAYMENT", "라이트닝 주소를 사용자명@도메인 형식으로 확인하지 못했습니다.");
     }
+    if (payload !== address) fail("INVALID_PAYMENT", "라이트닝 주소 항목이 일치하지 않습니다.");
     return Object.freeze({ rail: "lightning", payload: address, address });
   }
 
@@ -418,7 +342,7 @@ function canonicalizePaymentDraft(value: unknown, sats: number, createdAtMs: num
     const invoice = validateBolt11Invoice(value.payload, {
       expectedSats: BigInt(sats),
       nowSeconds: Math.floor(createdAtMs / 1_000),
-      minimumRemainingSeconds: MIN_LIGHTNING_REMAINING_SECONDS,
+      minimumRemainingSeconds: MIN_LIGHTNING_PAYMENT_REMAINING_SECONDS,
     });
     return Object.freeze({
       rail: "lightning",
@@ -442,14 +366,29 @@ async function createRecord(
   publicKeys: Readonly<Record<string, TradeRecordPublicJwk>>,
   fetcher: typeof fetch,
 ): Promise<Response> {
-  const mediaType = (request.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
-  if (mediaType !== "application/json") {
-    fail("INVALID_REQUEST", "JSON 요청만 사용할 수 있습니다.", 415);
-  }
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const body = await readLimitedJson(request);
   if (!isRecord(body) || !hasExactKeys(body, ["condition", "payment"])) fail("INVALID_REQUEST", "거래 기록 요청 항목을 확인하지 못했습니다.");
+
+  const lifecycle = parseCreateLifecycle(request);
+  const revokeToken = createRevokeToken(request);
+  const tokenHash = await sha256Base64Url(revokeToken);
+  const id = tokenHash.slice(0, 16);
+  const existingIndex = parseManagementIndex(await records.get(managementKey(tokenHash)));
+  if (existingIndex && existingIndex.id !== id) fail("STORAGE_CORRUPT", "거래 기록 관리 인덱스를 확인하지 못했습니다.", 500);
+  if (existingIndex?.state === "revoked") fail("RECORD_REVOKED", "이 관리 capability로 만든 거래 기록은 폐기되었습니다.", 409);
+
+  const existingStored = await records.get(storageKey(id));
+  if (existingStored !== null) {
+    const existing = parseStoredRecord(existingStored);
+    if (existing.tokenHash !== tokenHash) fail("ID_CONFLICT", "거래 기록 식별자가 충돌했습니다.", 409);
+    if (existing.lifecycle === "revoked") fail("RECORD_REVOKED", "이 관리 capability로 만든 거래 기록은 폐기되었습니다.", 409);
+    return recordResponse(request, existing.signed, 200, {
+      lifecycle: existing.lifecycle,
+      revokeToken,
+    });
+  }
 
   const createdAtMs = Date.now();
   const condition = canonicalizeTradeRecordCondition(body.condition);
@@ -459,12 +398,12 @@ async function createRecord(
   assertPublishedSigningKey(privateJwk, publicKeys);
   const signingKey = await importSigningKey(privateJwk);
   await verifyUpbitReferencePrice(condition.referencePriceKrw, createdAtMs, fetcher);
-  const id = await unusedRecordId(records);
+  const retentionPolicy = getTradeRecordRetentionPolicy(WRITTEN_TRADE_RECORD_SCHEMA);
   const record = canonicalizeTradeRecord({
-    schema: TRADE_RECORD_SCHEMA,
+    schema: WRITTEN_TRADE_RECORD_SCHEMA,
     id,
     createdAt: new Date(createdAtMs).toISOString(),
-    expiresAt: new Date(createdAtMs + TRADE_RECORD_RETENTION_SECONDS * 1_000).toISOString(),
+    expiresAt: new Date(createdAtMs + retentionPolicy.retentionSeconds * 1_000).toISOString(),
     condition,
     payment,
   });
@@ -487,14 +426,17 @@ async function createRecord(
     signature: base64Url(signatureBytes),
     keyId: privateJwk.kid,
   });
-  await records.put(storageKey(id), JSON.stringify(signed), { expirationTtl: TRADE_RECORD_RETENTION_SECONDS });
+  const ttl = lifecycle === "pending" ? PENDING_RECORD_TTL_SECONDS : recordTtl(signed, createdAtMs);
+  await records.put(storageKey(id), JSON.stringify(storedManagedRecord(signed, lifecycle, tokenHash)), {
+    expirationTtl: ttl,
+  });
+  const afterWriteIndex = parseManagementIndex(await records.get(managementKey(tokenHash)));
+  if (afterWriteIndex?.state === "revoked") {
+    await records.delete(storageKey(id));
+    fail("RECORD_REVOKED", "이 관리 capability로 만든 거래 기록은 폐기되었습니다.", 409);
+  }
 
-  return json({
-    ok: true,
-    ...signed,
-    id,
-    verificationUrl: verificationUrl(request, id),
-  }, 201);
+  return recordResponse(request, signed, 201, { lifecycle, revokeToken });
 }
 
 async function getRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
@@ -502,32 +444,125 @@ async function getRecord(request: Request, environment: TradeRecordEnvironment, 
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const stored = await records.get(storageKey(id));
   if (stored === null) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했거나 보관 기간이 끝났습니다.", 404);
-  if (new TextEncoder().encode(stored).byteLength > 8_192) fail("STORAGE_CORRUPT", "저장된 거래 기록을 확인하지 못했습니다.", 500);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stored) as unknown;
-  } catch {
-    fail("STORAGE_CORRUPT", "저장된 거래 기록을 확인하지 못했습니다.", 500);
-  }
-  let signed: SignedTradeRecord;
-  try {
-    signed = canonicalizeSignedTradeRecord(parsed);
-  } catch {
-    fail("STORAGE_CORRUPT", "저장된 거래 기록을 확인하지 못했습니다.", 500);
-  }
+  const { signed, lifecycle, tokenHash } = parseStoredRecord(stored);
   if (signed.record.id !== id) fail("STORAGE_CORRUPT", "저장된 거래 기록 식별자가 일치하지 않습니다.", 500);
+  if (tokenHash) {
+    const management = parseManagementIndex(await records.get(managementKey(tokenHash)));
+    if (management?.state === "revoked") {
+      fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했거나 보관 기간이 끝났습니다.", 404);
+    }
+  }
+  if (lifecycle !== "finalized" || Date.parse(signed.record.expiresAt) <= Date.now()) {
+    fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했거나 보관 기간이 끝났습니다.", 404);
+  }
 
+  return recordResponse(request, signed);
+}
+
+function recordResponse(
+  request: Request,
+  signed: SignedTradeRecord,
+  status = 200,
+  management?: Readonly<{ lifecycle: RecordLifecycle; revokeToken: string }>,
+): Response {
   return json({
     ok: true,
     ...signed,
-    id,
-    verificationUrl: verificationUrl(request, id),
+    id: signed.record.id,
+    verificationUrl: verificationUrl(request, signed.record.id),
+    ...(management ?? {}),
+  }, status);
+}
+
+async function assertEmptyManagementBody(request: Request): Promise<void> {
+  try {
+    await readBoundedBytes(request, 0);
+  } catch {
+    fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
+  }
+}
+
+async function managementContext(
+  request: Request,
+  records: TradeRecordKvNamespace,
+  id: string,
+): Promise<Readonly<{ index: ManagementIndex | null; tokenHash: string; revokeToken: string }>> {
+  const revokeToken = authorizationToken(request);
+  const tokenHash = await sha256Base64Url(revokeToken);
+  if (tokenHash.slice(0, 16) !== id) fail("INVALID_CAPABILITY", "거래 기록 관리 권한을 확인하지 못했습니다.", 403);
+  const index = parseManagementIndex(await records.get(managementKey(tokenHash)));
+  if (index && index.id !== id) fail("INVALID_CAPABILITY", "거래 기록 관리 권한을 확인하지 못했습니다.", 403);
+  return { index, tokenHash, revokeToken };
+}
+
+async function finalizeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
+  await assertEmptyManagementBody(request);
+  const records = environment.TRADE_RECORDS;
+  if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
+  const management = await managementContext(request, records, id);
+  if (management.index?.state === "revoked") fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+
+  const stored = await records.get(storageKey(id));
+  if (stored === null) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했거나 임시 기록이 만료되었습니다.", 404);
+  const parsed = parseStoredRecord(stored);
+  if (parsed.tokenHash !== management.tokenHash || parsed.signed.record.id !== id) {
+    fail("INVALID_CAPABILITY", "거래 기록 관리 권한을 확인하지 못했습니다.", 403);
+  }
+  if (parsed.lifecycle === "revoked") fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+  const nowMs = Date.now();
+  const ttl = recordTtl(parsed.signed, nowMs);
+  if (parsed.lifecycle === "pending") {
+    assertTradeRecordPaymentFinalizable(parsed.signed, nowMs);
+    await records.put(storageKey(id), JSON.stringify(storedManagedRecord(parsed.signed, "finalized", management.tokenHash)), {
+      expirationTtl: ttl,
+    });
+  }
+  const afterWriteIndex = parseManagementIndex(await records.get(managementKey(management.tokenHash)));
+  if (afterWriteIndex?.state === "revoked") {
+    await records.delete(storageKey(id));
+    fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+  }
+  return recordResponse(request, parsed.signed, 200, {
+    lifecycle: "finalized",
+    revokeToken: management.revokeToken,
   });
 }
 
-function methodNotAllowed(allow: string): Response {
-  return json({ ok: false, code: "METHOD_NOT_ALLOWED", message: `${allow} 요청만 사용할 수 있습니다.` }, 405, { Allow: allow });
+async function revokeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
+  await assertEmptyManagementBody(request);
+  const records = environment.TRADE_RECORDS;
+  if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
+  const management = await managementContext(request, records, id);
+  if (management.index?.state === "revoked") {
+    await records.delete(storageKey(id));
+    return json({ ok: true, id, lifecycle: "revoked" });
+  }
+
+  const stored = await records.get(storageKey(id));
+  let parsed: ReturnType<typeof parseStoredRecord> | null = null;
+  if (stored !== null) {
+    parsed = parseStoredRecord(stored);
+    if (parsed.tokenHash !== management.tokenHash || parsed.signed.record.id !== id) {
+      fail("INVALID_CAPABILITY", "거래 기록 관리 권한을 확인하지 못했습니다.", 403);
+    }
+  } else if (!management.index) {
+    fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+  }
+
+  if (!parsed) fail("STORAGE_CORRUPT", "저장된 거래 기록을 확인하지 못했습니다.", 500);
+  const tombstoneTtlSeconds = getTradeRecordRetentionPolicy(parsed.signed.record.schema).retentionSeconds;
+  await records.put(managementKey(management.tokenHash), JSON.stringify({ version: 1, id, state: "revoked" }), {
+    expirationTtl: tombstoneTtlSeconds,
+  });
+  if (parsed.lifecycle !== "revoked") {
+    await records.put(
+      storageKey(id),
+      JSON.stringify(storedManagedRecord(parsed.signed, "revoked", management.tokenHash)),
+      { expirationTtl: tombstoneTtlSeconds },
+    );
+  }
+  await records.delete(storageKey(id));
+  return json({ ok: true, id, lifecycle: "revoked" });
 }
 
 export function isTradeRecordApiPath(pathname: string): boolean {
@@ -539,8 +574,21 @@ export async function handleTradeRecordRequest(
   environment: TradeRecordEnvironment,
   options: TradeRecordHandlerOptions = {},
 ): Promise<Response> {
+  let route = "unknown";
   try {
     const pathname = new URL(request.url).pathname;
+    route = pathname === "/api/trade-record" || pathname === "/api/trade-record/"
+      ? "collection"
+      : pathname.endsWith("/finalize") || pathname.endsWith("/finalize/")
+        ? "finalize"
+        : "item";
+    if (recordsExplicitlyDisabled(environment)) {
+      if (request.method === "GET") {
+        return json({ ok: false, code: "RECORD_NOT_FOUND", message: "거래 기록을 찾지 못했습니다." }, 404);
+      }
+      return json({ ok: false, code: "TRADE_RECORDS_DISABLED", message: "이 배포 환경에서는 거래 기록 API를 사용할 수 없습니다." }, 503);
+    }
+
     if (pathname === "/api/trade-record" || pathname === "/api/trade-record/") {
       if (request.method !== "POST") return methodNotAllowed("POST");
       await enforceCreateRateLimit(request, environment);
@@ -552,19 +600,27 @@ export async function handleTradeRecordRequest(
       );
     }
 
+    const finalizeMatch = /^\/api\/trade-record\/([^/]+)\/finalize\/?$/u.exec(pathname);
+    if (finalizeMatch) {
+      if (!isTradeRecordId(finalizeMatch[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      return await finalizeRecord(request, environment, finalizeMatch[1]);
+    }
+
     const match = /^\/api\/trade-record\/([^/]+)\/?$/u.exec(pathname);
     if (!match || !isTradeRecordId(match[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
-    if (request.method !== "GET") return methodNotAllowed("GET");
-    return await getRecord(request, environment, match[1]);
+    if (request.method === "GET") return await getRecord(request, environment, match[1]);
+    if (request.method === "DELETE") return await revokeRecord(request, environment, match[1]);
+    return methodNotAllowed("GET, DELETE");
   } catch (error) {
     if (error instanceof TradeRecordRequestError) {
       return json({ ok: false, code: error.code, message: error.message }, error.status, error.headers);
     }
     if (error instanceof TradeRecordValidationError) return json({ ok: false, code: error.code, message: error.message }, 400);
     console.error(JSON.stringify({
-      message: "trade_record_request_failed",
+      event: "trade_record_request_failed",
       method: request.method,
-      path: new URL(request.url).pathname,
+      route,
       errorName: error instanceof Error ? error.name : "UnknownError",
     }));
     return json({ ok: false, code: "INTERNAL_ERROR", message: "거래 기록 요청을 처리하지 못했습니다." }, 500);

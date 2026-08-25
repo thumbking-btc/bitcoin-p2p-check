@@ -1,5 +1,6 @@
 import { createVerifiedTextQr } from "./verified-qr.mjs";
 import { formatTradeBitcoinAmount } from "./trade-share-copy.mjs";
+import { getPaymentExpiryState } from "./payment-lifecycle";
 
 export type TradeSharePayment = {
   rail: "onchain" | "lightning";
@@ -27,7 +28,7 @@ export type TradeShareImageInput = {
   paymentKrw: number;
   sats: number;
   btcAmount: number;
-  appliedPriceKrw: number;
+  appliedPriceKrw: string;
   payment: TradeSharePayment | null;
   record: TradeRecordReceipt;
 };
@@ -47,12 +48,16 @@ function assertFinitePositive(value: number, name: string) {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be positive.`);
 }
 
+function assertUnsignedIntegerText(value: string, name: string) {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) throw new RangeError(`${name} must be an unsigned integer string.`);
+}
+
 function validateInput(input: TradeShareImageInput) {
   assertFinitePositive(input.referencePriceKrw, "referencePriceKrw");
   assertFinitePositive(input.paymentKrw, "paymentKrw");
   assertFinitePositive(input.sats, "sats");
   assertFinitePositive(input.btcAmount, "btcAmount");
-  assertFinitePositive(input.appliedPriceKrw, "appliedPriceKrw");
+  assertUnsignedIntegerText(input.appliedPriceKrw, "appliedPriceKrw");
   if (!Number.isFinite(input.sellerPremiumPercent) || input.sellerPremiumPercent <= -100) {
     throw new RangeError("sellerPremiumPercent must be greater than -100.");
   }
@@ -61,6 +66,14 @@ function validateInput(input: TradeShareImageInput) {
   }
   if (input.payment && (!input.payment.payload || !["onchain", "lightning"].includes(input.payment.rail))) {
     throw new RangeError("The payment request is invalid.");
+  }
+  if (input.payment?.rail === "lightning" && !input.payment.address) {
+    if (!Number.isSafeInteger(input.payment.expiresAt) || Number(input.payment.expiresAt) <= 0) {
+      throw new RangeError("A BOLT11 payment request requires an absolute expiry time.");
+    }
+    if (getPaymentExpiryState(input.payment.expiresAt).status !== "ready") {
+      throw new RangeError("The BOLT11 payment request is expired or too close to expiry. Create a new invoice.");
+    }
   }
 }
 
@@ -96,8 +109,9 @@ function fitText(context: CanvasRenderingContext2D, text: string, maximumWidth: 
   }
 }
 
-function formatKrw(value: number) {
-  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+function formatKrw(value: number | string) {
+  const integer = typeof value === "string" ? BigInt(value) : BigInt(Math.round(value));
+  return `${integer.toLocaleString("ko-KR")}원`;
 }
 
 function formatPercent(value: number) {
@@ -129,6 +143,10 @@ function formatTime(value: TradeShareImageInput["referenceTime"] | string) {
     second: "2-digit",
     hour12: false,
   }).format(date)} KST`;
+}
+
+function formatEpochSeconds(value: number) {
+  return formatTime(new Date(value * 1_000));
 }
 
 function drawPaperTexture(context: CanvasRenderingContext2D) {
@@ -304,14 +322,11 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.fillText("비트코인 P2P 거래 기록", 56, 92);
   drawBitcoinMark(context, 1_075, 74, 30);
 
-  context.fillStyle = ORANGE;
-  roundedRect(context, 1_123, 42, 261, 64, 32);
-  context.fill();
   context.fillStyle = INK;
-  context.textAlign = "center";
+  context.textAlign = "right";
   context.textBaseline = "middle";
-  setFont(context, 23, 820);
-  context.fillText("공유 정보 보기", 1_253, 74);
+  setFont(context, 20, 760);
+  context.fillText("서명된 공유 기록", 1_384, 74);
 
   context.fillStyle = INK;
   roundedRect(context, 40, 138, 1_360, 900, 14);
@@ -400,14 +415,41 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
     : input.payment?.rail === "lightning"
       ? (input.payment.address ? "라이트닝 주소 QR" : "고정금액 라이트닝 결제 QR")
       : "거래 기록 열기";
-  context.fillText(paymentQrTitle, 1_130, 718);
-  context.fillStyle = PAPER;
-  setFont(context, 23, 740);
-  context.fillText(input.payment ? `${input.sats.toLocaleString("ko-KR")} sats` : "보관용 링크 QR", 1_130, 762);
+  context.fillText(paymentQrTitle, 1_130, 704);
+  const paymentIncludesAmount = Boolean(input.payment && (
+    (input.payment.rail === "onchain" && /^bitcoin:/iu.test(input.payment.payload))
+    || (input.payment.rail === "lightning" && !input.payment.address)
+  ));
+  const addressOnly = Boolean(input.payment && !paymentIncludesAmount);
+  context.fillStyle = addressOnly ? MUTED_PAPER : PAPER;
+  const amountDescription = input.payment
+    ? paymentIncludesAmount
+      ? `${input.sats.toLocaleString("ko-KR")} sats 포함`
+      : "QR에는 결제 금액이 포함되지 않음"
+    : "보관용 링크 QR";
+  fitText(context, amountDescription, 390, addressOnly ? 19 : 23, 15, 740);
+  context.fillText(amountDescription, 1_130, 746);
+  context.fillStyle = addressOnly ? PAPER : MUTED_PAPER;
+  setFont(context, 18, 650);
+  if (addressOnly) {
+    const tradeAmountDescription = `거래 조건 금액 · ${input.sats.toLocaleString("ko-KR")} sats`;
+    fitText(context, tradeAmountDescription, 390, 18, 14, 650);
+    context.fillText(tradeAmountDescription, 1_130, 780);
+  } else if (input.payment?.rail === "lightning" && input.payment.expiresAt) {
+    const expiryDescription = `절대 만료 · ${formatEpochSeconds(input.payment.expiresAt)}`;
+    fitText(context, expiryDescription, 390, 18, 14, 650);
+    context.fillText(expiryDescription, 1_130, 780);
+  }
+  if (input.payment?.rail === "lightning" && !input.payment.address) {
+    context.fillStyle = ORANGE;
+    const expiryWarning = "단기 결제 요청 · 만료 후 새 인보이스 필요";
+    fitText(context, expiryWarning, 390, 16, 13, 760);
+    context.fillText(expiryWarning, 1_130, 812);
+  }
   context.fillStyle = MUTED_PAPER;
   const target = input.payment ? compactTarget(input.payment) : `기록 ID ${compactId(input.record.id)}`;
   fitText(context, target, 390, 18, 14, 560, Boolean(input.payment));
-  context.fillText(target, 1_130, 800);
+  context.fillText(target, 1_130, 840);
 
   context.strokeStyle = "rgba(245, 240, 227, 0.28)";
   context.lineWidth = 2;
