@@ -31,7 +31,7 @@ test("receive info prepares one compact card payment result without a second sha
 
   assert.doesNotMatch(component, /주소만 복사|인보이스만 복사|수취정보 공유|navigator\.share|<canvas/u);
   assert.match(component, /거래 기록 카드에 포함/u);
-  assert.match(component, /<summary>결제정보 보기<\/summary>/u);
+  assert.match(component, /\? "인보이스 보기" : "주소 보기"/u);
   assert.match(component, />주소만 포함<\/button>/u);
   assert.match(css, /\.field > label\s*\{[^}]*font-size:\s*13px/su);
   assert.match(css, /\.input,[\s\S]*?font:\s*720 16px\/1\.3/su);

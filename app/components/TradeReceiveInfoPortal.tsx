@@ -479,13 +479,13 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
                 <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
             <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
-            <dl>
-              <div><dt>상태</dt><dd>거래 기록 카드에 포함</dd></div>
+                <dl>
+                  <div className={styles.resultState}><dt>상태</dt><dd>카드에 포함됨</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
             {resultStale ? <p className={styles.stale} role="alert">거래 조건이 바뀌었습니다. 현재 금액으로 다시 만들어야 공유할 수 있습니다.</p> : null}
-            <details className={styles.resultDetails}>
-              <summary>결제정보 보기</summary>
+                <details className={styles.resultDetails}>
+                  <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
               <div className={styles.resultTarget}>
                     <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
                 <code>{result.copyTarget}</code>
