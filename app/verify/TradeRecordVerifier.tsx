@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchTradeRecord, TradeRecordApiRequestError, TradeRecordNetworkError } from "../lib/trade-record-client";
+import {
+  fetchTradeRecord,
+  isRetryableTradeRecordFetchError,
+  TradeRecordApiRequestError,
+  TradeRecordNetworkError,
+} from "../lib/trade-record-client";
 import { getPaymentExpiryState, isoTimeToEpochSeconds, type PaymentExpiryState } from "../lib/payment-lifecycle";
 import { deriveAppliedPriceKrw, isTradeRecordId, type TradeRecord } from "../lib/trade-record";
 import { verifyTradeRecordSignature, type TradeRecordVerificationResult } from "../lib/trade-record-verification";
@@ -234,7 +239,7 @@ export function TradeRecordVerifier() {
               : notFound
               ? "기록을 아직 찾지 못했습니다. 생성 직후라면 저장소 전파 중일 수 있으니 잠시 후 다시 확인해 주세요."
               : error instanceof Error ? error.message : "거래 기록을 불러오지 못했습니다.",
-            retryable: notFound || offline,
+            retryable: navigator.onLine === false || isRetryableTradeRecordFetchError(error),
           });
         }
       }

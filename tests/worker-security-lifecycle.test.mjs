@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { bech32 } from "@scure/base";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 import {
   BoundedBodyError,
@@ -12,12 +14,15 @@ import {
   safePublicHttpsUrl,
 } from "../worker/lightning-address-normalize.ts";
 import { handleLightningAddressRequest } from "../worker/lightning-address.ts";
+import { handleLightningPayRequest } from "../worker/lightning-pay.ts";
 import {
   canonicalizeTradeRecordApiSuccess,
   getTradeRecordRetentionPolicy,
   TRADE_RECORD_SCHEMA_V1,
 } from "../app/lib/trade-record.ts";
+import { validateBolt11Invoice } from "../app/lib/bolt11-invoice.mjs";
 import { handleTradeRecordRequest } from "../worker/trade-record.ts";
+import { createBolt11Invoice } from "./bolt11-fixture.mjs";
 
 class MemoryKv {
   values = new Map();
@@ -40,9 +45,33 @@ class MemoryKv {
   }
 }
 
+class OneShotFailingMirrorBarrierKv extends MemoryKv {
+  flushes = 0;
+  failNextRevocationCommit = true;
+
+  async flushLegacyMirror() {
+    this.flushes += 1;
+    // The first call starts a clean revocation batch. Fail its commit barrier,
+    // then allow the idempotent retry's start and commit barriers to succeed.
+    if (this.failNextRevocationCommit && this.flushes === 2) {
+      this.failNextRevocationCommit = false;
+      throw new Error("simulated legacy mirror outage");
+    }
+  }
+}
+
 class AllowRateLimit {
   async limit() {
     return { success: true };
+  }
+}
+
+class DenyRateLimit {
+  calls = 0;
+
+  async limit() {
+    this.calls += 1;
+    return { success: false };
   }
 }
 
@@ -72,7 +101,7 @@ function draft() {
   };
 }
 
-async function signingFixture() {
+async function signingFixture(records = new MemoryKv()) {
   const kid = "trade-record-security-test";
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -83,15 +112,16 @@ async function signingFixture() {
   const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   privateJwk.kid = kid;
   publicJwk.kid = kid;
-  const records = new MemoryKv();
   const environment = {
     DEPLOYMENT_ENV: "production",
     TRADE_RECORDS_ENABLED: true,
     TRADE_RECORDS: records,
     TRADE_RECORD_CREATE_RATE_LIMITER: new AllowRateLimit(),
+    TRADE_RECORD_READ_RATE_LIMITER: new AllowRateLimit(),
     TRADE_RECORD_SIGNING_KEY: JSON.stringify(privateJwk),
   };
   const options = {
+    allowLegacyKv: true,
     publicKeys: { [kid]: publicJwk },
     fetcher: async () => Response.json([{
       market: "KRW-BTC",
@@ -116,7 +146,21 @@ function createRequest(body, token, lifecycle = "pending") {
   });
 }
 
-const LIGHTNING_INVOICE = "lnbc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+const LNURL_METADATA = JSON.stringify([
+  ["text/plain", "P2P 거래 대금"],
+  ["text/identifier", "seller@wallet.example.com"],
+]);
+const LNURL_METADATA_HASH = sha256(new TextEncoder().encode(LNURL_METADATA));
+
+function createLnurlInvoice(overrides = {}) {
+  return createBolt11Invoice({
+    amountSats: 1_000,
+    descriptionHash: LNURL_METADATA_HASH,
+    ...overrides,
+  });
+}
+
+const LIGHTNING_INVOICE = createLnurlInvoice();
 
 function lightningAddressRequest() {
   return new Request("https://app.example/api/market?receive=lightning-address", {
@@ -129,12 +173,31 @@ function lightningAddressRequest() {
   });
 }
 
-function lightningDiscoveryResponse() {
+function lightningDiscoveryResponse(overrides = {}) {
   return Response.json({
     tag: "payRequest",
     callback: "https://wallet.example.com/lnurl/callback",
     minSendable: 1_000,
     maxSendable: 10_000_000,
+    metadata: LNURL_METADATA,
+    ...overrides,
+  });
+}
+
+const RAW_LNURL = bech32.encode(
+  "lnurl",
+  bech32.toWords(new TextEncoder().encode("https://wallet.example.com/lnurl/discovery")),
+  false,
+);
+
+function rawLnurlRequest() {
+  return new Request("https://app.example/api/market?receive=lightning-pay", {
+    method: "POST",
+    headers: {
+      "CF-Connecting-IP": "203.0.113.11",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ source: RAW_LNURL, amountSats: 1_000 }),
   });
 }
 
@@ -143,10 +206,12 @@ function lightningRedirectFixture({ discoveryRedirects = 0, callbackRedirects = 
   let discoveryCalls = 0;
   let callbackCalls = 0;
   const urls = [];
+  const signals = [];
   return {
     get discoveryCalls() { return discoveryCalls; },
     get callbackCalls() { return callbackCalls; },
     urls,
+    signals,
     fetcher: async (input, init) => {
       const url = new URL(String(input));
       urls.push(url.toString());
@@ -155,6 +220,7 @@ function lightningRedirectFixture({ discoveryRedirects = 0, callbackRedirects = 
       assert.equal(init?.method, "GET");
       assert.equal(init?.redirect, "manual");
       assert.ok(init?.signal instanceof AbortSignal);
+      signals.push(init.signal);
 
       if (phase === "discovery") {
         discoveryCalls += 1;
@@ -282,6 +348,7 @@ test("Lightning discovery and callback each accept exactly 0, 1, or 2 same-host 
         assert.equal(fixture.discoveryCalls, 1 + (redirectPhase === "discovery" ? redirectCount : 0));
         assert.equal(fixture.callbackCalls, 1 + (redirectPhase === "callback" ? redirectCount : 0));
         assert.equal(fixture.urls.length, 2 + redirectCount);
+        assert.ok(fixture.signals.every((signal) => signal === fixture.signals[0]));
       }
     }
   } finally {
@@ -368,12 +435,289 @@ test("Lightning discovery and callback map upstream 429 and timeout aborts to cl
       assert.equal(activeController.signal.aborted, true);
       assert.equal(response.status, 504);
       assert.equal((await response.json()).code, "PROVIDER_TIMEOUT");
-      assert.deepEqual(timeoutDurations, failurePhase === "discovery" ? [5_000] : [5_000, 7_000]);
+      assert.deepEqual(timeoutDurations, [12_000]);
       assert.equal(calls, failurePhase === "discovery" ? 1 : 2);
     }
   } finally {
     AbortSignal.timeout = originalTimeout;
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("raw LNURL completes discovery and callback with one shared provider deadline", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = AbortSignal.timeout;
+  const timeoutDurations = [];
+  const signals = [];
+  let calls = 0;
+  try {
+    AbortSignal.timeout = (duration) => {
+      timeoutDurations.push(duration);
+      return new AbortController().signal;
+    };
+    globalThis.fetch = async (input, init) => {
+      calls += 1;
+      const url = new URL(String(input));
+      signals.push(init?.signal);
+      assert.equal(init?.redirect, "manual");
+      if (calls === 1) {
+        assert.equal(url.toString(), "https://wallet.example.com/lnurl/discovery");
+        return lightningDiscoveryResponse({
+          payerData: { name: { mandatory: false } },
+        });
+      }
+      assert.equal(calls, 2);
+      assert.equal(url.toString(), "https://wallet.example.com/lnurl/callback?amount=1000000");
+      return Response.json({ pr: LIGHTNING_INVOICE });
+    };
+
+    const response = await handleLightningPayRequest(rawLnurlRequest(), {
+      LIGHTNING_REQUEST_RATE_LIMITER: new AllowRateLimit(),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      amountSats: 1_000,
+      invoice: LIGHTNING_INVOICE,
+      normalizedSource: RAW_LNURL,
+      sourceType: "lnurl",
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(timeoutDurations, [12_000]);
+    assert.ok(signals[0] instanceof AbortSignal);
+    assert.equal(signals[1], signals[0]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("direct BOLT11 validation still accepts a signed d-only invoice without LNURL metadata", () => {
+  const invoice = createBolt11Invoice({ amountSats: 1_000 });
+  const validated = validateBolt11Invoice(invoice, {
+    expectedSats: 1_000n,
+    minimumRemainingSeconds: 120,
+  });
+  assert.equal(validated.canonicalInvoice, invoice);
+});
+
+test("Lightning address and raw LNURL verify exact metadata bytes whenever the signed invoice uses h", async (context) => {
+  const expandedMetadata = JSON.stringify([
+    ["text/plain", "P2P 거래 대금", { displayHint: "compact" }],
+    ["application/vnd.wallet.example+json", { feature: true }, 42],
+  ]);
+  const equivalentSpacedMetadata = `[
+    ["text/plain", "P2P 거래 대금"],
+    ["text/identifier", "seller@wallet.example.com"]
+  ]`;
+  const scenarios = [
+    {
+      name: "matching metadata hash",
+      metadata: LNURL_METADATA,
+      invoice: LIGHTNING_INVOICE,
+      status: 200,
+    },
+    {
+      name: "future metadata entry with arbitrary JSON values",
+      metadata: expandedMetadata,
+      invoice: createLnurlInvoice({
+        descriptionHash: sha256(new TextEncoder().encode(expandedMetadata)),
+      }),
+      status: 200,
+    },
+    {
+      name: "current LUD-06 d-only invoice",
+      metadata: LNURL_METADATA,
+      invoice: createBolt11Invoice({ amountSats: 1_000 }),
+      status: 200,
+    },
+    {
+      name: "wrong metadata hash",
+      metadata: LNURL_METADATA,
+      invoice: createLnurlInvoice({ descriptionHash: new Uint8Array(32).fill(0x44) }),
+      status: 502,
+    },
+    {
+      name: "equivalent JSON with different raw bytes",
+      metadata: equivalentSpacedMetadata,
+      invoice: LIGHTNING_INVOICE,
+      status: 502,
+    },
+    {
+      name: "duplicate h tags",
+      metadata: LNURL_METADATA,
+      invoice: createLnurlInvoice({ duplicateDescriptionHash: true }),
+      status: 502,
+    },
+  ];
+  const handlers = [
+    {
+      name: "address",
+      request: lightningAddressRequest,
+      handle: (request, environment) => handleLightningAddressRequest(request, environment),
+    },
+    {
+      name: "raw LNURL",
+      request: rawLnurlRequest,
+      handle: (request, environment) => handleLightningPayRequest(request, environment),
+    },
+  ];
+
+  for (const handler of handlers) {
+    for (const scenario of scenarios) {
+      await context.test(`${handler.name}: ${scenario.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        let calls = 0;
+        try {
+          globalThis.fetch = async () => {
+            calls += 1;
+            return calls === 1
+              ? lightningDiscoveryResponse({ metadata: scenario.metadata })
+              : Response.json({ pr: scenario.invoice });
+          };
+          const response = await handler.handle(handler.request(), {
+            LIGHTNING_REQUEST_RATE_LIMITER: new AllowRateLimit(),
+          });
+          assert.equal(response.status, scenario.status);
+          if (scenario.status === 502) {
+            assert.equal((await response.json()).code, "INVALID_PROVIDER_RESPONSE");
+          }
+          assert.equal(calls, 2);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
+  }
+});
+
+test("Lightning address and raw LNURL reject invalid metadata or mandatory payer data before callback", async (context) => {
+  const validDiscovery = {
+    tag: "payRequest",
+    callback: "https://wallet.example.com/lnurl/callback",
+    minSendable: 1_000,
+    maxSendable: 10_000_000,
+    metadata: JSON.stringify([["text/plain", "P2P 거래 대금"]]),
+  };
+  const scenarios = [
+    {
+      name: "missing metadata",
+      discovery: { ...validDiscovery, metadata: undefined },
+      status: 502,
+      code: "INVALID_PROVIDER_RESPONSE",
+    },
+    {
+      name: "malformed metadata",
+      discovery: { ...validDiscovery, metadata: "{" },
+      status: 502,
+      code: "INVALID_PROVIDER_RESPONSE",
+    },
+    {
+      name: "metadata without text/plain",
+      discovery: { ...validDiscovery, metadata: JSON.stringify([["image/png;base64", "AA=="]]) },
+      status: 502,
+      code: "INVALID_PROVIDER_RESPONSE",
+    },
+    {
+      name: "duplicate text/plain metadata",
+      discovery: {
+        ...validDiscovery,
+        metadata: JSON.stringify([["text/plain", "first"], ["text/plain", "second"]]),
+      },
+      status: 502,
+      code: "INVALID_PROVIDER_RESPONSE",
+    },
+    {
+      name: "mandatory payer data",
+      discovery: { ...validDiscovery, payerData: { name: { mandatory: true } } },
+      status: 422,
+      code: "PAYER_DATA_REQUIRED",
+    },
+  ];
+  const handlers = [
+    {
+      name: "address",
+      request: lightningAddressRequest,
+      handle: (request, environment) => handleLightningAddressRequest(request, environment),
+    },
+    {
+      name: "raw LNURL",
+      request: rawLnurlRequest,
+      handle: (request, environment) => handleLightningPayRequest(request, environment),
+    },
+  ];
+
+  for (const handler of handlers) {
+    for (const scenario of scenarios) {
+      await context.test(`${handler.name}: ${scenario.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        let calls = 0;
+        try {
+          globalThis.fetch = async () => {
+            calls += 1;
+            return Response.json(scenario.discovery);
+          };
+          const response = await handler.handle(handler.request(), {
+            LIGHTNING_REQUEST_RATE_LIMITER: new AllowRateLimit(),
+          });
+          assert.equal(response.status, scenario.status);
+          assert.equal((await response.json()).code, scenario.code);
+          assert.equal(calls, 1, "validation must reject before the callback request");
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
+  }
+});
+
+test("Lightning address and raw LNURL reject wrong amount, network, signature, or expiry", async (context) => {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const invalidInvoices = [
+    { name: "wrong amount", invoice: createLnurlInvoice({ amountSats: 2_000, timestampSeconds: nowSeconds }) },
+    { name: "wrong network", invoice: createLnurlInvoice({ timestampSeconds: nowSeconds, network: "tb" }) },
+    { name: "expired", invoice: createLnurlInvoice({ timestampSeconds: nowSeconds - 600, expirySeconds: 60 }) },
+    {
+      name: "invalid signature",
+      invoice: `${LIGHTNING_INVOICE.slice(0, -1)}${LIGHTNING_INVOICE.endsWith("q") ? "p" : "q"}`,
+    },
+  ];
+  const handlers = [
+    {
+      name: "address",
+      request: lightningAddressRequest,
+      handle: (request, environment) => handleLightningAddressRequest(request, environment),
+    },
+    {
+      name: "raw LNURL",
+      request: rawLnurlRequest,
+      handle: (request, environment) => handleLightningPayRequest(request, environment),
+    },
+  ];
+
+  for (const handler of handlers) {
+    for (const scenario of invalidInvoices) {
+      await context.test(`${handler.name}: ${scenario.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        let calls = 0;
+        try {
+          globalThis.fetch = async () => {
+            calls += 1;
+            return calls === 1
+              ? lightningDiscoveryResponse()
+              : Response.json({ pr: scenario.invoice });
+          };
+          const response = await handler.handle(handler.request(), {
+            LIGHTNING_REQUEST_RATE_LIMITER: new AllowRateLimit(),
+          });
+          assert.equal(response.status, 502);
+          assert.equal((await response.json()).code, "INVALID_PROVIDER_RESPONSE");
+          assert.equal(calls, 2);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
   }
 });
 
@@ -428,6 +772,36 @@ test("pending records are idempotent, hidden until finalize, and revocable only 
     getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1).retentionSeconds,
   );
   assert.equal(records.deletes.length, 2, "an idempotent retry also cleans up any partially revoked record");
+});
+
+test("revoke returns retryable 503 until the legacy mirror barrier succeeds", async () => {
+  const records = new OneShotFailingMirrorBarrierKv();
+  const { environment, options } = await signingFixture(records);
+  const token = capability();
+  const createdResponse = await handleTradeRecordRequest(createRequest(draft(), token), environment, options);
+  const created = canonicalizeTradeRecordApiSuccess(await createdResponse.json());
+  const publicUrl = `https://records.example/api/trade-record/${created.id}`;
+  const deleteRequest = () => new Request(publicUrl, {
+    method: "DELETE",
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+  });
+
+  const first = await handleTradeRecordRequest(deleteRequest(), environment, options);
+  assert.equal(first.status, 503);
+  assert.equal(first.headers.get("retry-after"), "1");
+  assert.equal((await first.json()).code, "STORAGE_UNAVAILABLE");
+  assert.equal(records.deletes.length, 1);
+
+  const retried = await handleTradeRecordRequest(deleteRequest(), environment, options);
+  assert.equal(retried.status, 200);
+  assert.deepEqual(await retried.json(), { ok: true, id: created.id, lifecycle: "revoked" });
+  assert.equal(records.deletes.length, 2, "retry must issue the legacy record deletion again");
+  assert.equal(
+    records.puts.filter(({ key }) => key.startsWith("trade-record:v1:manage:")).length,
+    2,
+    "retry must also re-write the legacy revocation tombstone",
+  );
+  assert.equal(records.flushes, 4, "each attempt must bracket its own mirror batch");
 });
 
 test("legacy or direct-finalized record creation fails before anything is stored", async () => {
@@ -516,12 +890,15 @@ test("unexpected record errors log a route class without the bearer pathname", a
     const response = await handleTradeRecordRequest(
       new Request(`https://records.example/api/trade-record/${id}`),
       {
+        DEPLOYMENT_ENV: "production",
+        TRADE_RECORDS_ENABLED: true,
         TRADE_RECORDS: {
           async get() { throw new Error("storage failed"); },
           async put() {},
           async delete() {},
         },
       },
+      { allowLegacyKv: true },
     );
     assert.equal(response.status, 500);
   } finally {
@@ -531,6 +908,126 @@ test("unexpected record errors log a route class without the bearer pathname", a
   assert.match(logs[0], /"route":"item"/u);
   assert.doesNotMatch(logs[0], new RegExp(id, "u"));
   assert.doesNotMatch(logs[0], /\/api\/trade-record/u);
+});
+
+test("trade-record rate limits run before selecting or activating a Durable Object", async (context) => {
+  const highCardinalityIds = [
+    "AAAAAAAAAAAAAAAA",
+    "BBBBBBBBBBBBBBBB",
+    "CCCCCCCCCCCCCCCC",
+  ];
+  for (const scenario of [
+    {
+      name: "create",
+      limiterKey: "TRADE_RECORD_CREATE_RATE_LIMITER",
+      requests: () => [new Request("https://records.example/api/trade-record", {
+        method: "POST",
+        headers: {
+          "CF-Connecting-IP": "203.0.113.120",
+          "Content-Type": "application/json",
+          "Idempotency-Key": capability(),
+          "X-Trade-Record-Lifecycle": "pending",
+        },
+        body: JSON.stringify(draft()),
+      })],
+    },
+    {
+      name: "read",
+      limiterKey: "TRADE_RECORD_READ_RATE_LIMITER",
+      requests: () => highCardinalityIds.map((id) => new Request(`https://records.example/api/trade-record/${id}`, {
+        headers: { "CF-Connecting-IP": "203.0.113.121" },
+      })),
+    },
+    {
+      name: "finalize",
+      limiterKey: "TRADE_RECORD_READ_RATE_LIMITER",
+      requests: () => highCardinalityIds.map((id) => new Request(
+        `https://records.example/api/trade-record/${id}/finalize`,
+        {
+          method: "POST",
+          headers: { "CF-Connecting-IP": "203.0.113.122" },
+        },
+      )),
+    },
+    {
+      name: "delete",
+      limiterKey: "TRADE_RECORD_READ_RATE_LIMITER",
+      requests: () => highCardinalityIds.map((id) => new Request(
+        `https://records.example/api/trade-record/${id}`,
+        {
+          method: "DELETE",
+          headers: { "CF-Connecting-IP": "203.0.113.123" },
+        },
+      )),
+    },
+  ]) {
+    await context.test(scenario.name, async () => {
+      let namespaceSelections = 0;
+      let namespaceAccesses = 0;
+      const limiter = new DenyRateLimit();
+      const environment = {
+        DEPLOYMENT_ENV: "production",
+        TRADE_RECORDS_ENABLED: true,
+        [scenario.limiterKey]: limiter,
+        TRADE_RECORD_STATE: {
+          idFromName() {
+            namespaceSelections += 1;
+            throw new Error("Durable Object must not be selected after a rejected limit check.");
+          },
+          get() {
+            namespaceAccesses += 1;
+            throw new Error("Durable Object must not be accessed after a rejected limit check.");
+          },
+        },
+      };
+      const requests = scenario.requests();
+      for (const request of requests) {
+        const response = await handleTradeRecordRequest(request, environment);
+        assert.equal(response.status, 429);
+        assert.equal((await response.json()).code, "RATE_LIMITED");
+      }
+      assert.equal(limiter.calls, requests.length);
+      assert.equal(namespaceSelections, 0);
+      assert.equal(namespaceAccesses, 0);
+    });
+  }
+});
+
+test("invalid trade-record paths and methods fail before selecting a Durable Object", async (context) => {
+  const scenarios = [
+    ["collection method", new Request("https://records.example/api/trade-record", { method: "GET" }), 405],
+    ["item method", new Request("https://records.example/api/trade-record/AAAAAAAAAAAAAAAA", { method: "PUT" }), 405],
+    ["finalize method", new Request("https://records.example/api/trade-record/AAAAAAAAAAAAAAAA/finalize", { method: "DELETE" }), 405],
+    ["nested path", new Request("https://records.example/api/trade-record/AAAAAAAAAAAAAAAA/extra"), 404],
+    ["invalid id", new Request("https://records.example/api/trade-record/not-valid"), 404],
+  ];
+
+  for (const [name, request, expectedStatus] of scenarios) {
+    await context.test(name, async () => {
+      let namespaceSelections = 0;
+      const response = await handleTradeRecordRequest(request, {
+        DEPLOYMENT_ENV: "production",
+        TRADE_RECORDS_ENABLED: true,
+        TRADE_RECORD_CREATE_RATE_LIMITER: {
+          async limit() { throw new Error("Invalid routes must not consume the create limiter."); },
+        },
+        TRADE_RECORD_READ_RATE_LIMITER: {
+          async limit() { throw new Error("Invalid routes must not consume the item limiter."); },
+        },
+        TRADE_RECORD_STATE: {
+          idFromName() {
+            namespaceSelections += 1;
+            throw new Error("Invalid routes must not select a Durable Object.");
+          },
+          get() {
+            throw new Error("Invalid routes must not access a Durable Object.");
+          },
+        },
+      });
+      assert.equal(response.status, expectedStatus);
+      assert.equal(namespaceSelections, 0);
+    });
+  }
 });
 
 test("market source has bounded parsing, no module-global request promises, and create has a built-in deadline", async () => {

@@ -10,6 +10,9 @@
 - 구버전·헤더 누락 요청과 직접 공개 생성을 저장 전에 거부하고, 철회 capability가 있는 비공개 준비 요청만 허용하도록 롤아웃 경계를 fail closed로 바꿨습니다.
 - 거래 기록 공유 직전에 공개 범위·보관 기간·철회 방법을 알리고, 상세 개인정보 안내와 연락 경로를 제공하도록 정리했습니다.
 - Lightning 요청과 외부 응답을 제한된 크기로 스트리밍 처리하고, 정확한 미디어 타입 검사·전용 속도 제한·허용된 callback 관계 검사를 적용했습니다.
+- LNURL-pay의 필수 metadata와 `text/plain` 설명을 검증하고, 앱이 제공하지 않는 필수 payer data를 callback 전에 차단하며 discovery부터 callback까지 하나의 12초 deadline을 사용합니다. 발급된 BOLT11도 메인넷·정확한 금액·만료·서명을 Worker에서 다시 검증합니다.
+- 거래 기록 생성 시 클라이언트가 제출한 업비트 프리미엄 참고값을 데이터랩 원본과 독립 비교하여 조작된 참고값이 사이트 서명에 포함되지 않도록 했습니다.
+- 거래 기록 create·read·finalize·revoke 제한을 Durable Object 선택 전에 적용하고, 모든 환경 값 누락을 fail closed로 바꿨습니다.
 - BOLT11 인보이스의 만료·만료 임박 상태를 열린 화면에서도 다시 계산하여 만료된 QR과 복사 동작을 차단하도록 강화했습니다.
 - CSP의 인라인 스크립트·스타일 허용을 제거하고 빌드 산출물의 실제 해시만 허용하도록 배포 헤더 생성을 강화했습니다.
 
@@ -18,11 +21,14 @@
 - 시장 데이터의 관측 시각, WebSocket watchdog, REST 복구 경로를 분리해 멈춘 연결이 최신 데이터처럼 표시되지 않도록 했습니다.
 - 계산 입력 범위와 서버 계약을 통일하고, 고정소수점 계산·비현실적 거래액 경고·다중 탭 초안 충돌 방지를 추가했습니다.
 - 접근성 출력과 화면 계산값을 같은 상태에서 갱신하고, 입력 label 구조·작은 화면 reflow·PWA 오프라인 검증 화면과 명시적 업데이트 동작을 개선했습니다.
+- 거래 기록 조회의 fetch·재시도·본문 stream 전체에 15초 deadline을 적용해 검증 화면이 무기한 대기하지 않도록 했습니다.
+- 거래 기록 lifecycle을 record별 SQLite Durable Object에서 직렬화하고 legacy KV를 순서 보장형 비동기 호환 mirror로 전환했습니다.
 
 ### 배포·운영·공급망
 
 - 프로덕션 배포가 lint, 독립 typecheck, 빌드, Node/Workers/브라우저 회귀시험, 전체 High 의존성 감사와 동일 커밋 산출물 검증을 통과한 뒤에만 진행되도록 릴리스 게이트를 구성했습니다.
-- 프로덕션과 프리뷰 Worker 구성을 분리하고 프리뷰에서 운영 KV·서명 키·거래 기록 쓰기 기능을 사용할 수 없도록 fail-closed 기본값을 적용했습니다.
+- 프로덕션, 격리 staging, preview Worker 구성을 분리하고 비프로덕션에서 운영 Durable Object·KV·서명 키·거래 기록 쓰기 기능을 사용할 수 없도록 fail-closed 기본값을 적용했습니다.
+- staging은 검증한 bundle을 고유 version URL에서 전체 asset graph와 정확한 version ID로 smoke한 뒤에만 별도 canonical Worker로 승격하도록 구성했습니다.
 - 프로덕션 배포 경쟁을 직렬화하고 배포 직전 최신 `main` SHA를 확인하며, Worker version metadata와 배포 메시지에 검증한 SHA를 남기도록 했습니다.
 - GitHub Actions를 전체 커밋 SHA로 고정하고, 정적·Worker 산출물 provenance와 Worker CycloneDX SBOM attestation, npm/GitHub Actions 주간 Dependabot 점검을 추가했습니다.
 - 배포 후 읽기 전용 smoke, 민감 URL 비수집형 관측성 정책, KV 백업/복원, 서명 키 교체와 장애 대응 절차를 문서화했습니다.

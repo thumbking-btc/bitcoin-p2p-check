@@ -20,6 +20,7 @@ Cloudflare의 Git 연동 빌드, 대시보드 편집기, 개발자 PC의 `wrangl
 - [ ] Settings → Builds에 production trigger와 preview trigger가 남아 있지 않음을 확인했습니다.
 - [ ] 대시보드 편집 권한을 최소 운영자에게만 부여하고, Quick Edit로 프로덕션 코드를 변경하지 않는 정책을 기록했습니다.
 - [ ] 활성 production version의 설정에서 `preview_urls: false`가 적용되었음을 배포 후 확인했습니다.
+- [ ] 별도 Worker `bitcoin-p2p-check-staging`은 아래의 일회성 authorized local bootstrap 또는 `wrangler.staging.jsonc`를 사용하는 승인된 GitHub Actions 수동 실행으로만 배포하며, production Worker의 version alias나 저장소 branch build를 사용하지 않습니다.
 - [ ] 별도 Worker `bitcoin-p2p-check-preview`는 명시적 수동 검증에서만 `wrangler.preview.jsonc`로 배포하며, 저장소 branch push와 연결하지 않았습니다.
 - [ ] 위 항목의 화면 캡처, 확인자, 확인 시각(UTC)을 릴리스 증적에 첨부했습니다.
 
@@ -47,6 +48,8 @@ GitHub **Settings → Environments → production**에는 다음 조건을 설�
 
 GitHub 요금제와 저장소 공개 범위에 따라 required reviewer 기능을 사용할 수 없는 경우가 있습니다. 그런 상태에서는 사람 승인이 강제된다고 표시하지 말고, 지원되는 요금제 또는 동등한 강제형 deployment protection을 먼저 마련하십시오([GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
 
+GitHub **Settings → Environments → staging**에도 최소권한 `CLOUDFLARE_API_TOKEN`과 `CLOUDFLARE_ACCOUNT_ID`를 environment secret으로 두고, 허용 branch를 `staging`으로 제한하십시오. `staging` push는 검증만 수행하며, `workflow_dispatch`에서 `deploy_staging=true`를 명시한 run만 후보 upload와 승격을 수행합니다.
+
 ## 2. latest-main SHA 승인 체크리스트
 
 승인자는 GitHub Actions의 `deploy-production` job을 승인하기 직전에 다음 값을 대조하십시오. 과거에 성공한 run을 현재 `main` 배포 근거로 재사용하지 마십시오.
@@ -65,20 +68,21 @@ gh run view <RUN_ID> --json headSha,headBranch,event,status,conclusion,url
 - [ ] 배포 대상이 `wrangler.jsonc`, Worker 이름 `bitcoin-p2p-check`임을 확인했습니다.
 - [ ] 변경 내용, 위험, rollback 대상 Worker version ID, 담당자를 확인했습니다.
 
-## 3. production과 preview 격리
+## 3. production, staging과 preview 격리
 
-| 항목 | production | preview |
-| --- | --- | --- |
-| 설정 파일 | `wrangler.jsonc` | `wrangler.preview.jsonc` |
-| Worker 이름 | `bitcoin-p2p-check` | `bitcoin-p2p-check-preview` |
-| `DEPLOYMENT_ENV` | `production` | `preview` |
-| `TRADE_RECORDS_ENABLED` | `true` | `false` |
-| `TRADE_RECORDS` KV | production namespace만 binding | binding 자체가 없어야 함 |
-| `TRADE_RECORD_SIGNING_KEY` | required secret | 선언·주입하지 않음 |
-| 거래 기록 create rate limit | production 전용 namespace ID | 없음 |
-| preview URL | `false` | 명시적 preview Worker 검증용 `true` |
+| 항목 | production | staging | preview |
+| --- | --- | --- | --- |
+| 설정 파일 | `wrangler.jsonc` | `wrangler.staging.jsonc` | `wrangler.preview.jsonc` |
+| Worker 이름 | `bitcoin-p2p-check` | `bitcoin-p2p-check-staging` | `bitcoin-p2p-check-preview` |
+| `DEPLOYMENT_ENV` | `production` | `staging` | `preview` |
+| `TRADE_RECORDS_ENABLED` | `true` | `false` | `false` |
+| `TRADE_RECORD_STATE` | record별 SQLite DO | binding 없음 | binding 없음 |
+| `TRADE_RECORDS` KV | legacy migration/mirror namespace | binding 없음 | binding 없음 |
+| `TRADE_RECORD_SIGNING_KEY` | required secret | 선언·주입하지 않음 | 선언·주입하지 않음 |
+| 거래 기록 limiter | create 6/min, item 120/min | 없음 | 없음 |
+| version preview URL | `false` | 후보 검증용 `true` | 명시적 preview Worker 검증용 `true` |
 
-production KV namespace ID, 서명 secret, rate-limit namespace를 preview에 복사하지 마십시오. preview는 단순히 다른 이름을 쓰는 수준이 아니라 거래 기록 저장소와 signer에 접근할 수 없어야 합니다.
+production Durable Object, KV namespace ID, 서명 secret, rate-limit namespace를 staging이나 preview에 복사하지 마십시오. 비프로덕션은 단순히 다른 이름을 쓰는 수준이 아니라 거래 기록 저장소와 signer에 접근할 수 없어야 합니다. production Worker의 `<version>-bitcoin-p2p-check...workers.dev` alias도 같은 Worker binding을 사용하므로 staging으로 취급하지 마십시오.
 
 배포 전 정적·로컬 검증은 다음과 같습니다.
 
@@ -87,9 +91,9 @@ npm run config:check
 node --test tests/worker-security-lifecycle.test.mjs
 ```
 
-`worker-security-lifecycle` 검사는 preview/false 환경에서 거래 기록 API가 binding getter에 접근하기 전에 fail closed 되는지, 읽기는 404이고 변경 method는 503인지 확인합니다. 테스트 파일이 없거나 이 검사가 제외된 release는 승인하지 마십시오.
+`worker-security-lifecycle` 검사는 staging/preview/누락 환경에서 거래 기록 API가 binding에 접근하기 전에 fail closed 되는지, 읽기는 404이고 변경 method는 503인지 확인합니다. production에서는 create와 item limiter가 Durable Object를 선택하기 전에 실행되는지도 검사합니다. 테스트 파일이 없거나 이 검사가 제외된 release는 승인하지 마십시오.
 
-명시적으로 배포한 preview에서 다음 **읽기 전용** 확인만 추가할 수 있습니다.
+명시적으로 배포한 staging 또는 preview에서 다음 **읽기 전용** 확인만 추가할 수 있습니다.
 
 ```bash
 curl -sS -I "$PREVIEW_BASE_URL/api/trade-record"
@@ -128,6 +132,111 @@ npx wrangler secret list --config wrangler.jsonc
 
 ## 5. 배포, version↔SHA 기록, annotated tag
 
+### 격리 staging 배포
+
+`wrangler versions upload`는 존재하지 않는 Worker를 최초 생성하지 못합니다. 따라서 `bitcoin-p2p-check-staging`이 아직 없을 때만 다음 일회성 bootstrap을 먼저 수행하십시오.
+
+1. 모든 구현 변경을 로컬 commit으로 먼저 고정하십시오. 이 일회성 예외에서는 원격 branch가 provenance가 아니며 `git push`를 실행해서는 안 됩니다. 사용자 보고서와 `.env*`/`.dev.vars*`는 stage하거나 commit하지 마십시오.
+2. 원본 저장소에서 고정한 40자리 commit SHA로 detached temporary linked worktree를 만드십시오. linked worktree에는 원본 작업 디렉터리의 untracked 보고서와 무시된 환경 파일이 복사되지 않습니다.
+3. 임시 worktree에서 Node.js 22.19.0, `npm ci`, `npm run verify:ci`, clean Git 상태를 순서대로 확인하십시오. 검증이 만든 `dist/client`와 `.wrangler/dry-run/staging`만 사용하며 다른 checkout의 산출물을 복사하지 마십시오.
+4. Cloudflare 변경 창을 단일 운영자로 제한한 뒤 `versions list`와 `deployments list`가 각각 실패하면서 유일한 Cloudflare error code로 `10007`을 반환할 때만 진행하십시오. 한 조회라도 성공하거나 다른 code, 인증·권한·네트워크 오류를 반환하면 bootstrap을 중단하십시오.
+5. 아래 명령을 순서 그대로 한 번만 실행하십시오. staging artifact/config guard를 deploy 직전에 다시 실행합니다. Wrangler 4.125.0 output의 `wrangler-session`과 단 하나의 `deploy` event 및 canonical argv를 recorder가 검증하여 신규 result JSON을 exclusive-create한 뒤에만 exact version ID/URL smoke로 진행합니다.
+
+   ```bash
+   set -euo pipefail
+
+   SOURCE_REPO="$(git rev-parse --show-toplevel)"
+   BOOTSTRAP_COMMIT_SHA="$(git rev-parse HEAD)"
+   printf '%s' "$BOOTSTRAP_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$'
+   test -z "$(git status --porcelain=v1 --untracked-files=no)"
+
+   BOOTSTRAP_ROOT="$(mktemp -d)"
+   BOOTSTRAP_WORKTREE="$BOOTSTRAP_ROOT/worktree"
+   git -C "$SOURCE_REPO" worktree add --detach "$BOOTSTRAP_WORKTREE" "$BOOTSTRAP_COMMIT_SHA"
+   cd "$BOOTSTRAP_WORKTREE"
+
+   test -z "$(git symbolic-ref -q HEAD || true)"
+   test "$(git rev-parse HEAD)" = "$BOOTSTRAP_COMMIT_SHA"
+   test "$(git cat-file -t HEAD)" = "commit"
+   test "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)"
+    test ! -e ADVERSARIAL_PRODUCT_AUDIT_2026-08-25.md
+    test ! -e AGENTS.md
+    test ! -e AUDIT_REPORT_2026-08-25.md
+   for isolated_file in .env .env.* .dev.vars .dev.vars.*; do
+     test ! -e "$isolated_file"
+   done
+   test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+   test "$(node --version)" = "v22.19.0"
+   npm ci
+   npm run verify:ci
+   git diff --check
+   test -z "$(git status --porcelain=v1 --untracked-files=all)"
+   test "$(npx wrangler --version)" = "4.125.0"
+
+   APP_VERSION="$(node -p "require('./package.json').version")"
+   export BOOTSTRAP_COMMIT_SHA APP_VERSION
+   BOOTSTRAP_OUTPUT="$BOOTSTRAP_ROOT/wrangler-output.jsonl"
+   BOOTSTRAP_RESULT="$BOOTSTRAP_ROOT/bootstrap-result.json"
+   test ! -e "$BOOTSTRAP_OUTPUT"
+   test ! -L "$BOOTSTRAP_OUTPUT"
+   test ! -e "$BOOTSTRAP_RESULT"
+   test ! -L "$BOOTSTRAP_RESULT"
+
+   require_absent_worker() {
+     local output status codes
+     set +e
+     output="$(WRANGLER_WRITE_LOGS=0 WRANGLER_SEND_METRICS=false "$@" 2>&1)"
+     status=$?
+     set -e
+     test "$status" -ne 0
+     codes="$(printf '%s\n' "$output" | sed -n 's/.*\[code: \([0-9][0-9]*\)\].*/\1/p')"
+     test "$codes" = "10007"
+   }
+
+   require_absent_worker npx wrangler versions list \
+     --config wrangler.staging.jsonc --json
+   require_absent_worker npx wrangler deployments list \
+     --config wrangler.staging.jsonc --json
+
+   BOOTSTRAP_DEPLOY_APPROVED=true BOOTSTRAP_COMMIT_SHA="$BOOTSTRAP_COMMIT_SHA" \
+   EXPECTED_APP_VERSION="$APP_VERSION" \
+     node scripts/check-staging-artifact.mjs --bootstrap
+   WRANGLER_OUTPUT_FILE_PATH="$BOOTSTRAP_OUTPUT" WRANGLER_WRITE_LOGS=0 WRANGLER_SEND_METRICS=false \
+     npx wrangler deploy .wrangler/dry-run/staging/index.js \
+       --no-bundle --upload-source-maps --strict --no-autoconfig \
+       --config wrangler.staging.jsonc \
+       --tag "$BOOTSTRAP_COMMIT_SHA" \
+       --message "Authorized local bootstrap · staging v${APP_VERSION} · $BOOTSTRAP_COMMIT_SHA"
+
+   BOOTSTRAP_COMMIT_SHA="$BOOTSTRAP_COMMIT_SHA" EXPECTED_APP_VERSION="$APP_VERSION" \
+     node scripts/record-staging-upload.mjs --bootstrap "$BOOTSTRAP_OUTPUT" "$BOOTSTRAP_RESULT"
+
+   version_id="$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(r.version_id)' "$BOOTSTRAP_RESULT")"
+   canonical_url="$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(r.canonical_url)' "$BOOTSTRAP_RESULT")"
+   test "$canonical_url" = "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev"
+   printf '%s' "$version_id" | grep -Eqi '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+   EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" \
+   EXPECTED_WORKER_TAG="$BOOTSTRAP_COMMIT_SHA" EXPECTED_WORKER_VERSION_ID="$version_id" \
+     node scripts/smoke-deployment.mjs "$canonical_url"
+   ```
+
+6. `$BOOTSTRAP_RESULT`의 version ID와 canonical URL, commit SHA tag를 배포 증적에 기록하십시오. Wrangler stdout을 복사하거나 임의의 ID·URL로 대체하지 마십시오. 증적을 보존한 뒤 temporary worktree를 제거할 수 있습니다.
+7. bootstrap 이후에는 직접 배포 권한을 정상 경로로 사용하지 않고 아래 `workflow_dispatch` 후보 검증·승격 절차만 사용하십시오.
+
+bootstrap은 신규 격리 Worker 생성 예외일 뿐 production Worker의 alias, branch build 또는 기존 staging Worker를 덮어쓰는 절차가 아닙니다. preflight 뒤 다른 운영자가 Worker를 만들면 canonical `deploy`가 기존 Worker를 갱신할 수 있으므로 배타적 변경 창이 보장되지 않으면 실행하지 마십시오. deploy가 성공한 뒤 parser나 smoke가 실패하면 같은 명령을 재실행하지 말고 생성된 Worker/version과 보존한 JSONL을 먼저 조사하십시오.
+
+1. 원격 `staging`이 배포하려는 정확한 SHA인지 확인합니다.
+2. `Verify` workflow를 `staging` ref에서 수동 실행하고 `deploy_staging=true`, `deploy_production=false`를 선택합니다.
+3. verify job은 production과 staging dry-run bundle 및 동일 정적 산출물을 보존합니다.
+4. deploy-staging job은 최신 원격 `staging` SHA를 다시 확인하고, 보존한 `.verified-staging-worker/index.js`를 `versions upload`로 올립니다.
+5. Wrangler가 반환한 고유 preview URL에서 앱 버전, `deploymentEnvironment=staging`, 정확한 Worker version ID, 네 HTML 경로와 전체 asset graph를 smoke합니다.
+6. 후보 smoke가 성공한 정확한 version ID만 `versions deploy <id>@100%`로 `bitcoin-p2p-check-staging`에 승격합니다.
+7. canonical staging URL에서 같은 version ID로 다시 smoke합니다. 다른 version이 보이면 배포를 실패 처리합니다.
+
+staging Worker에는 거래 기록 저장소와 signer가 없으므로 mutation 시험을 추가하지 마십시오. 자동 branch build, production Worker preview alias 또는 로컬 `wrangler deploy`를 이 절차의 대체 경로로 사용하지 마십시오.
+
 ### 정상 배포
 
 1. release PR에서 버전, 변경 기록, 구성 변경 및 rollback 계획을 검토합니다.
@@ -161,7 +270,7 @@ npx wrangler secret list --config wrangler.jsonc
    | `/api/trade-record/AAAAAAAAAAAAAAAB` | 404 | `application/json` | `no-store` |
    | `/api/unknown` | 404 | `application/json` | `no-store` |
 
-   Cloudflare Workers Static Assets는 기본적으로 정적 asset에 `Cache-Control: public, max-age=0, must-revalidate`와 `Content-Type`을 붙입니다([Static asset headers](https://developers.cloudflare.com/workers/static-assets/headers/)). 이 smoke는 header와 status만 읽고 body를 즉시 취소합니다. 거래 기록 API에는 존재하지 않는 ID를 조회하는 `GET` 한 번만 보내며 어떤 기록도 생성·변경·철회하지 않습니다.
+   Cloudflare Workers Static Assets는 기본적으로 정적 asset에 `Cache-Control: public, max-age=0, must-revalidate`와 `Content-Type`을 붙입니다([Static asset headers](https://developers.cloudflare.com/workers/static-assets/headers/)). 이 smoke는 HTML을 512 KiB로 제한해 읽고, 네 HTML 경로에서 시작해 JavaScript 정적·동적 import, CSS `@import`·`url()`, web manifest icon, service worker app shell까지 동일 출처 asset을 최대 128개 재귀 추적하여 status, media type, `nosniff`, fingerprint cache를 검사합니다. 거래 기록 API에는 존재하지 않는 ID를 조회하는 `GET` 한 번만 보내며 어떤 기록도 생성·변경·철회하지 않습니다.
 
 8. Cloudflare의 활성 deployment/version을 읽기 전용으로 확인합니다.
 
@@ -186,7 +295,7 @@ npx wrangler secret list --config wrangler.jsonc
    git push origin vX.Y.Z
    ```
 
-Cloudflare version은 code, assets, binding, compatibility 설정을 기록하지만 KV 같은 외부 저장소 상태는 포함하지 않습니다([Versions & deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)). 그러므로 Worker rollback과 KV 복원을 한 작업으로 오해하지 마십시오.
+Cloudflare version은 code, assets, binding, compatibility 설정을 기록하지만 Durable Object와 KV 같은 외부 저장소 상태는 포함하지 않습니다([Versions & deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)). 그러므로 Worker rollback과 저장소 복원을 한 작업으로 오해하지 마십시오.
 
 ### Rollback
 
@@ -194,7 +303,7 @@ Cloudflare version은 code, assets, binding, compatibility 설정을 기록하�
 
 1. 장애 시각, 증상, 현재 Worker version ID/SHA를 incident에 기록합니다.
 2. release record에서 마지막 정상 SHA와 Worker version을 찾습니다.
-3. KV namespace, secret, schema, 외부 API가 그 code와 여전히 호환되는지 확인합니다. 삭제되거나 변경된 platform resource는 code rollback으로 복구되지 않습니다.
+3. Durable Object namespace, legacy KV, secret, schema, 외부 API가 그 code와 여전히 호환되는지 확인합니다. 삭제되거나 변경된 platform resource는 code rollback으로 복구되지 않습니다.
 4. 기본 경로는 마지막 정상 변경을 `git revert`하는 PR입니다. 최신 `main`에서 검증하고 병합한 뒤 동일한 environment 승인과 smoke를 수행합니다.
 5. 새 patch version과 annotated tag를 발행하고 `rolled back from/to` version ID·SHA를 모두 기록합니다.
 
@@ -208,7 +317,7 @@ npx wrangler rollback <LAST_GOOD_VERSION_ID> --config wrangler.jsonc --message "
 
 ## 6. Workers telemetry 비수집, 민감 URL 보호 및 외부 경보
 
-현재 production과 preview 설정은 `observability.enabled`, Workers Logs, invocation log, 자동 trace와 모든 persistence/export destination을 명시적으로 끄고 sampling을 0으로 둡니다. route class와 고정 오류명만 내보내는 애플리케이션 `console` 호출은 소스에 유지하지만 Cloudflare 계정에는 영속화하지 않습니다. `/verify/?id=...`, `/api/trade-record/:id`, Lightning discovery·callback URL의 path/query가 record ID나 수취정보를 포함하며, Cloudflare Observability의 `cf-worker-log` 이벤트도 Worker 호출의 request URL metadata를 포함할 수 있기 때문입니다. 안전한 console payload만으로 플랫폼 enrichment를 통제할 수 없습니다([Workers Observability API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/), [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/), [Trace spans and attributes](https://developers.cloudflare.com/workers/observability/traces/spans-and-attributes/)). 실제 저장 필드를 검증한 외부 redacting Tail Worker 또는 OpenTelemetry pipeline을 구성하기 전에는 계정 로그·trace 저장을 활성화하지 마십시오.
+현재 production, staging과 preview 설정은 `observability.enabled`, Workers Logs, invocation log, 자동 trace와 모든 persistence/export destination을 명시적으로 끄고 sampling을 0으로 둡니다. route class와 고정 오류명만 내보내는 애플리케이션 `console` 호출은 소스에 유지하지만 Cloudflare 계정에는 영속화하지 않습니다. `/verify/?id=...`, `/api/trade-record/:id`, Lightning discovery·callback URL의 path/query가 record ID나 수취정보를 포함하며, Cloudflare Observability의 `cf-worker-log` 이벤트도 Worker 호출의 request URL metadata를 포함할 수 있기 때문입니다. 안전한 console payload만으로 플랫폼 enrichment를 통제할 수 없습니다([Workers Observability API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/), [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/), [Trace spans and attributes](https://developers.cloudflare.com/workers/observability/traces/spans-and-attributes/)). 실제 저장 필드를 검증한 외부 redacting Tail Worker 또는 OpenTelemetry pipeline을 구성하기 전에는 계정 로그·trace 저장을 활성화하지 마십시오.
 
 ### 민감정보 redaction 규칙
 
@@ -241,13 +350,13 @@ npx wrangler rollback <LAST_GOOD_VERSION_ID> --config wrangler.jsonc --message "
 | 5xx 비율 | 5분간 1% 이상이면서 5건 이상 | 5분간 5% 이상 또는 20건 이상 | 배포 시각/version과 상관관계 확인, upstream과 Worker 오류 구분, rollback 판단 |
 | 전체 응답 latency p95 | 10분간 2초 초과 | 5분간 4초 초과 | `/api/market`, 거래 기록, 정적 경로별 외부 synthetic와 집계형 Workers 지표 확인 |
 | production 읽기 전용 synthetic | 2회 연속 실패 | 3개 이상 핵심 경로 실패 또는 5분 지속 | 새 배포 중지, 외부 상태와 Worker version 확인 |
-| Workers·KV 관련 quota | 현재 plan 한도의 70% | 현재 plan 한도의 90% | preview/비필수 작업 억제, 증설 또는 원인 제거 |
+| Workers·Durable Objects·KV 관련 quota | 현재 plan 한도의 70% | 현재 plan 한도의 90% | staging/preview·비필수 작업 억제, 증설 또는 원인 제거 |
 
 고정된 무료/유료 한도 숫자를 문서에 복사하지 말고 매월 현재 account plan과 Cloudflare 공식 limits/usage를 기준으로 70%·90% 값을 다시 계산하십시오([Workers limits](https://developers.cloudflare.com/workers/platform/limits/)). 5xx에는 애플리케이션 500/503뿐 아니라 exceeded resources와 internal error 결과도 포함하십시오. 계정 로그가 꺼진 동안 5xx와 latency 경보는 집계형 Workers 지표와 외부 synthetic에서 구성하십시오.
 
 ### 대시보드 및 외부 시스템 수동 체크리스트
 
-- [ ] 실제 production·preview version에서 account observability, custom/invocation log persistence와 trace persistence가 모두 꺼졌고 export destination이 비어 있는지 확인했습니다.
+- [ ] 실제 production·staging·preview version에서 account observability, custom/invocation log persistence와 trace persistence가 모두 꺼졌고 export destination이 비어 있는지 확인했습니다.
 - [ ] 민감 synthetic 경로 호출 뒤 Workers Logs Query Builder에 새 persistent event가 생기지 않는지 확인했습니다.
 - [ ] 집계형 Workers 지표와 외부 synthetic에서 5xx count/rate 및 p50/p95/p99 latency dashboard를 만들었습니다.
 - [ ] Cloudflare Notifications에서 계정·billing·platform 경보 중 현재 plan에서 제공되는 항목을 켰습니다.
@@ -258,15 +367,17 @@ npx wrangler rollback <LAST_GOOD_VERSION_ID> --config wrangler.jsonc --message "
 - [ ] 경보마다 owner, runbook URL, silence 최대 시간, UTC 점검 시각을 설정했습니다.
 - [ ] 매월 quota 70/90% 계산과 수신자 목록을 점검하고, 분기마다 실제 test alert를 발생시켰습니다.
 
-## 7. KV 최소 백업과 복원
+## 7. 거래 기록 상태의 최소 백업과 복원
 
-Cloudflare Worker version은 KV 데이터를 보존하거나 rollback하지 않습니다. 거래 기록 KV 백업이 필요하면 다음 원칙을 만족하는 별도 승인형 backup job을 구현하십시오. 이 저장소에는 production backup/export job이 포함되어 있지 않으며 실제 backup 상태도 확인하지 않았습니다.
+신규 거래 기록 lifecycle의 authoritative 상태는 record ID별 SQLite Durable Object입니다. `TRADE_RECORDS` KV는 기존 기록의 lazy migration과 rollback 호환을 위한 순서 보장형 비동기 mirror이며, mirror 실패는 이미 성공한 강한 상태 mutation을 실패로 되돌리지 않습니다. 따라서 KV 사본만으로 최신 revoke/finalize 상태를 판정하거나 production을 복원하지 마십시오.
+
+Cloudflare Worker version은 Durable Object 또는 KV 데이터를 보존하거나 rollback하지 않습니다. 거래 기록 상태 백업이 필요하면 Durable Object를 기준으로 별도 승인형 export/복구 설계를 먼저 검증하고, KV는 legacy 호환 보조 사본으로 다루십시오. 이 저장소에는 production backup/export job이 포함되어 있지 않으며 실제 backup 상태도 확인하지 않았습니다.
 
 ### 데이터 최소화
 
-- production `TRADE_RECORDS` namespace만 대상으로 하고 다른 KV, Cache API 데이터, 로그, secret을 섞지 않습니다.
+- production `TRADE_RECORD_STATE`와 필요한 legacy `TRADE_RECORDS`만 대상으로 하고 다른 KV, Cache API 데이터, 로그, secret을 섞지 않습니다.
 - 복원에 필요한 `trade-record:v1:<id>`와 `trade-record:v1:manage:<tokenHash>` entry만 포함합니다.
-- key name, value, Cloudflare가 반환한 absolute `expiration`, schema version 외의 운영자 정보나 request metadata를 덧붙이지 않습니다.
+- Durable Object row의 key/value/absolute expiry와 legacy KV가 반환한 key/value/absolute `expiration`, schema version 외의 운영자 정보나 request metadata를 덧붙이지 않습니다.
 - backup은 전송·보관 중 암호화하고 production 운영자와 backup service identity에만 복호화 권한을 부여합니다. 개발자 노트북이나 CI artifact에 내려받지 않습니다.
 - snapshot 전체 보존 기간은 그 안의 가장 늦은 원본 만료를 넘지 않으며, 각 record는 자신의 원본 만료를 넘겨 복원 가능하게 보관하지 않습니다.
 
@@ -284,32 +395,33 @@ KV key list의 `expiration`은 처음에 TTL로 저장했더라도 UNIX epoch se
 
 1. 앱의 revoke가 생성하는 management tombstone을 backup job이 우선 수집합니다.
 2. tombstone의 record ID에 해당하는 record를 현재 snapshot과 모든 복원 가능 generation에서 삭제합니다.
-3. 운영자 수동 삭제는 먼저 승인된 deletion ledger에 key hash와 삭제 시각을 기록한 뒤 KV와 모든 backup generation에 전파합니다. 대시보드에서 흔적 없이 직접 삭제하지 마십시오.
+3. 운영자 수동 삭제는 먼저 승인된 deletion ledger에 key hash와 삭제 시각을 기록한 뒤 Durable Object, legacy KV와 모든 backup generation에 전파합니다. 대시보드에서 흔적 없이 직접 삭제하지 마십시오.
 4. 삭제를 물리적으로 즉시 반영하기 어려운 immutable backup은 record별 envelope encryption을 사용하고 해당 record DEK를 파기하여 복원 불가능하게 만듭니다.
 5. 삭제 전파가 완료되기 전까지 해당 backup을 복원 가능 상태로 표시하지 않습니다. 삭제 SLA는 24시간 이내로 두고 초과 시 privacy incident로 처리합니다.
 6. restore job은 snapshot보다 최신인 deletion ledger를 항상 마지막에 적용하고, tombstone/삭제 대상과 만료된 key를 건너뜁니다.
 
-KV는 eventual consistency 특성이 있으므로 단일 list 차이만으로 삭제를 확정하지 마십시오. tombstone/deletion ledger 또는 propagation window가 지난 재확인 결과를 사용하십시오.
+KV는 eventual consistency 특성이 있으므로 단일 list 차이만으로 삭제를 확정하지 마십시오. authoritative Durable Object의 tombstone/deletion ledger와 propagation window가 지난 KV 재확인 결과를 함께 사용하십시오.
 
 ### RPO/RTO와 복원 순서
 
-초기 운영 목표는 다음과 같습니다.
+다음 값은 **복구 도구와 훈련이 구현된 뒤의 목표**이며 현재 달성된 SLO가 아닙니다.
 
 - RPO: 최대 24시간
 - RTO: incident 선언 후 4시간 이내 읽기 검증 서비스 복구
 - backup 실행: 최소 매일, 실패 시 즉시 호출
 - 복원 훈련: 분기 1회, synthetic 데이터만 사용
 
-복원 절차는 다음과 같습니다.
+현재 저장소에는 Durable Object export/import 도구가 없으므로 production 복원 절차는 완성되지 않았습니다. 아래 순서는 구현할 복구 작업의 승인 기준이며, 검증된 DO import 경로 없이 legacy KV만 새 binding으로 연결해 production을 복구하지 마십시오.
 
 1. incident 시점 이전의 최신 정상 snapshot과 그 이후 deletion ledger를 고릅니다.
 2. 원본 SHA-256 digest, 서명, object version과 접근 audit를 확인합니다.
-3. production이 아닌 새 quarantine KV namespace에 먼저 복원합니다.
-4. `expiration <= restore 시작 시각 + 60초`인 entry는 쓰지 않습니다. 나머지는 manifest의 absolute `expiration`을 그대로 사용합니다.
+3. production이 아닌 격리 Worker의 새 Durable Object namespace와 quarantine KV에 먼저 복원합니다.
+4. `expiration <= restore 시작 시각 + 60초`인 entry는 쓰지 않습니다. 나머지는 manifest의 absolute expiry를 그대로 사용합니다.
 5. key prefix/schema, record ID 일치, P-256 signature, count, 만료·revoke suppression을 자동 검증합니다. 민감 value를 로그로 출력하지 않습니다.
 6. 표본 검증은 synthetic record 또는 hash/count만 사용합니다.
-7. 새 namespace ID로의 production binding 변경은 PR, `npm run verify:ci`, 최신 SHA 확인, `production` environment 승인을 거쳐 배포합니다.
-8. 읽기 전용 smoke와 기존 유효 record의 검증을 확인한 뒤 incident를 닫습니다. 원본 namespace는 조사·승인 없이 삭제하지 않습니다.
+7. 복구 도구가 Durable Object의 authoritative lifecycle과 legacy KV mirror를 같은 결과로 만들고 동시 finalize/revoke/GET 검사를 통과해야 합니다.
+8. 새 namespace로의 production binding 변경은 PR, `npm run verify:ci`, 최신 SHA 확인, `production` environment 승인을 거쳐 배포합니다.
+9. 읽기 전용 smoke와 기존 유효 record의 검증을 확인한 뒤 incident를 닫습니다. 원본 namespace는 조사·승인 없이 삭제하지 않습니다.
 
 분기 훈련에는 실제 소요 시간, 관측 RPO/RTO, 전체/복원/만료 skip/revoke suppression count, 승인자, 실패 원인과 개선 기한을 남기십시오. 목표를 넘겼다면 다음 release 전에 개선하거나 위험을 명시적으로 수용해야 합니다.
 
@@ -347,7 +459,8 @@ KV는 eventual consistency 특성이 있으므로 단일 list 차이만으로 �
 
 - [ ] Cloudflare Git 직접 배포와 branch preview가 비활성화되었습니다.
 - [ ] 최신 `main` SHA의 verify 성공과 production environment 승인이 확인되었습니다.
-- [ ] production/preview KV·signer 격리 및 preview fail-closed 테스트가 통과했습니다.
+- [ ] production/staging/preview Durable Object·KV·signer 격리 및 비프로덕션 fail-closed 테스트가 통과했습니다.
+- [ ] 격리 staging 후보와 canonical URL이 동일한 Worker version ID 및 전체 asset graph smoke를 통과했습니다.
 - [ ] Worker version↔Git SHA↔Actions run↔annotated tag가 연결되었습니다.
 - [ ] 읽기 전용 deployment smoke가 통과했습니다.
 - [ ] account 로그·trace persistence 비활성화와 외부 5xx/latency/quota 경보가 실제 synthetic와 test alert로 확인되었습니다.

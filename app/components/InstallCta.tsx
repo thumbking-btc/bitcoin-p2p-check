@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { shouldDisableServiceWorker } from "../lib/deployment-environment.mjs";
 import {
   getInstallInviteDismissedUntil,
   INSTALL_INVITE_DISMISS_KEY,
@@ -66,8 +67,15 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [inviteVisible, setInviteVisible] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [installSuppressed, setInstallSuppressed] = useState(false);
 
   useEffect(() => {
+    const annotatedEnvironment = document.documentElement.getAttribute("data-deployment-environment");
+    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment)) {
+      const suppressionTimeout = window.setTimeout(() => setInstallSuppressed(true), 0);
+      return () => window.clearTimeout(suppressionTimeout);
+    }
+
     let promptReceived = false;
     const displayQueries = ["standalone", "minimal-ui", "fullscreen", "window-controls-overlay"]
       .map((displayMode) => window.matchMedia(`(display-mode: ${displayMode})`));
@@ -157,7 +165,7 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
     setInviteVisible(false);
   }
 
-  if (mode === "installed") return null;
+  if (installSuppressed || mode === "installed") return null;
 
   const guideHref = mode === "ios"
     ? "/install/#iphone"

@@ -6,6 +6,11 @@ import {
   normalizeLightningAddress,
   safePublicHttpsUrl,
 } from "./lightning-address-normalize.ts";
+import {
+  canonicalLnurlPayInvoice,
+  lnurlPayMetadataHash,
+  mandatoryPayerDataLabels,
+} from "./lnurl-pay-discovery.ts";
 import { checkLightningRateLimit, type LightningRequestEnvironment } from "./lightning-rate-limit.ts";
 
 const API_HEADERS = {
@@ -25,9 +30,8 @@ const REQUEST_HEADERS = {
 const MAX_REQUEST_BYTES = 4_096;
 const MAX_JSON_BYTES = 256_000;
 const MAX_SOURCE_LENGTH = 2_048;
-const MAX_INVOICE_LENGTH = 1_200;
 const MAX_REDIRECTS = 2;
-const FETCH_TIMEOUT_MS = 7_000;
+const PROVIDER_DEADLINE_MS = 12_000;
 const MAX_SAFE_SATS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
 
 type SourceType = "address" | "lnurl" | "url";
@@ -151,11 +155,10 @@ async function readJson(request: Request): Promise<unknown> {
   }
 }
 
-async function fetchJson(start: URL): Promise<{ value: unknown; finalUrl: URL }> {
+async function fetchJson(start: URL, signal: AbortSignal): Promise<{ value: unknown; finalUrl: URL }> {
   let current = providerUrl(start);
   const anchorHostname = current.hostname;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
     let response: Response;
     try {
       response = await fetch(current, {
@@ -228,11 +231,24 @@ export async function handleLightningPayRequest(
     const amountSats = parseAmount(body.amountSats);
     const amountMsat = amountSats * 1_000;
 
-    const discoveryResult = await fetchJson(discoveryUrl);
+    const providerDeadline = AbortSignal.timeout(PROVIDER_DEADLINE_MS);
+    const discoveryResult = await fetchJson(discoveryUrl, providerDeadline);
     const discovery = discoveryResult.value;
     if (!isRecord(discovery)) fail("INVALID_PROVIDER_RESPONSE", "LNURL-pay 정보를 확인하지 못했습니다.", 502);
     if (discovery.status === "ERROR") fail("SOURCE_REJECTED", safeReason(discovery.reason, "라이트닝 수취정보가 요청을 거절했습니다."), 422);
     if (discovery.tag !== "payRequest") fail("NOT_PAY_REQUEST", "이 LNURL은 결제 수취용 LNURL-pay가 아닙니다.", 422);
+    const metadataHash = lnurlPayMetadataHash(discovery.metadata);
+    if (metadataHash === null) {
+      fail("INVALID_PROVIDER_RESPONSE", "LNURL-pay 결제 설명을 확인하지 못했습니다.", 502);
+    }
+    const requiredPayerData = mandatoryPayerDataLabels(discovery);
+    if (requiredPayerData.length > 0) {
+      fail(
+        "PAYER_DATA_REQUIRED",
+        `이 LNURL-pay는 결제자 추가 정보(${requiredPayerData.join(", ")})를 필수로 요구합니다. 자동 인보이스 대신 지갑에서 인보이스를 직접 만들어 입력하십시오.`,
+        422,
+      );
+    }
 
     const minSendable = Number(discovery.minSendable);
     const maxSendable = Number(discovery.maxSendable);
@@ -249,12 +265,12 @@ export async function handleLightningPayRequest(
       fail("INVALID_PROVIDER_RESPONSE", "인보이스 발급 도메인을 확인하지 못했습니다.", 502);
     }
     callback.searchParams.set("amount", String(amountMsat));
-    const payment = (await fetchJson(callback)).value;
+    const payment = (await fetchJson(callback, providerDeadline)).value;
     if (!isRecord(payment)) fail("INVALID_PROVIDER_RESPONSE", "인보이스 응답을 확인하지 못했습니다.", 502);
     if (payment.status === "ERROR") fail("INVOICE_REJECTED", safeReason(payment.reason, "지갑 서비스가 인보이스 발급을 거절했습니다."), 422);
 
-    const invoice = payment.pr;
-    if (typeof invoice !== "string" || invoice.length < 20 || invoice.length > MAX_INVOICE_LENGTH || /\s/u.test(invoice) || !invoice.toLowerCase().startsWith("lnbc")) {
+    const invoice = canonicalLnurlPayInvoice(payment.pr, amountSats, metadataHash);
+    if (invoice === null) {
       fail("INVALID_PROVIDER_RESPONSE", "지갑 서비스가 올바른 메인넷 BOLT11 인보이스를 반환하지 않았습니다.", 502);
     }
 

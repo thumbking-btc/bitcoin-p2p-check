@@ -1,11 +1,14 @@
 import { handleMarketRequest } from "./market";
 import type { LightningRequestEnvironment } from "./lightning-rate-limit";
 import { APP_VERSION } from "../app/lib/app-version";
+import { normalizeDeploymentEnvironment } from "../app/lib/deployment-environment.mjs";
 import {
   handleTradeRecordRequest,
   isTradeRecordApiPath,
   type TradeRecordEnvironment,
 } from "./trade-record";
+
+export { TradeRecordState } from "./trade-record-state";
 
 export type WorkerExecutionContext = Pick<ExecutionContext, "waitUntil">;
 
@@ -15,6 +18,8 @@ export type WorkerEnvironment = TradeRecordEnvironment
 
 const CSP_POLICY_PATH = "/csp-policy.txt";
 const MAX_CSP_POLICY_LENGTH = 16_384;
+const NON_PRODUCTION_ROBOTS_POLICY = "noindex, nofollow, noarchive";
+const NON_PRODUCTION_NOTICE_MESSAGE = "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
 const STATIC_SECURITY_HEADERS = Object.freeze({
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -26,9 +31,17 @@ const STATIC_SECURITY_HEADERS = Object.freeze({
   "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
 });
 
-function staticHeaders(source: HeadersInit, pathname: string): Headers {
+function staticHeaders(
+  source: HeadersInit,
+  pathname: string,
+  deploymentEnvironment: ReturnType<typeof normalizeDeploymentEnvironment>,
+): Headers {
   const headers = new Headers(source);
   for (const [name, value] of Object.entries(STATIC_SECURITY_HEADERS)) headers.set(name, value);
+  headers.set("X-Deployment-Environment", deploymentEnvironment);
+  if (deploymentEnvironment !== "production") {
+    headers.set("X-Robots-Tag", NON_PRODUCTION_ROBOTS_POLICY);
+  }
 
   if (pathname === "/sw.js") {
     headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -50,30 +63,70 @@ function staticHeaders(source: HeadersInit, pathname: string): Headers {
   return headers;
 }
 
-function staticAssetFailure(): Response {
+function nonProductionHtmlResponse(
+  response: Response,
+  deploymentEnvironment: ReturnType<typeof normalizeDeploymentEnvironment>,
+): Response {
+  const label = deploymentEnvironment === "staging"
+    ? "STAGING"
+    : deploymentEnvironment === "preview" ? "PREVIEW" : "NON-PRODUCTION";
+
+  return new HTMLRewriter()
+    .on("html", {
+      element(element) {
+        element.setAttribute("data-deployment-environment", deploymentEnvironment);
+      },
+    })
+    .on("#deployment-environment-notice", {
+      element(element) {
+        element.removeAttribute("hidden");
+        element.setAttribute("class", "deployment-notice");
+        element.setAttribute("data-deployment-environment", deploymentEnvironment);
+        element.setAttribute("role", "status");
+      },
+    })
+    .on("#deployment-environment-notice [data-deployment-label]", {
+      element(element) {
+        element.setInnerContent(label);
+      },
+    })
+    .on("#deployment-environment-notice [data-deployment-message]", {
+      element(element) {
+        element.setInnerContent(NON_PRODUCTION_NOTICE_MESSAGE);
+      },
+    })
+    .transform(response);
+}
+
+function staticAssetFailure(environment?: WorkerEnvironment): Response {
+  const deploymentEnvironment = normalizeDeploymentEnvironment(environment?.DEPLOYMENT_ENV);
   return new Response("Static content is temporarily unavailable", {
     status: 503,
     headers: staticHeaders({
       "Cache-Control": "no-store",
       "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
       "Content-Type": "text/plain; charset=utf-8",
-    }, "/"),
+    }, "/", deploymentEnvironment),
   });
 }
 
 export async function staticAssetResponse(request: Request, environment: WorkerEnvironment): Promise<Response> {
-  if (!environment.ASSETS) return staticAssetFailure();
+  if (!environment.ASSETS) return staticAssetFailure(environment);
   const response = await environment.ASSETS.fetch(request);
   const pathname = new URL(request.url).pathname;
-  const headers = staticHeaders(response.headers, pathname);
+  const deploymentEnvironment = normalizeDeploymentEnvironment(environment.DEPLOYMENT_ENV);
+  const headers = staticHeaders(response.headers, pathname, deploymentEnvironment);
   const htmlResponse = response.headers.get("content-type")?.toLowerCase().startsWith("text/html") ?? false;
 
   if (htmlResponse) {
+    if (deploymentEnvironment !== "production") {
+      headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    }
     const policyRequest = new Request(new URL(CSP_POLICY_PATH, request.url), {
       headers: { Accept: "text/plain" },
     });
     const policyResponse = await environment.ASSETS.fetch(policyRequest);
-    if (!policyResponse.ok) return staticAssetFailure();
+    if (!policyResponse.ok) return staticAssetFailure(environment);
     const policy = (await policyResponse.text()).trim();
     if (
       policy.length === 0
@@ -82,26 +135,32 @@ export async function staticAssetResponse(request: Request, environment: WorkerE
       || /[\r\n]/u.test(policy)
       || !/\bscript-src\b[^;]*'sha256-/u.test(policy)
     ) {
-      return staticAssetFailure();
+      return staticAssetFailure(environment);
     }
     headers.set("Content-Security-Policy", policy);
   }
 
   const bodyForbidden = request.method === "HEAD" || response.status === 204 || response.status === 304;
-  return new Response(bodyForbidden ? null : response.body, {
+  const securedResponse = new Response(bodyForbidden ? null : response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+  if (htmlResponse && !bodyForbidden && deploymentEnvironment !== "production") {
+    return nonProductionHtmlResponse(securedResponse, deploymentEnvironment);
+  }
+  return securedResponse;
 }
 
 export function versionResponse(request: Request, environment: WorkerEnvironment): Response {
+  const deploymentEnvironment = normalizeDeploymentEnvironment(environment.DEPLOYMENT_ENV);
   if (request.method !== "GET" && request.method !== "HEAD") {
     return Response.json({ ok: false, code: "METHOD_NOT_ALLOWED", message: "GET 요청만 허용합니다." }, {
       status: 405,
       headers: {
         Allow: "GET, HEAD",
         "Cache-Control": "no-store",
+        "X-Deployment-Environment": deploymentEnvironment,
         "X-Content-Type-Options": "nosniff",
       },
     });
@@ -110,12 +169,14 @@ export function versionResponse(request: Request, environment: WorkerEnvironment
   const body = request.method === "HEAD" ? null : JSON.stringify({
     ok: true,
     appVersion: APP_VERSION,
+    deploymentEnvironment,
     workerVersion: environment.WORKER_VERSION ?? null,
   });
   return new Response(body, {
     headers: {
       "Cache-Control": "no-store",
       "Content-Type": "application/json; charset=utf-8",
+      "X-Deployment-Environment": deploymentEnvironment,
       "X-Content-Type-Options": "nosniff",
     },
   });

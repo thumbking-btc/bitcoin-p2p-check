@@ -37,6 +37,13 @@ import {
   INSTALL_INVITE_DISMISS_MS,
   isInstallInviteSuppressed,
 } from "../app/lib/install-invite.mjs";
+import {
+  inferDeploymentEnvironment,
+  normalizeDeploymentEnvironment,
+  normalizeOptionalDeploymentEnvironment,
+  resolveDeploymentNotice,
+  shouldDisableServiceWorker,
+} from "../app/lib/deployment-environment.mjs";
 
 async function readAppVersion() {
   const source = await readFile(new URL("../app/lib/app-version.ts", import.meta.url), "utf8");
@@ -978,12 +985,71 @@ test("renders creator identity and Lightning support details", async () => {
   assert.match(html, /https:\/\/www\.threads\.com\/@thumb\.ggul/);
   assert.ok(html.includes("\uB77C\uC774\uD2B8\uB2DD\uC73C\uB85C \uD6C4\uC6D0\uD558\uAE30"));
   assert.ok(html.includes("\uC774 \uACC4\uC0B0\uAE30\uAC00 \uB3C4\uC6C0\uC774 \uB418\uC5C8\uB2E4\uBA74 \uC9C0\uC18D\uC801\uC778 \uAC80\uC99D\uACFC \uB2E4\uC74C \uBC84\uC804 \uC81C\uC791\uC744 \uD6C4\uC6D0\uD574 \uC8FC\uC138\uC694."));
-  assert.match(html, /href="\/lightning-support-qr\.png"/);
+  assert.match(html, /src="\/lightning-support-qr\.png"/);
+  assert.match(html, /loading="lazy"/);
   assert.ok(html.includes("\uC5C4\uC9C0\uC655 \uB77C\uC774\uD2B8\uB2DD \uD6C4\uC6D0 QR"));
   assert.ok(html.includes("\uC5C4\uC9C0\uC655 \uB77C\uC774\uD2B8\uB2DD \uD6C4\uC6D0 \uC8FC\uC18C\uB97C \uB2F4\uC740 QR \uCF54\uB4DC"));
   assert.ok(html.includes("thumbking@oksu.su"));
   assert.ok(html.includes("\uB77C\uC774\uD2B8\uB2DD \uC8FC\uC18C \uBCF5\uC0AC"));
   assert.ok(html.includes("\uD6C4\uC6D0\uD558\uAE30 \uC804, \uB77C\uC774\uD2B8\uB2DD \uC9C0\uAC11\uC5D0 \uD45C\uC2DC\uB41C \uC218\uC2E0 \uC8FC\uC18C\uAC00 \uC544\uB798 \uC8FC\uC18C\uC640 \uAC19\uC740\uC9C0 \uD655\uC778\uD574 \uC8FC\uC138\uC694."));
+});
+
+test("identifies production, staging, and preview hosts without registering staging service workers", async () => {
+  assert.equal(normalizeDeploymentEnvironment(" StAgInG "), "staging");
+  assert.equal(normalizeDeploymentEnvironment("unexpected"), "unknown");
+  assert.equal(normalizeOptionalDeploymentEnvironment(null), null);
+  assert.equal(normalizeOptionalDeploymentEnvironment("unknown"), "unknown");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check.thumbking-btc.workers.dev"), "production");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("staging-bitcoin-p2p-check.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("4e913cf6-bitcoin-p2p-check.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("12345678-bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("localhost"), "unknown");
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check.thumbking-btc.workers.dev"), false);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("4e913cf6-bitcoin-p2p-check.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("12345678-bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "staging"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "preview"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "unknown"), true);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check.thumbking-btc.workers.dev", "unknown"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "production"), false);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-staging.thumbking-btc.workers.dev", "production"), true);
+  assert.equal(resolveDeploymentNotice("production", "bitcoin-p2p-check.thumbking-btc.workers.dev"), null);
+  assert.equal(resolveDeploymentNotice(null, "bitcoin-p2p-check.thumbking-btc.workers.dev"), null);
+  assert.deepEqual(resolveDeploymentNotice("unknown", "bitcoin-p2p-check.thumbking-btc.workers.dev"), {
+    environment: "unknown",
+    mismatch: false,
+    inferredEnvironment: "production",
+    reportedEnvironment: "unknown",
+  });
+  assert.deepEqual(resolveDeploymentNotice("staging", "bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), {
+    environment: "staging",
+    mismatch: false,
+    inferredEnvironment: "staging",
+    reportedEnvironment: "staging",
+  });
+  assert.equal(
+    resolveDeploymentNotice("production", "bitcoin-p2p-check-staging.thumbking-btc.workers.dev")?.mismatch,
+    true,
+  );
+
+  const html = await (await render()).text();
+  const notice = html.match(/<aside[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
+  assert.match(notice, /hidden/u);
+  assert.doesNotMatch(html, />STAGING<|>PREVIEW</u);
+  assert.match(html, /data-deployment-label=""/u);
+  assert.match(html, /data-deployment-message=""/u);
+  const noticeSource = await readFile(new URL("../app/components/DeploymentEnvironmentNotice.tsx", import.meta.url), "utf8");
+  assert.match(noticeSource, /document\.documentElement\.getAttribute\("data-deployment-environment"\)/u);
+  assert.match(noticeSource, /if \(annotatedEnvironment === null\)/u);
+  assert.match(noticeSource, /setReportedEnvironment\(annotatedEnvironment\)/u);
+  assert.match(noticeSource, /setReportedEnvironment\(environment\)/u);
+  assert.match(noticeSource, /"NON-PRODUCTION"/u);
 });
 
 test("ships an installable PWA with compact link metadata and no cached API data", async () => {
@@ -1072,6 +1138,11 @@ test("ships an installable PWA with compact link metadata and no cached API data
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
+  assert.match(registration, /getAttribute\("data-deployment-environment"\)/u);
+  assert.match(registration, /shouldDisableServiceWorker\(window\.location\.hostname, annotatedEnvironment\)/u);
+  assert.match(installCta, /installSuppressed/);
+  assert.match(installCta, /data-deployment-environment/);
+  assert.match(css, /html\[data-deployment-environment\]:not\(\[data-deployment-environment="production"\]\) \.site-route-install \{ display: none; \}/);
   assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
   assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
   assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 계산하고 모집글 또는 거래 기록 카드로 공유합니다\."/);
@@ -1169,7 +1240,7 @@ test("exports static pages and routes market and signed-record APIs through the 
   assert.match(wrangler, /"run_worker_first":\s*true/);
   assert.match(wrangler, /"binding":\s*"TRADE_RECORDS"/);
   const manifest = JSON.parse(packageJson);
-  assert.match(manifest.scripts["deploy:production"], /wrangler deploy \.verified-worker\/index\.js --no-bundle --upload-source-maps --strict --config wrangler\.jsonc/);
+  assert.match(manifest.scripts["deploy:production"], /wrangler deploy \.verified-worker\/index\.js --no-bundle --upload-source-maps --strict --no-autoconfig --config wrangler\.jsonc/);
   assert.match(manifest.scripts.deploy, /process\.exit\(1\)/);
   assert.equal(manifest.version, appVersion);
   assert.match(worker, /url\.pathname === "\/api\/market"/);

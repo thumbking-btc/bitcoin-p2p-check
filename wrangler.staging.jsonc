@@ -1,58 +1,19 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "bitcoin-p2p-check",
+  "name": "bitcoin-p2p-check-staging",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
-  "preview_urls": false,
+  "preview_urls": true,
   "vars": {
-    "DEPLOYMENT_ENV": "production",
-    "TRADE_RECORDS_ENABLED": "true"
-  },
-  "secrets": {
-    "required": ["TRADE_RECORD_SIGNING_KEY"]
-  },
-  "kv_namespaces": [
-    {
-      "binding": "TRADE_RECORDS",
-      "id": "3ff4212d619a4355a0bc3d3d1cdbebe2"
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "TRADE_RECORD_STATE",
-        "class_name": "TradeRecordState"
-      }
-    ]
-  },
-  "exports": {
-    "TradeRecordState": {
-      "type": "durable-object",
-      "storage": "sqlite"
-    }
+    "DEPLOYMENT_ENV": "staging",
+    "TRADE_RECORDS_ENABLED": "false"
   },
   "ratelimits": [
     {
-      "name": "TRADE_RECORD_CREATE_RATE_LIMITER",
-      "namespace_id": "2026082501",
-      "simple": {
-        "limit": 6,
-        "period": 60
-      }
-    },
-    {
-      "name": "TRADE_RECORD_READ_RATE_LIMITER",
-      "namespace_id": "2026082503",
-      "simple": {
-        "limit": 120,
-        "period": 60
-      }
-    },
-    {
       "name": "LIGHTNING_REQUEST_RATE_LIMITER",
-      "namespace_id": "2026082502",
+      "namespace_id": "2026082591",
       "simple": {
         "limit": 12,
         "period": 60

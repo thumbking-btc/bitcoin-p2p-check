@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { DeploymentEnvironmentNotice } from "./components/DeploymentEnvironmentNotice";
 import { PwaRegistration } from "./components/PwaRegistration";
 import "./globals.css";
 
@@ -53,8 +54,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
+    <html lang="ko" suppressHydrationWarning>
       <body>
+        <DeploymentEnvironmentNotice />
         {children}
         <PwaRegistration />
       </body>

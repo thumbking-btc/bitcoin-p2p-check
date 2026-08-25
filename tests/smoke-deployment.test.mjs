@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  extractCssReferencedAssets,
+  extractJavaScriptReferencedAssets,
+  extractManifestReferencedAssets,
+  extractReferencedAssets,
+  extractServiceWorkerReferencedAssets,
   normalizeBaseUrl,
   parseSmokeOptions,
   runDeploymentSmoke,
   SMOKE_ENDPOINTS,
+  validateReferencedAssetResponse,
   validateVersionPayload,
 } from "../scripts/smoke-deployment.mjs";
 
@@ -23,20 +29,77 @@ const STATIC_SECURITY_HEADERS = {
   "Permissions-Policy": "camera=(), microphone=()",
 };
 
+async function settleWithin(promise, timeoutMs = 100) {
+  const didNotSettle = Symbol("did-not-settle");
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(didNotSettle), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function bodyWithStalledCancellation(onCancel) {
+  return new ReadableStream({
+    cancel() {
+      onCancel();
+      return new Promise(() => {});
+    },
+  });
+}
+
 function responseFor(url) {
   if (["/", "/install/", "/privacy/", "/verify/"].includes(url.pathname)) {
-    return new Response("<!doctype html>", {
+    const html = url.pathname === "/"
+      ? '<!doctype html><link rel="stylesheet" href="/_next/static/app.css"><link rel="manifest" href="/manifest.webmanifest"><script src="/_next/static/app.js"></script>'
+      : "<!doctype html>";
+    return new Response(html, {
       status: 200,
-      headers: { ...STATIC_SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": STATIC_CACHE, "Content-Security-Policy": CSP },
+      headers: {
+        ...STATIC_SECURITY_HEADERS,
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": STATIC_CACHE,
+        "Content-Security-Policy": CSP,
+        "X-Deployment-Environment": "production",
+      },
+    });
+  }
+  if (url.pathname === "/_next/static/app.css") {
+    return new Response("body{}", {
+      headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" },
+    });
+  }
+  if (url.pathname === "/_next/static/app.js") {
+    return new Response("export{}", {
+      headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" },
+    });
+  }
+  if (url.pathname === "/manifest.webmanifest") {
+    return new Response('{"icons":[]}', {
+      headers: {
+        "Content-Type": "application/manifest+json",
+        "Cache-Control": STATIC_CACHE,
+        "X-Content-Type-Options": "nosniff",
+      },
     });
   }
   if (url.pathname === "/sw.js") {
-    return new Response("// service worker", {
+    return new Response('const APP_SHELL = ["/"];', {
       headers: { ...STATIC_SECURITY_HEADERS, "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": NO_STORE, "Service-Worker-Allowed": "/" },
     });
   }
   if (url.pathname === "/api/version") {
-    return Response.json({ ok: true, appVersion: "2.3.0", workerVersion: null }, { headers: { "Cache-Control": NO_STORE } });
+    return Response.json({
+      ok: true,
+      appVersion: "2.3.0",
+      deploymentEnvironment: "production",
+      workerVersion: null,
+    }, { headers: { "Cache-Control": NO_STORE, "X-Deployment-Environment": "production" } });
   }
   if (url.pathname === "/api/market" && url.search === "?price=0") {
     return Response.json({ status: "partial" }, { headers: { "Cache-Control": NO_STORE } });
@@ -60,8 +123,15 @@ test("deployment smoke uses only bounded, read-only GET requests, including a no
     },
   });
 
-  assert.equal(results.length, SMOKE_ENDPOINTS.length);
-  assert.deepEqual(calls.map((call) => call.url), SMOKE_ENDPOINTS.map((endpoint) => endpoint.path));
+  assert.equal(results.length, SMOKE_ENDPOINTS.length + 3);
+  assert.deepEqual(
+    calls.filter((call) => !call.url.startsWith("/_next/static/")).map((call) => call.url),
+    [...SMOKE_ENDPOINTS.map((endpoint) => endpoint.path), "/manifest.webmanifest"],
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.url.startsWith("/_next/static/")).map((call) => call.url).sort(),
+    ["/_next/static/app.css", "/_next/static/app.js"],
+  );
   assert.ok(calls.every((call) => call.init.method === "GET"));
   assert.ok(calls.every((call) => call.init.redirect === "manual"));
   assert.ok(calls.every((call) => call.init.credentials === "omit"));
@@ -105,6 +175,29 @@ test("deployment smoke aborts a request at the configured timeout", async () => 
   );
 });
 
+test("deployment smoke does not await stalled endpoint body cancellation", async () => {
+  let cancelled = false;
+  const results = await settleWithin(runDeploymentSmoke({
+    baseUrl: "https://deployment.example",
+    timeoutMs: 100,
+    log() {},
+    async fetcher(input) {
+      const url = new URL(input);
+      if (url.pathname === "/api/market") {
+        return new Response(bodyWithStalledCancellation(() => {
+          cancelled = true;
+        }), {
+          headers: { "Content-Type": "application/json", "Cache-Control": NO_STORE },
+        });
+      }
+      return responseFor(url);
+    },
+  }));
+
+  assert.ok(Array.isArray(results), "endpoint body cancel이 완료되지 않아 smoke가 멈췄습니다.");
+  assert.equal(cancelled, true);
+});
+
 test("BASE_URL parsing accepts CLI or environment input and rejects unsafe origins", () => {
   assert.deepEqual(parseSmokeOptions([], { BASE_URL: "https://deployment.example", SMOKE_TIMEOUT_MS: "250" }), {
     help: false,
@@ -116,6 +209,14 @@ test("BASE_URL parsing accepts CLI or environment input and rejects unsafe origi
   assert.throws(() => normalizeBaseUrl("http://deployment.example"), /HTTPS/u);
   assert.throws(() => normalizeBaseUrl("https://user:secret@deployment.example"), /비밀번호/u);
   assert.throws(() => normalizeBaseUrl("https://deployment.example/subpath"), /경로/u);
+  assert.equal(
+    parseSmokeOptions(["--expected-environment", "staging", "https://deployment.example"], {}).expectedDeploymentEnvironment,
+    "staging",
+  );
+  assert.throws(
+    () => parseSmokeOptions(["--expected-environment=qa", "https://deployment.example"], {}),
+    /production, staging 또는 preview/u,
+  );
 });
 
 test("deployment smoke can bind release expectations to Worker version metadata", async () => {
@@ -133,8 +234,9 @@ test("deployment smoke can bind release expectations to Worker version metadata"
           return Response.json({
             ok: true,
             appVersion: "2.3.0",
+            deploymentEnvironment: "production",
             workerVersion: { id: "worker-version-id", tag: "wrong-sha", timestamp: new Date().toISOString() },
-          }, { headers: { "Cache-Control": NO_STORE } });
+          }, { headers: { "Cache-Control": NO_STORE, "X-Deployment-Environment": "production" } });
         }
         return responseFor(url);
       },
@@ -143,7 +245,257 @@ test("deployment smoke can bind release expectations to Worker version metadata"
   );
 
   assert.throws(
-    () => validateVersionPayload({ ok: true, appVersion: "2.3.0", workerVersion: null }, { expectedWorkerTag }),
+    () => validateVersionPayload({
+      ok: true,
+      appVersion: "2.3.0",
+      deploymentEnvironment: "production",
+      workerVersion: null,
+    }, { expectedWorkerTag }),
     /Worker tag가 다릅니다/u,
+  );
+});
+
+test("deployment smoke rejects a missing JavaScript chunk referenced by root HTML", async () => {
+  await assert.rejects(
+    runDeploymentSmoke({
+      baseUrl: "https://deployment.example",
+      timeoutMs: 100,
+      log() {},
+      async fetcher(input) {
+        const url = new URL(input);
+        if (url.pathname === "/_next/static/app.js") {
+          return new Response("missing", {
+            status: 404,
+            headers: { "Content-Type": "text/plain", "Cache-Control": NO_STORE },
+          });
+        }
+        return responseFor(url);
+      },
+    }),
+    /app\.js.*예상 상태 200, 실제 상태 404/u,
+  );
+});
+
+test("deployment smoke does not await stalled referenced asset body cancellation", async () => {
+  let cancelled = false;
+  const results = await settleWithin(runDeploymentSmoke({
+    baseUrl: "https://deployment.example",
+    timeoutMs: 100,
+    log() {},
+    async fetcher(input) {
+      const url = new URL(input);
+      if (url.pathname === "/manifest.webmanifest") {
+        return new Response('{"icons":[{"src":"/stalled-icon.png"}]}', {
+          headers: {
+            "Content-Type": "application/manifest+json",
+            "Cache-Control": STATIC_CACHE,
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      }
+      if (url.pathname === "/stalled-icon.png") {
+        return new Response(bodyWithStalledCancellation(() => {
+          cancelled = true;
+        }), {
+          headers: {
+            "Content-Type": "image/png",
+            "Cache-Control": STATIC_CACHE,
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      }
+      return responseFor(url);
+    },
+  }));
+
+  assert.ok(Array.isArray(results), "asset body cancel이 완료되지 않아 smoke가 멈췄습니다.");
+  assert.equal(cancelled, true);
+});
+
+test("deployment smoke derives staging policy from version metadata", async () => {
+  const results = await runDeploymentSmoke({
+    baseUrl: "https://staging.example",
+    timeoutMs: 100,
+    expectedDeploymentEnvironment: "staging",
+    log() {},
+    async fetcher(input) {
+      const url = new URL(input);
+      if (url.pathname === "/api/version") {
+        return Response.json({
+          ok: true,
+          appVersion: "2.3.0",
+          deploymentEnvironment: "staging",
+          workerVersion: null,
+        }, { headers: { "Cache-Control": NO_STORE, "X-Deployment-Environment": "staging" } });
+      }
+      const response = responseFor(url);
+      if (!response.headers.get("content-type")?.startsWith("text/html")) return response;
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+      headers.set("X-Deployment-Environment", "staging");
+      headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+      return new Response(await response.text(), { status: response.status, headers });
+    },
+  });
+  assert.ok(results.some((result) => result.endpoint?.path === "/"));
+});
+
+test("extractReferencedAssets keeps bounded same-origin scripts and styles only", () => {
+  assert.deepEqual(extractReferencedAssets(`
+    <link href="/_next/static/app.css?x=1&amp;y=2" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.example/external.css">
+    <link rel="modulepreload" href="/_next/static/lazy.js#ignored-fragment">
+    <script defer src='/_next/static/app.js'></script>
+  `, "https://deployment.example/"), [
+    {
+      path: "/_next/static/app.css?x=1&y=2",
+      url: "https://deployment.example/_next/static/app.css?x=1&y=2",
+      mediaType: "css",
+    },
+    {
+      path: "/_next/static/lazy.js",
+      url: "https://deployment.example/_next/static/lazy.js",
+      mediaType: "javascript",
+    },
+    {
+      path: "/_next/static/app.js",
+      url: "https://deployment.example/_next/static/app.js",
+      mediaType: "javascript",
+    },
+  ]);
+});
+
+test("recursive asset extractors follow JavaScript, CSS, manifest, and service-worker references", () => {
+  assert.deepEqual(
+    extractJavaScriptReferencedAssets(`
+      import "./static.js";
+      export { value } from "./exported.js";
+      const lazy = import(\`./lazy.js\`);
+    `, "https://deployment.example/_next/static/chunks/app.js").map((asset) => asset.path),
+    [
+      "/_next/static/chunks/static.js",
+      "/_next/static/chunks/exported.js",
+      "/_next/static/chunks/lazy.js",
+    ],
+  );
+  assert.deepEqual(
+    extractCssReferencedAssets(`
+      @import "./theme.css";
+      .logo { background: url("/icons/logo.png"); }
+      @font-face { src: url(../fonts/app.woff2); }
+    `, "https://deployment.example/_next/static/css/app.css").map((asset) => asset.path),
+    [
+      "/_next/static/css/theme.css",
+      "/icons/logo.png",
+      "/_next/static/fonts/app.woff2",
+    ],
+  );
+  assert.deepEqual(
+    extractManifestReferencedAssets(JSON.stringify({
+      icons: [{ src: "/icons/app.png" }],
+      shortcuts: [{ icons: [{ src: "/icons/shortcut.png" }] }],
+    }), "https://deployment.example/manifest.webmanifest").map((asset) => asset.path),
+    ["/icons/app.png", "/icons/shortcut.png"],
+  );
+  assert.deepEqual(
+    extractServiceWorkerReferencedAssets(`
+      const APP_SHELL = ["/", "/offline/", "/icons/offline.png"];
+      importScripts("./worker-helper.js");
+    `, "https://deployment.example/sw.js").map((asset) => asset.path),
+    ["/", "/offline/", "/icons/offline.png", "/worker-helper.js"],
+  );
+});
+
+for (const scenario of [
+  {
+    name: "dynamic JavaScript import",
+    sourcePath: "/_next/static/app.js",
+    missingPath: "/_next/static/missing-lazy.js",
+    body: 'import("./missing-lazy.js");',
+  },
+  {
+    name: "CSS url",
+    sourcePath: "/_next/static/app.css",
+    missingPath: "/missing-background.png",
+    body: '.hero { background-image: url("/missing-background.png"); }',
+  },
+  {
+    name: "manifest icon",
+    sourcePath: "/manifest.webmanifest",
+    missingPath: "/missing-manifest-icon.png",
+    body: '{"icons":[{"src":"/missing-manifest-icon.png"}]}',
+  },
+  {
+    name: "service-worker app shell",
+    sourcePath: "/sw.js",
+    missingPath: "/missing-app-shell.png",
+    body: 'const APP_SHELL = ["/", "/missing-app-shell.png"];',
+  },
+]) {
+  test(`deployment smoke rejects a missing ${scenario.name} asset`, async () => {
+    await assert.rejects(
+      runDeploymentSmoke({
+        baseUrl: "https://deployment.example",
+        timeoutMs: 100,
+        log() {},
+        async fetcher(input) {
+          const url = new URL(input);
+          if (url.pathname === scenario.missingPath) {
+            return new Response("missing", {
+              status: 404,
+              headers: { "Content-Type": "text/plain", "Cache-Control": NO_STORE },
+            });
+          }
+          const response = responseFor(url);
+          if (url.pathname !== scenario.sourcePath) return response;
+          return new Response(scenario.body, { status: response.status, headers: response.headers });
+        },
+      }),
+      new RegExp(`${scenario.missingPath.replaceAll("/", "\\/")}.*예상 상태 200, 실제 상태 404`, "u"),
+    );
+  });
+}
+
+test("referenced asset validation rejects wrong media, missing nosniff, and weak fingerprint caches", () => {
+  const asset = { path: "/_next/static/app.js", url: "https://deployment.example/_next/static/app.js", mediaType: "javascript" };
+  assert.throws(
+    () => validateReferencedAssetResponse(asset, new Response("body{}", {
+      headers: {
+        "Content-Type": "text/css",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+      },
+    })),
+    /javascript Content-Type/u,
+  );
+  assert.throws(
+    () => validateReferencedAssetResponse(asset, new Response("export{}", {
+      headers: {
+        "Content-Type": "text/javascript",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    })),
+    /nosniff/u,
+  );
+  assert.throws(
+    () => validateReferencedAssetResponse(asset, new Response("export{}", {
+      headers: {
+        "Content-Type": "text/javascript",
+        "Cache-Control": "public, max-age=60",
+        "X-Content-Type-Options": "nosniff",
+      },
+    })),
+    /max-age=31536000/u,
+  );
+});
+
+test("referenced asset extraction rejects more than 128 same-origin assets", () => {
+  const html = Array.from(
+    { length: 129 },
+    (_, index) => `<script src="/_next/static/chunk-${index}.js"></script>`,
+  ).join("");
+  assert.throws(
+    () => extractReferencedAssets(html, "https://deployment.example/"),
+    /128개를 초과/u,
   );
 });

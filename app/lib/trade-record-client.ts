@@ -11,10 +11,19 @@ import {
 
 const MAX_RESPONSE_BYTES = 16_384;
 export const DEFAULT_TRADE_RECORD_CREATE_TIMEOUT_MS = 15_000;
+export const DEFAULT_TRADE_RECORD_FETCH_TIMEOUT_MS = 15_000;
 const KV_PROPAGATION_RETRY_DELAYS_MS = Object.freeze([500, 1_000, 2_000, 4_000] as const);
 
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+}
+
+function cancelWithoutWaiting(cancel: () => Promise<unknown>): void {
+  try {
+    void cancel().catch(() => undefined);
+  } catch {
+    // Cleanup must never delay or replace the user-facing request failure.
+  }
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -32,55 +41,47 @@ async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void
   });
 }
 
-async function readBoundedResponse(response: Response): Promise<unknown> {
+async function readBoundedResponse(response: Response, signal?: AbortSignal): Promise<unknown> {
   const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
   if (mediaType !== "application/json") {
-    try {
-      await response.body?.cancel("non-JSON response rejected");
-    } catch {
-      // Preserve the media-type failure when cancellation also fails.
-    }
+    if (response.body) cancelWithoutWaiting(() => response.body!.cancel("non-JSON response rejected"));
     throw new Error("거래 기록 서버가 JSON 응답을 반환하지 않았습니다.");
   }
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && !/^(?:0|[1-9][0-9]*)$/u.test(contentLength.trim())) {
-    try {
-      await response.body?.cancel("invalid content length");
-    } catch {
-      // Preserve the header failure when cancellation also fails.
-    }
+    if (response.body) cancelWithoutWaiting(() => response.body!.cancel("invalid content length"));
     throw new Error("거래 기록 서버 응답 길이를 확인하지 못했습니다.");
   }
   const declared = contentLength === null ? null : Number(contentLength);
   if (declared !== null && (!Number.isSafeInteger(declared) || declared > MAX_RESPONSE_BYTES)) {
-    try {
-      await response.body?.cancel("response too large");
-    } catch {
-      // Preserve the size failure when cancellation also fails.
-    }
+    if (response.body) cancelWithoutWaiting(() => response.body!.cancel("response too large"));
     throw new Error("거래 기록 서버 응답이 너무 큽니다.");
   }
   if (!response.body) throw new Error("거래 기록 서버 응답을 확인하지 못했습니다.");
 
   const reader = response.body.getReader();
+  const onAbort = () => {
+    cancelWithoutWaiting(() => reader.cancel(signal ? abortReason(signal) : undefined));
+  };
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   const chunks: Uint8Array[] = [];
   let received = 0;
   try {
     while (true) {
+      if (signal?.aborted) throw abortReason(signal);
       const { done, value } = await reader.read();
+      if (signal?.aborted) throw abortReason(signal);
       if (done) break;
       received += value.byteLength;
       if (received > MAX_RESPONSE_BYTES) {
-        try {
-          await reader.cancel("response too large");
-        } catch {
-          // The size violation remains the user-facing failure if cancellation also fails.
-        }
+        cancelWithoutWaiting(() => reader.cancel("response too large"));
         throw new Error("거래 기록 서버 응답이 너무 큽니다.");
       }
       chunks.push(value);
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
 
@@ -140,6 +141,7 @@ function requestDeadline(externalSignal: AbortSignal | undefined, timeoutMs: num
   if (externalSignal?.aborted) onAbort();
   else externalSignal?.addEventListener("abort", onAbort, { once: true });
   const timeout = setTimeout(() => {
+    if (controller.signal.aborted) return;
     timedOut = true;
     controller.abort(new DOMException("Trade record request timed out.", "TimeoutError"));
   }, timeoutMs);
@@ -162,7 +164,7 @@ async function timedJsonRequest(
   const deadline = requestDeadline(externalSignal, timeoutMs);
   try {
     const response = await fetch(input, { ...init, signal: deadline.signal });
-    return { response, value: await readBoundedResponse(response) };
+    return { response, value: await readBoundedResponse(response, deadline.signal) };
   } catch (error) {
     if (deadline.didTimeout()) {
       throw new TradeRecordApiRequestError("REQUEST_TIMEOUT", "거래 기록 서버 응답 시간이 초과되었습니다.", 0);
@@ -190,6 +192,12 @@ export class TradeRecordNetworkError extends Error {
     super("거래 기록 서버에 연결하지 못했습니다.", { cause });
     this.name = "TradeRecordNetworkError";
   }
+}
+
+export function isRetryableTradeRecordFetchError(error: unknown): boolean {
+  return error instanceof TradeRecordNetworkError
+    || (error instanceof TradeRecordApiRequestError
+      && (error.status === 404 || error.code === "REQUEST_TIMEOUT"));
 }
 
 function apiError(value: unknown, status: number): TradeRecordApiRequestError {
@@ -299,30 +307,60 @@ export async function revokeTradeRecord(
 
 export async function fetchTradeRecord(
   id: string,
-  options: Readonly<{ endpointBase?: string; retryNotFound?: boolean; signal?: AbortSignal }> = {},
+  options: Readonly<{
+    endpointBase?: string;
+    retryNotFound?: boolean;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }> = {},
 ): Promise<TradeRecordApiSuccess> {
   if (!isTradeRecordId(id)) throw new TypeError("거래 기록 식별자를 확인해 주세요.");
   const endpointBase = options.endpointBase ?? "/api/trade-record";
-  for (let attempt = 0; ; attempt += 1) {
-    let response: Response;
-    try {
-      response = await fetch(`${endpointBase.replace(/\/$/u, "")}/${encodeURIComponent(id)}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-        signal: options.signal,
-      });
-    } catch (error) {
-      if (options.signal?.aborted) throw error;
-      throw new TradeRecordNetworkError(error);
-    }
-    const value = await readBoundedResponse(response);
-    if (response.ok) return canonicalizeTradeRecordApiSuccess(value);
+  const deadline = requestDeadline(
+    options.signal,
+    options.timeoutMs ?? DEFAULT_TRADE_RECORD_FETCH_TIMEOUT_MS,
+  );
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(`${endpointBase.replace(/\/$/u, "")}/${encodeURIComponent(id)}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          signal: deadline.signal,
+        });
+      } catch (error) {
+        if (deadline.didTimeout()) {
+          throw new TradeRecordApiRequestError("REQUEST_TIMEOUT", "거래 기록 서버 응답 시간이 초과되었습니다.", 0);
+        }
+        if (options.signal?.aborted) throw error;
+        throw new TradeRecordNetworkError(error);
+      }
+      let value: unknown;
+      try {
+        value = await readBoundedResponse(response, deadline.signal);
+      } catch (error) {
+        if (!deadline.didTimeout() && !options.signal?.aborted && error instanceof TypeError) {
+          throw new TradeRecordNetworkError(error);
+        }
+        throw error;
+      }
+      if (response.ok) return canonicalizeTradeRecordApiSuccess(value);
 
-    const retryDelay = options.retryNotFound && response.status === 404
-      ? KV_PROPAGATION_RETRY_DELAYS_MS[attempt]
-      : undefined;
-    if (retryDelay === undefined) throw apiError(value, response.status);
-    await waitForRetry(retryDelay, options.signal);
+      const retryDelay = options.retryNotFound && response.status === 404
+        ? KV_PROPAGATION_RETRY_DELAYS_MS[attempt]
+        : undefined;
+      if (retryDelay === undefined) throw apiError(value, response.status);
+      await waitForRetry(retryDelay, deadline.signal);
+    }
+  } catch (error) {
+    if (deadline.didTimeout()
+      && !(error instanceof TradeRecordApiRequestError && error.code === "REQUEST_TIMEOUT")) {
+      throw new TradeRecordApiRequestError("REQUEST_TIMEOUT", "거래 기록 서버 응답 시간이 초과되었습니다.", 0);
+    }
+    throw error;
+  } finally {
+    deadline.cleanup();
   }
 }

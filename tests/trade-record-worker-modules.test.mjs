@@ -169,12 +169,17 @@ test("lifecycle TTL and environment gating retain pending and absolute-expiry se
     (error) => assertRequestError(error, "RECORD_EXPIRED", 404),
   );
 
-  assert.equal(recordsExplicitlyDisabled({}), false);
-  assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: true }), false);
-  assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: "yes" }), false);
+  assert.equal(recordsExplicitlyDisabled({}), true);
+  assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: true }), true);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "production" }), true);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "production", TRADE_RECORDS_ENABLED: true }), false);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: " Production ", TRADE_RECORDS_ENABLED: " TRUE " }), false);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "production", TRADE_RECORDS_ENABLED: "yes" }), true);
   assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: false }), true);
   assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: "off" }), true);
   assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: " Preview ", TRADE_RECORDS_ENABLED: true }), true);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: true }), true);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "unknown", TRADE_RECORDS_ENABLED: true }), true);
 });
 
 test("pending Lightning records can finalize at 120 seconds but fail closed at 119", () => {

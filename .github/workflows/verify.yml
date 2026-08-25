@@ -4,11 +4,16 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
     inputs:
       deploy_production:
         description: Deploy the verified artifact to production
+        required: true
+        type: boolean
+        default: false
+      deploy_staging:
+        description: Deploy the verified staging revision to the isolated staging Worker
         required: true
         type: boolean
         default: false
@@ -24,11 +29,6 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
@@ -54,22 +54,6 @@ jobs:
           npm sbom --sbom-format cyclonedx > sbom.cdx.json
           npm query "*" --json > npm-inventory.json
           sha256sum sbom.cdx.json npm-inventory.json THIRD_PARTY_NOTICES.md .wrangler/dry-run/production/index.js .wrangler/dry-run/production/index.js.map > release-evidence.SHA256SUMS
-
-      - name: Attest verified static and Worker artifacts
-        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            dist/client/**
-            .wrangler/dry-run/production/index.js
-            .wrangler/dry-run/production/index.js.map
-
-      - name: Bind the CycloneDX SBOM to the verified Worker bundle
-        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: .wrangler/dry-run/production/index.js
-          sbom-path: sbom.cdx.json
 
       - name: Preserve dependency and notice evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -102,8 +86,143 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  deploy-production:
+      - name: Preserve the exact verified staging Worker bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-staging-worker-${{ github.sha }}
+          path: |
+            .wrangler/dry-run/staging/index.js
+            .wrangler/dry-run/staging/index.js.map
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  attest-production:
     needs: verify
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Restore the exact verified static artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-dist-${{ github.sha }}
+          path: dist/client
+
+      - name: Restore the exact verified Worker bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-worker-${{ github.sha }}
+          path: .wrangler/dry-run/production
+
+      - name: Restore the exact dependency evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: .
+
+      - name: Attest verified static and Worker artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/client/**
+            .wrangler/dry-run/production/index.js
+            .wrangler/dry-run/production/index.js.map
+
+      - name: Bind the CycloneDX SBOM to the verified Worker bundle
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: .wrangler/dry-run/production/index.js
+          sbom-path: sbom.cdx.json
+
+  deploy-staging:
+    needs: verify
+    if: >-
+      github.ref == 'refs/heads/staging' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    concurrency:
+      group: staging-deployment
+      cancel-in-progress: false
+    steps:
+      - name: Check out the verified staging revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Restore the exact verified static artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-dist-${{ github.sha }}
+          path: dist/client
+
+      - name: Restore the exact verified staging Worker bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-staging-worker-${{ github.sha }}
+          path: .verified-staging-worker
+
+      - name: Refuse to supersede a newer staging revision
+        shell: bash
+        run: |
+          git fetch --no-tags origin staging
+          test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
+
+      - name: Upload the isolated staging candidate without promoting it
+        id: staging-upload
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          npm run upload:staging:candidate -- --tag "${{ github.sha }}" --message "GitHub Actions ${{ github.run_id }} · staging v${APP_VERSION} · ${{ github.sha }}"
+          EXPECTED_WORKER_NAME="bitcoin-p2p-check-staging" node scripts/record-staging-upload.mjs "$WRANGLER_OUTPUT_FILE_PATH"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_DEPLOY_APPROVED: "true"
+          WRANGLER_OUTPUT_FILE_PATH: .wrangler/staging-version-upload.jsonl
+
+      - name: Verify the exact staging candidate before promotion
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" EXPECTED_WORKER_TAG="${{ github.sha }}" EXPECTED_WORKER_VERSION_ID="${{ steps.staging-upload.outputs.version_id }}" node scripts/smoke-deployment.mjs "${{ steps.staging-upload.outputs.preview_url }}"
+
+      - name: Promote only the verified staging version
+        shell: bash
+        run: |
+          git fetch --no-tags origin staging
+          test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
+          npx wrangler versions deploy "${{ steps.staging-upload.outputs.version_id }}@100%" --yes --config wrangler.staging.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify canonical staging without creating records
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" EXPECTED_WORKER_TAG="${{ github.sha }}" EXPECTED_WORKER_VERSION_ID="${{ steps.staging-upload.outputs.version_id }}" node scripts/smoke-deployment.mjs https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev
+
+  deploy-production:
+    needs: [verify, attest-production]
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch' &&

@@ -19,6 +19,7 @@ import {
 } from "../app/lib/trade-record.ts";
 import { BoundedBodyError, cancelBody, readBoundedBytes, readBoundedJson } from "./http-body.ts";
 import { LightningAddressNormalizationError, normalizeLightningAddress } from "./lightning-address-normalize.ts";
+import { parsePremiumPayload } from "./market-source-parsers.ts";
 import { fail, json, methodNotAllowed, TradeRecordRequestError } from "./trade-record-http.ts";
 import {
   authorizationToken,
@@ -45,9 +46,12 @@ const MAX_PRIVATE_JWK_BYTES = 2_048;
 const MAX_UPBIT_RESPONSE_BYTES = 16_384;
 const WRITTEN_TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
 const UPBIT_PRICE_URL = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
+const UPBIT_PREMIUM_URL = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
 const UPBIT_PRICE_TIMEOUT_MS = 4_000;
+const UPBIT_PREMIUM_TIMEOUT_MS = 2_500;
 const UPBIT_PRICE_MAX_AGE_MS = 2 * 60_000;
 const UPBIT_PRICE_MAX_DEVIATION_RATIO = 0.01;
+const UPBIT_PREMIUM_MAX_ABSOLUTE_DEVIATION = 0.005;
 const UPBIT_PRICE_MAX_REDIRECTS = 2;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 const BASE64URL_COORDINATE_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
@@ -58,10 +62,21 @@ export interface TradeRecordKvNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options: Readonly<{ expirationTtl: number }>): Promise<void>;
   delete(key: string): Promise<void>;
+  /**
+   * Durable Object adapter barrier for the best-effort legacy KV mirror.
+   * Native KV bindings complete each mutation before their promise resolves and
+   * therefore do not need to implement this method.
+   */
+  flushLegacyMirror?(): Promise<void>;
 }
 
 export interface TradeRecordRateLimit {
   limit(options: Readonly<{ key: string }>): Promise<Readonly<{ success: boolean }>>;
+}
+
+export interface TradeRecordStateNamespace {
+  idFromName(name: string): unknown;
+  get(id: unknown): Readonly<{ fetch(request: Request): Promise<Response> }>;
 }
 
 export interface TradeRecordEnvironment {
@@ -69,6 +84,8 @@ export interface TradeRecordEnvironment {
   DEPLOYMENT_ENV?: string;
   TRADE_RECORDS?: TradeRecordKvNamespace;
   TRADE_RECORD_CREATE_RATE_LIMITER?: TradeRecordRateLimit;
+  TRADE_RECORD_READ_RATE_LIMITER?: TradeRecordRateLimit;
+  TRADE_RECORD_STATE?: TradeRecordStateNamespace;
   /** Secret: JSON-encoded private P-256 JWK with a public `kid`. */
   TRADE_RECORD_SIGNING_KEY?: string;
   /** Non-secret feature flag. Explicit false values disable this API before binding access. */
@@ -80,6 +97,10 @@ export type TradeRecordHandlerOptions = Readonly<{
   publicKeys?: Readonly<Record<string, TradeRecordPublicJwk>>;
   /** Test seam only. Production callers use the global fetch implementation. */
   fetcher?: typeof fetch;
+  /** Test seam for in-memory KV fixtures. Production must use the Durable Object binding. */
+  allowLegacyKv?: boolean;
+  /** Internal recursion guard used only inside TradeRecordState. */
+  storageMode?: "durable-object";
 }>;
 
 type PrivateSigningJwk = JsonWebKey & {
@@ -144,6 +165,27 @@ async function enforceCreateRateLimit(request: Request, environment: TradeRecord
   }
   if (!result.success) {
     fail("RATE_LIMITED", "거래 기록을 너무 자주 만들었습니다. 1분 뒤 다시 시도해 주세요.", 429, { "Retry-After": "60" });
+  }
+}
+
+async function enforceItemRateLimit(request: Request, environment: TradeRecordEnvironment): Promise<void> {
+  const limiter = environment.TRADE_RECORD_READ_RATE_LIMITER;
+  const connectingIp = request.headers.get("CF-Connecting-IP") ?? "";
+  if (!limiter || !CF_CONNECTING_IP_PATTERN.test(connectingIp)) {
+    fail("RATE_LIMIT_UNAVAILABLE", "거래 기록 요청을 안전하게 제한하지 못했습니다.", 503);
+  }
+
+  let result: Readonly<{ success: boolean }>;
+  try {
+    result = await limiter.limit({ key: `trade-record:read:${connectingIp.toLowerCase()}` });
+  } catch {
+    fail("RATE_LIMIT_UNAVAILABLE", "거래 기록 요청 제한을 확인하지 못했습니다.", 503);
+  }
+  if (!result || typeof result.success !== "boolean") {
+    fail("RATE_LIMIT_UNAVAILABLE", "거래 기록 요청 제한 응답을 확인하지 못했습니다.", 503);
+  }
+  if (!result.success) {
+    fail("RATE_LIMITED", "거래 기록 요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요.", 429, { "Retry-After": "60" });
   }
 }
 
@@ -227,6 +269,79 @@ async function verifyUpbitReferencePrice(
       errorName: error instanceof Error ? error.name : "UnknownError",
     }));
     fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function verifyUpbitPremium(
+  submittedPremiumRatio: number | null,
+  nowMs: number,
+  fetcher: typeof fetch,
+): Promise<void> {
+  if (submittedPremiumRatio === null) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPBIT_PREMIUM_TIMEOUT_MS);
+  try {
+    let requestUrl = UPBIT_PREMIUM_URL;
+    let response: Response | null = null;
+    for (let redirectCount = 0; redirectCount <= UPBIT_PRICE_MAX_REDIRECTS; redirectCount += 1) {
+      response = await fetcher(requestUrl, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "BitcoinP2PCheck/1.0 (+trade record premium verification)",
+        },
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      await cancelBody(response.body);
+      if (redirectCount === UPBIT_PRICE_MAX_REDIRECTS) {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 프리미엄 응답의 이동 횟수를 확인하지 못했습니다.", 503);
+      }
+      const location = response.headers.get("location");
+      if (!location) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 프리미엄 응답의 이동 경로를 확인하지 못했습니다.", 503);
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(location, requestUrl);
+      } catch {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 프리미엄 응답의 이동 경로를 확인하지 못했습니다.", 503);
+      }
+      const allowedUrl = new URL(UPBIT_PREMIUM_URL);
+      const hasOnlyExpectedQuery = nextUrl.searchParams.size === 1
+        && nextUrl.searchParams.get("symbols") === "BTC";
+      if (
+        nextUrl.protocol !== "https:"
+        || nextUrl.origin !== allowedUrl.origin
+        || nextUrl.pathname !== allowedUrl.pathname
+        || !hasOnlyExpectedQuery
+      ) {
+        fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 프리미엄 응답 경로를 확인하지 못했습니다.", 503);
+      }
+      requestUrl = nextUrl.toString();
+    }
+    if (!response) fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 프리미엄 응답을 확인하지 못했습니다.", 503);
+    const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+    if (response.status !== 200 || mediaType !== "application/json") {
+      await cancelBody(response.body);
+      fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 프리미엄 응답을 확인하지 못했습니다.", 503);
+    }
+    const value = await readLimitedResponseJson(response, MAX_UPBIT_RESPONSE_BYTES);
+    const parsed = parsePremiumPayload(value, new Date(nowMs).toISOString());
+    if (!parsed.ok) {
+      fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 프리미엄 데이터 형식을 확인하지 못했습니다.", 503);
+    }
+    const deviation = Math.abs(submittedPremiumRatio - parsed.value.koreaPremium);
+    if (!Number.isFinite(deviation) || deviation > UPBIT_PREMIUM_MAX_ABSOLUTE_DEVIATION) {
+      fail("KOREA_PREMIUM_MISMATCH", "업비트 프리미엄 참고값이 최신 데이터와 0.5%p 넘게 다릅니다. 시세를 새로고침해 주세요.", 409);
+    }
+  } catch (error) {
+    if (error instanceof TradeRecordRequestError) throw error;
+    console.error(JSON.stringify({
+      event: "trade_record_premium_verification_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
+    fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 프리미엄을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
   } finally {
     clearTimeout(timeout);
   }
@@ -397,7 +512,10 @@ async function createRecord(
   const privateJwk = parsePrivateSigningJwk(environment.TRADE_RECORD_SIGNING_KEY);
   assertPublishedSigningKey(privateJwk, publicKeys);
   const signingKey = await importSigningKey(privateJwk);
-  await verifyUpbitReferencePrice(condition.referencePriceKrw, createdAtMs, fetcher);
+  await Promise.all([
+    verifyUpbitReferencePrice(condition.referencePriceKrw, createdAtMs, fetcher),
+    verifyUpbitPremium(condition.koreaPremiumRatio, createdAtMs, fetcher),
+  ]);
   const retentionPolicy = getTradeRecordRetentionPolicy(WRITTEN_TRADE_RECORD_SCHEMA);
   const record = canonicalizeTradeRecord({
     schema: WRITTEN_TRADE_RECORD_SCHEMA,
@@ -533,8 +651,49 @@ async function revokeRecord(request: Request, environment: TradeRecordEnvironmen
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const management = await managementContext(request, records, id);
+
+  // A previous request may have left a failed best-effort mirror operation in
+  // this object instance. Drain and reset that batch before defining the
+  // security-critical revocation batch below. The new batch still fails closed.
+  try {
+    await records.flushLegacyMirror?.();
+  } catch {
+    // A revocation re-writes its tombstone and record deletion, so an older
+    // mirror failure does not by itself make this attempt unsafe.
+  }
+
+  const tombstoneTtlSeconds = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1).retentionSeconds;
+  const persistRevocation = async (record?: ReturnType<typeof parseStoredRecord>): Promise<void> => {
+    try {
+      // Re-write the tombstone even on an idempotent retry. If a previous
+      // response was 503, both this put and the delete must reach legacy KV
+      // before an older Worker version can safely serve traffic again.
+      await records.put(
+        managementKey(management.tokenHash),
+        JSON.stringify({ version: 1, id, state: "revoked" }),
+        { expirationTtl: tombstoneTtlSeconds },
+      );
+      if (record && record.lifecycle !== "revoked") {
+        await records.put(
+          storageKey(id),
+          JSON.stringify(storedManagedRecord(record.signed, "revoked", management.tokenHash)),
+          { expirationTtl: tombstoneTtlSeconds },
+        );
+      }
+      await records.delete(storageKey(id));
+      await records.flushLegacyMirror?.();
+    } catch {
+      fail(
+        "STORAGE_UNAVAILABLE",
+        "거래 기록 폐기 상태를 저장소에 반영하지 못했습니다. 같은 관리 capability로 다시 시도해 주세요.",
+        503,
+        { "Retry-After": "1" },
+      );
+    }
+  };
+
   if (management.index?.state === "revoked") {
-    await records.delete(storageKey(id));
+    await persistRevocation();
     return json({ ok: true, id, lifecycle: "revoked" });
   }
 
@@ -550,23 +709,50 @@ async function revokeRecord(request: Request, environment: TradeRecordEnvironmen
   }
 
   if (!parsed) fail("STORAGE_CORRUPT", "저장된 거래 기록을 확인하지 못했습니다.", 500);
-  const tombstoneTtlSeconds = getTradeRecordRetentionPolicy(parsed.signed.record.schema).retentionSeconds;
-  await records.put(managementKey(management.tokenHash), JSON.stringify({ version: 1, id, state: "revoked" }), {
-    expirationTtl: tombstoneTtlSeconds,
-  });
-  if (parsed.lifecycle !== "revoked") {
-    await records.put(
-      storageKey(id),
-      JSON.stringify(storedManagedRecord(parsed.signed, "revoked", management.tokenHash)),
-      { expirationTtl: tombstoneTtlSeconds },
-    );
-  }
-  await records.delete(storageKey(id));
+  await persistRevocation(parsed);
   return json({ ok: true, id, lifecycle: "revoked" });
 }
 
 export function isTradeRecordApiPath(pathname: string): boolean {
   return pathname === "/api/trade-record" || pathname.startsWith("/api/trade-record/");
+}
+
+async function routeThroughTradeRecordState(
+  request: Request,
+  environment: TradeRecordEnvironment,
+  pathname: string,
+): Promise<Response> {
+  let id: string;
+  if (pathname === "/api/trade-record" || pathname === "/api/trade-record/") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    await enforceCreateRateLimit(request, environment);
+    const tokenHash = await sha256Base64Url(createRevokeToken(request));
+    id = tokenHash.slice(0, 16);
+  } else {
+    const finalizeMatch = /^\/api\/trade-record\/([^/]+)\/finalize\/?$/u.exec(pathname);
+    if (finalizeMatch) {
+      if (!isTradeRecordId(finalizeMatch[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      await enforceItemRateLimit(request, environment);
+      id = finalizeMatch[1];
+    } else {
+      const itemMatch = /^\/api\/trade-record\/([^/]+)\/?$/u.exec(pathname);
+      if (!itemMatch || !isTradeRecordId(itemMatch[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
+      if (request.method !== "GET" && request.method !== "DELETE") return methodNotAllowed("GET, DELETE");
+      await enforceItemRateLimit(request, environment);
+      id = itemMatch[1];
+    }
+  }
+
+  const namespace = environment.TRADE_RECORD_STATE;
+  if (!namespace) fail("STORAGE_UNAVAILABLE", "강한 일관성 거래 기록 저장소를 사용할 수 없습니다.", 503);
+
+  try {
+    const objectId = namespace.idFromName(id);
+    return await namespace.get(objectId).fetch(request);
+  } catch {
+    fail("STORAGE_UNAVAILABLE", "강한 일관성 거래 기록 저장소에 연결하지 못했습니다.", 503);
+  }
 }
 
 export async function handleTradeRecordRequest(
@@ -588,10 +774,18 @@ export async function handleTradeRecordRequest(
       }
       return json({ ok: false, code: "TRADE_RECORDS_DISABLED", message: "이 배포 환경에서는 거래 기록 API를 사용할 수 없습니다." }, 503);
     }
+    if (options.storageMode !== "durable-object") {
+      if (environment.TRADE_RECORD_STATE) {
+        return await routeThroughTradeRecordState(request, environment, pathname);
+      }
+      if (!options.allowLegacyKv) {
+        fail("STORAGE_UNAVAILABLE", "강한 일관성 거래 기록 저장소를 사용할 수 없습니다.", 503);
+      }
+    }
 
     if (pathname === "/api/trade-record" || pathname === "/api/trade-record/") {
       if (request.method !== "POST") return methodNotAllowed("POST");
-      await enforceCreateRateLimit(request, environment);
+      if (options.storageMode !== "durable-object") await enforceCreateRateLimit(request, environment);
       return await createRecord(
         request,
         environment,
@@ -609,7 +803,12 @@ export async function handleTradeRecordRequest(
 
     const match = /^\/api\/trade-record\/([^/]+)\/?$/u.exec(pathname);
     if (!match || !isTradeRecordId(match[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
-    if (request.method === "GET") return await getRecord(request, environment, match[1]);
+    if (request.method === "GET") {
+      if (options.storageMode !== "durable-object" && !options.allowLegacyKv) {
+        await enforceItemRateLimit(request, environment);
+      }
+      return await getRecord(request, environment, match[1]);
+    }
     if (request.method === "DELETE") return await revokeRecord(request, environment, match[1]);
     return methodNotAllowed("GET, DELETE");
   } catch (error) {

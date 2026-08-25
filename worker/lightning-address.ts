@@ -5,6 +5,11 @@ import {
   normalizeLightningAddress,
   safePublicHttpsUrl,
 } from "./lightning-address-normalize.ts";
+import {
+  canonicalLnurlPayInvoice,
+  lnurlPayMetadataHash,
+  mandatoryPayerDataLabels,
+} from "./lnurl-pay-discovery.ts";
 import { checkLightningRateLimit, type LightningRequestEnvironment } from "./lightning-rate-limit.ts";
 
 const REQUEST_HEADERS = {
@@ -21,21 +26,11 @@ const API_HEADERS = {
   "X-Frame-Options": "DENY",
 };
 
-const DISCOVERY_TIMEOUT_MS = 5_000;
-const INVOICE_TIMEOUT_MS = 7_000;
+const PROVIDER_DEADLINE_MS = 12_000;
 const MAX_REDIRECTS = 2;
 const MAX_REQUEST_BYTES = 2_048;
 const MAX_JSON_BYTES = 256_000;
-const MAX_INVOICE_LENGTH = 1_200;
 const MAX_SAFE_SATS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
-
-const PAYER_DATA_LABELS: Record<string, string> = {
-  name: "이름",
-  pubkey: "공개키",
-  identifier: "라이트닝 주소",
-  email: "이메일",
-  auth: "인증정보",
-};
 
 class LightningAddressRequestError extends Error {
   code: string;
@@ -91,14 +86,6 @@ function finiteSafeInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-function mandatoryPayerData(discovery: Record<string, unknown>): string[] {
-  if (!isRecord(discovery.payerData)) return [];
-  return Object.entries(discovery.payerData)
-    .filter(([, config]) => isRecord(config) && config.mandatory === true)
-    .map(([key]) => PAYER_DATA_LABELS[key] ?? key)
-    .slice(0, 8);
-}
-
 async function readRequestJson(request: Request): Promise<unknown> {
   try {
     return await readBoundedJson(request, MAX_REQUEST_BYTES);
@@ -110,12 +97,11 @@ async function readRequestJson(request: Request): Promise<unknown> {
   }
 }
 
-async function fetchJson(url: URL, timeoutMs: number): Promise<{ value: unknown; finalUrl: URL }> {
+async function fetchJson(url: URL, signal: AbortSignal): Promise<{ value: unknown; finalUrl: URL }> {
   let current = providerUrl(url);
   const anchorHostname = current.hostname;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    const signal = AbortSignal.timeout(timeoutMs);
     let response: Response;
 
     try {
@@ -203,7 +189,8 @@ export async function handleLightningAddressRequest(
     const amountMsat = amountSats * 1_000;
 
     const discoveryUrl = providerUrl(`https://${domain}/.well-known/lnurlp/${encodeURIComponent(username)}`);
-    const discoveryResult = await fetchJson(discoveryUrl, DISCOVERY_TIMEOUT_MS);
+    const providerDeadline = AbortSignal.timeout(PROVIDER_DEADLINE_MS);
+    const discoveryResult = await fetchJson(discoveryUrl, providerDeadline);
     const discovery = discoveryResult.value;
     if (!isRecord(discovery)) {
       fail("INVALID_PROVIDER_RESPONSE", "라이트닝 주소 제공자의 응답을 확인하지 못했습니다.", 502);
@@ -214,8 +201,12 @@ export async function handleLightningAddressRequest(
     if (discovery.tag !== "payRequest") {
       fail("UNSUPPORTED_ADDRESS", "이 주소는 LNURL-pay 라이트닝 주소가 아닙니다.", 422);
     }
+    const metadataHash = lnurlPayMetadataHash(discovery.metadata);
+    if (metadataHash === null) {
+      fail("INVALID_PROVIDER_RESPONSE", "라이트닝 주소의 결제 설명을 확인하지 못했습니다.", 502);
+    }
 
-    const requiredPayerData = mandatoryPayerData(discovery);
+    const requiredPayerData = mandatoryPayerDataLabels(discovery);
     if (requiredPayerData.length > 0) {
       fail(
         "PAYER_DATA_REQUIRED",
@@ -250,7 +241,7 @@ export async function handleLightningAddressRequest(
       fail("INVALID_PROVIDER_RESPONSE", "라이트닝 주소의 인보이스 발급 도메인을 확인하지 못했습니다.", 502);
     }
     callbackUrl.searchParams.set("amount", String(amountMsat));
-    const invoiceResponse = (await fetchJson(callbackUrl, INVOICE_TIMEOUT_MS)).value;
+    const invoiceResponse = (await fetchJson(callbackUrl, providerDeadline)).value;
     if (!isRecord(invoiceResponse)) {
       fail("INVALID_PROVIDER_RESPONSE", "라이트닝 인보이스 응답을 확인하지 못했습니다.", 502);
     }
@@ -258,14 +249,8 @@ export async function handleLightningAddressRequest(
       fail("INVOICE_REJECTED", providerReason(invoiceResponse.reason, "지갑 서비스가 인보이스 발급을 거절했습니다."), 422);
     }
 
-    const invoice = invoiceResponse.pr;
-    if (
-      typeof invoice !== "string"
-      || invoice.length < 20
-      || invoice.length > MAX_INVOICE_LENGTH
-      || /\s/u.test(invoice)
-      || !invoice.toLowerCase().startsWith("lnbc")
-    ) {
+    const invoice = canonicalLnurlPayInvoice(invoiceResponse.pr, amountSats, metadataHash);
+    if (invoice === null) {
       fail("INVALID_PROVIDER_RESPONSE", "지갑 서비스가 올바른 메인넷 BOLT11 인보이스를 반환하지 않았습니다.", 502);
     }
 

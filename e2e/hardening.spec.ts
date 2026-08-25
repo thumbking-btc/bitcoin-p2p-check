@@ -232,6 +232,7 @@ async function expectNoSeriousAccessibilityViolations(page: Page) {
 test("320px layout reflows without horizontal scrolling and receives enforced CSP", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   await installFakeMarket(page);
+  await page.route("**/api/version", async (route) => route.abort());
   const response = await page.goto("/");
   const headers = response?.headers() ?? {};
   const csp = headers["content-security-policy"] ?? "";
@@ -246,6 +247,9 @@ test("320px layout reflows without horizontal scrolling and receives enforced CS
   expect(headers["origin-agent-cluster"]).toBe("?1");
   expect(headers["strict-transport-security"]).toContain("max-age=31536000");
   expect(headers["permissions-policy"]).toContain("camera=()");
+  const deploymentNotice = page.locator("#deployment-environment-notice");
+  await expect(deploymentNotice).toBeVisible();
+  await expect(deploymentNotice).toContainText("PREVIEW");
   await expect(page.getByRole("heading", { name: "비트코인 P2P 계산기" })).toBeVisible();
   await expect(page.locator(".trade-result dl")).toBeVisible();
 
@@ -256,6 +260,34 @@ test("320px layout reflows without horizontal scrolling and receives enforced CS
     const box = await page.getByRole("button", { name: buttonName }).boundingBox();
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("preview stays visibly marked and hides install entry at 320px without JavaScript", async ({ browser, baseURL }) => {
+  if (!baseURL) throw new Error("Playwright baseURL is required");
+  const context = await browser.newContext({
+    baseURL,
+    javaScriptEnabled: false,
+    serviceWorkers: "block",
+    viewport: { width: 320, height: 800 },
+  });
+  try {
+    const page = await context.newPage();
+    const response = await page.goto("/");
+    expect(response?.headers()["x-deployment-environment"]).toBe("preview");
+    expect(response?.headers()["x-robots-tag"]).toBe("noindex, nofollow, noarchive");
+
+    const notice = page.locator("#deployment-environment-notice");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("PREVIEW");
+    await expect(notice).toContainText("시험 환경입니다.");
+    await expect(notice).not.toHaveAttribute("hidden", /.*/u);
+    await expect(page.locator(".site-route-install")).toBeHidden();
+
+    const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(horizontalOverflow).toBeLessThanOrEqual(1);
+  } finally {
+    await context.close();
   }
 });
 
@@ -301,7 +333,7 @@ test("silent WebSocket ticks keep the visual and accessible result in sync", asy
 });
 
 test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice boundary", async ({ page }) => {
-  await page.clock.install({ time: CREATED_AT_MS });
+  await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
   const invoice = signedBolt11Invoice(3_000_000, Math.floor(CREATED_AT_MS / 1_000), 121);
@@ -362,7 +394,7 @@ test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice bounda
 });
 
 test("a silent WebSocket watchdog failure blocks sharing until REST recovery", async ({ page }) => {
-  await page.clock.install({ time: CREATED_AT_MS });
+  await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   const market = await installFakeMarket(page, page, {
     checkedAtMs: CREATED_AT_MS,
@@ -393,7 +425,7 @@ test("a silent WebSocket watchdog failure blocks sharing until REST recovery", a
 });
 
 test("a fresh WebSocket tick clears a failed silent-refresh sharing error", async ({ page }) => {
-  await page.clock.install({ time: CREATED_AT_MS });
+  await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS, failRequestAt: 2 });
   await page.goto("/");
@@ -422,7 +454,7 @@ test("a fresh WebSocket tick clears a failed silent-refresh sharing error", asyn
 });
 
 test("an open verification page disables an invoice exactly when it expires", async ({ page }) => {
-  await page.clock.install({ time: CREATED_AT_MS });
+  await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await page.addInitScript(() => {
     Object.defineProperty(SubtleCrypto.prototype, "verify", {
@@ -449,44 +481,68 @@ test("an open verification page disables an invoice exactly when it expires", as
   await expect(page.getByText("결제 QR 보기")).toHaveCount(0);
 });
 
-test("@pwa the service worker preserves the verification shell and uses a real 404 offline", async ({ page, context }) => {
+test("@pwa preview removes an existing service worker and its application caches", async ({ page, context }) => {
   await installFakeMarket(page, context);
   const serviceWorkerResponse = await context.request.get("/sw.js");
   expect(serviceWorkerResponse.status()).toBe(200);
   expect(serviceWorkerResponse.headers()["cache-control"]).toContain("no-store");
   expect(serviceWorkerResponse.headers()["service-worker-allowed"]).toBe("/");
   await page.goto("/");
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.register("/sw.js?stale-preview-test=1", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    const cache = await caches.open("bitcoin-p2p-check-stale-preview-test");
+    await cache.put("/stale-preview", new Response("stale"));
+  });
+  await page.reload();
+  await expect.poll(async () => page.evaluate(async () => ({
+    caches: (await caches.keys()).filter((key) => key.startsWith("bitcoin-p2p-check-")),
+    registrations: (await navigator.serviceWorker.getRegistrations()).length,
+  })), { timeout: 30_000 }).toEqual({ caches: [], registrations: 0 });
+
+  await page.reload();
+  await expect(page.locator("#deployment-environment-notice")).toContainText("PREVIEW");
+  expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull();
+});
+
+test("@production-pwa production registers its service worker and serves verify and 404 shells offline", async ({ page, context }) => {
+  await installFakeMarket(page, context);
+  await page.goto("/");
+  await expect(page.locator("#deployment-environment-notice")).toBeHidden();
+  await expect.poll(async () => page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready;
+    return registration.active?.scriptURL ?? null;
+  }), { timeout: 30_000 }).toContain("/sw.js?v=2.3.0");
   await expect.poll(async () => {
     try {
-      return await page.evaluate(async () => {
-        await navigator.serviceWorker.ready;
-        return Boolean(navigator.serviceWorker.controller);
-      });
-    } catch {
-      return false;
+      return await page.evaluate(() => navigator.serviceWorker.controller !== null);
+    } catch (error) {
+      // PwaRegistration intentionally reloads once on controllerchange. Retry
+      // across that destroyed execution context instead of treating it as a
+      // product failure.
+      if (error instanceof Error && /execution context was destroyed|navigation/iu.test(error.message)) {
+        return false;
+      }
+      throw error;
     }
   }, { timeout: 30_000 }).toBe(true);
   await page.waitForLoadState("domcontentloaded");
-  const requiredPrecacheEntries = await page.evaluate(async () => {
-    const cacheName = (await caches.keys()).find((name) => name.startsWith("bitcoin-p2p-check-precache-"));
-    if (!cacheName) return [];
-    const cache = await caches.open(cacheName);
-    const matches = await Promise.all(["/verify/", "/404"].map(async (path) => (
-      (await cache.match(path)) ? path : null
-    )));
-    return matches.filter((path): path is string => path !== null);
-  });
-  expect(requiredPrecacheEntries).toEqual(["/verify/", "/404"]);
+  await expect.poll(async () => page.evaluate(async () => (
+    (await caches.keys()).some((key) => key === "bitcoin-p2p-check-precache-2.3.0")
+  )), { timeout: 30_000 }).toBe(true);
 
   await context.setOffline(true);
-  await page.goto(`/verify/?id=${RECORD_ID}`);
-  await expect(page.getByRole("heading", { name: "공유된 거래 정보" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "비트코인 P2P 계산기" })).toHaveCount(0);
-  await expect(page.getByText("오프라인 상태에서는 거래 기록 상세를 불러올 수 없습니다.")).toBeVisible();
+  try {
+    const verifyResponse = await page.goto("/verify/?id=AAAAAAAAAAAAAAAA", { waitUntil: "domcontentloaded" });
+    expect(verifyResponse?.status()).toBe(200);
+    await expect(page.getByRole("heading", { name: "공유된 거래 정보" })).toBeVisible();
 
-  const notFoundResponse = await page.goto("/offline-route-that-does-not-exist");
-  expect(notFoundResponse?.status()).toBe(404);
-  await expect(page.getByRole("heading", { name: "페이지를 찾을 수 없습니다" })).toBeVisible();
+    const notFoundResponse = await page.goto("/definitely-not-a-real-page", { waitUntil: "domcontentloaded" });
+    expect(notFoundResponse?.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "페이지를 찾을 수 없습니다" })).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
 });
 
 test("primary routes have no automated WCAG A/AA violations", async ({ page }) => {

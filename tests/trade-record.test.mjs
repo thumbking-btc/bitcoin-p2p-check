@@ -17,7 +17,12 @@ import {
   TRADE_RECORD_PUBLIC_KEYS,
   verifyTradeRecordSignature,
 } from "../app/lib/trade-record-verification.ts";
-import { fetchTradeRecord, TradeRecordNetworkError } from "../app/lib/trade-record-client.ts";
+import {
+  fetchTradeRecord,
+  isRetryableTradeRecordFetchError,
+  TradeRecordApiRequestError,
+  TradeRecordNetworkError,
+} from "../app/lib/trade-record-client.ts";
 import { handleTradeRecordRequest } from "../worker/trade-record.ts";
 
 const ADDRESS = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
@@ -75,6 +80,8 @@ async function signingEnvironment() {
   const rateLimiter = new MemoryRateLimit();
   const fetcher = upbitPriceFetcher();
   const environment = {
+    DEPLOYMENT_ENV: "production",
+    TRADE_RECORDS_ENABLED: true,
     TRADE_RECORDS: records,
     TRADE_RECORD_CREATE_RATE_LIMITER: rateLimiter,
     TRADE_RECORD_SIGNING_KEY: JSON.stringify(privateJwk),
@@ -85,7 +92,7 @@ async function signingEnvironment() {
     handle: (request, environmentOverride = environment, optionsOverride = {}) => handleTradeRecordRequest(
       request,
       environmentOverride,
-      { publicKeys, fetcher, ...optionsOverride },
+      { allowLegacyKv: true, publicKeys, fetcher, ...optionsOverride },
     ),
     publicKeys,
     rateLimiter,
@@ -103,7 +110,7 @@ function validDraft(payment = null) {
       sats: 1_000_000,
       referencePriceKrw: 100_000_000,
       marketObservedAt: new Date().toISOString(),
-      koreaPremiumRatio: 0.0213,
+      koreaPremiumRatio: null,
       sellerPremiumBps: 0,
       fundingSource: "근로소득",
     },
@@ -347,9 +354,11 @@ test("fails closed for unknown keys, unavailable bindings, oversized bodies, and
   assert.equal((await noStorage.json()).code, "STORAGE_UNAVAILABLE");
 
   const noRateLimiter = await handleTradeRecordRequest(createRequest(validDraft()), {
+    DEPLOYMENT_ENV: "production",
+    TRADE_RECORDS_ENABLED: true,
     TRADE_RECORDS: environment.TRADE_RECORDS,
     TRADE_RECORD_SIGNING_KEY: environment.TRADE_RECORD_SIGNING_KEY,
-  });
+  }, { allowLegacyKv: true });
   assert.equal(noRateLimiter.status, 503);
   assert.equal((await noRateLimiter.json()).code, "RATE_LIMIT_UNAVAILABLE");
 
@@ -377,7 +386,7 @@ test("refuses to store records when the signing secret does not match the commit
   const response = await handleTradeRecordRequest(createRequest(validDraft()), {
     ...environment,
     TRADE_RECORD_SIGNING_KEY: JSON.stringify(privateJwk),
-  });
+  }, { allowLegacyKv: true });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "SIGNING_UNAVAILABLE");
   assert.equal(records.puts.length, 0);
@@ -398,6 +407,55 @@ test("independently checks the submitted reference against fresh Upbit REST data
   assert.equal(staleUpbit.status, 503);
   assert.equal((await staleUpbit.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
   assert.equal(records.puts.length, 0);
+});
+
+test("independently checks a submitted Korea premium before including it in the signature", async () => {
+  const fixture = await signingEnvironment();
+  const matchingDraft = validDraft();
+  matchingDraft.condition.koreaPremiumRatio = 0.0213;
+  const verifiedUrls = [];
+  const verified = await fixture.handle(createRequest(matchingDraft), undefined, {
+    fetcher: async (input, init) => {
+      const url = String(input);
+      verifiedUrls.push(url);
+      assert.equal(init?.redirect, "manual");
+      assert.ok(init?.signal instanceof AbortSignal);
+      if (url === "https://api.upbit.com/v1/ticker?markets=KRW-BTC") {
+        return Response.json([{
+          market: "KRW-BTC",
+          trade_price: 100_000_000,
+          trade_timestamp: Date.now(),
+        }]);
+      }
+      assert.equal(url, "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC");
+      return Response.json({
+        data: { records: [{ code: "CRIX.UPBIT.KRW-BTC", disparityRate: 2.13 }] },
+      });
+    },
+  });
+  assert.equal(verified.status, 201);
+  const created = canonicalizeTradeRecordApiSuccess(await verified.json());
+  assert.equal(created.record.condition.koreaPremiumRatio, 0.0213);
+  assert.deepEqual(new Set(verifiedUrls), new Set([
+    "https://api.upbit.com/v1/ticker?markets=KRW-BTC",
+    "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC",
+  ]));
+
+  const mismatching = await signingEnvironment();
+  const forgedDraft = validDraft();
+  forgedDraft.condition.koreaPremiumRatio = 0.4;
+  const rejected = await mismatching.handle(createRequest(forgedDraft), undefined, {
+    fetcher: async (input) => String(input).includes("datalab-api")
+      ? Response.json({ data: { records: [{ code: "CRIX.UPBIT.KRW-BTC", disparityRate: 2.13 }] } })
+      : Response.json([{
+        market: "KRW-BTC",
+        trade_price: 100_000_000,
+        trade_timestamp: Date.now(),
+      }]),
+  });
+  assert.equal(rejected.status, 409);
+  assert.equal((await rejected.json()).code, "KOREA_PREMIUM_MISMATCH");
+  assert.equal(mismatching.records.puts.length, 0);
 });
 
 test("accepts exactly 0, 1, or 2 allowlisted Upbit redirects before signing", async () => {
@@ -584,6 +642,231 @@ test("retries a fresh-record 404 and lets AbortSignal stop propagation waiting",
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("bounds a trade-record GET whose fetch never resolves", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const originalFetch = globalThis.fetch;
+  let observedSignal;
+  let markFetchStarted;
+  const fetchStarted = new Promise((resolve) => {
+    markFetchStarted = resolve;
+  });
+
+  try {
+    globalThis.fetch = async (_input, init) => {
+      observedSignal = init?.signal;
+      markFetchStarted();
+      return await new Promise((_resolve, reject) => {
+        observedSignal.addEventListener("abort", () => reject(observedSignal.reason), { once: true });
+      });
+    };
+
+    const pending = fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+      endpointBase: "https://records.example/api/trade-record",
+      timeoutMs: 1_000,
+    });
+    await fetchStarted;
+    const rejected = assert.rejects(
+      pending,
+      (error) => error instanceof TradeRecordApiRequestError
+        && error.code === "REQUEST_TIMEOUT"
+        && error.status === 0,
+    );
+    t.mock.timers.tick(1_000);
+    await rejected;
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(observedSignal.reason?.name, "TimeoutError");
+  } finally {
+    globalThis.fetch = originalFetch;
+    t.mock.timers.reset();
+  }
+});
+
+test("bounds a trade-record GET whose JSON body stream stops", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const originalFetch = globalThis.fetch;
+  let observedSignal;
+  let cancelled = false;
+  let markPullStarted;
+  const pullStarted = new Promise((resolve) => {
+    markPullStarted = resolve;
+  });
+
+  try {
+    globalThis.fetch = async (_input, init) => {
+      observedSignal = init?.signal;
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"ok":'));
+        },
+        pull() {
+          markPullStarted();
+          return new Promise(() => {});
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, { headers: { "Content-Type": "application/json" } });
+    };
+
+    const pending = fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+      endpointBase: "https://records.example/api/trade-record",
+      timeoutMs: 1_000,
+    });
+    await pullStarted;
+    const rejected = assert.rejects(
+      pending,
+      (error) => error instanceof TradeRecordApiRequestError
+        && error.code === "REQUEST_TIMEOUT"
+        && error.status === 0,
+    );
+    t.mock.timers.tick(1_000);
+    await rejected;
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    t.mock.timers.reset();
+  }
+});
+
+test("rejects a non-JSON trade-record response without awaiting stalled body cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  const didNotSettle = Symbol("did-not-settle");
+
+  try {
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("not JSON"));
+      },
+      cancel() {
+        cancelled = true;
+        return new Promise(() => {});
+      },
+    }), { headers: { "Content-Type": "text/plain" } });
+
+    const outcome = await Promise.race([
+      fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+        endpointBase: "https://records.example/api/trade-record",
+        timeoutMs: 1_000,
+      }).then(() => null, (error) => error),
+      new Promise((resolve) => setTimeout(() => resolve(didNotSettle), 100)),
+    ]);
+    assert.notEqual(outcome, didNotSettle);
+    assert.match(outcome?.message ?? "", /JSON 응답을 반환하지 않았습니다/u);
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects an oversized streamed response without awaiting stalled reader cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  const didNotSettle = Symbol("did-not-settle");
+
+  try {
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(17_000));
+      },
+      cancel() {
+        cancelled = true;
+        return new Promise(() => {});
+      },
+    }), { headers: { "Content-Type": "application/json" } });
+
+    const outcome = await Promise.race([
+      fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+        endpointBase: "https://records.example/api/trade-record",
+        timeoutMs: 1_000,
+      }).then(() => null, (error) => error),
+      new Promise((resolve) => setTimeout(() => resolve(didNotSettle), 100)),
+    ]);
+    assert.notEqual(outcome, didNotSettle);
+    assert.match(outcome?.message ?? "", /응답이 너무 큽니다/u);
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("normalizes a non-timeout response body stream failure as a retryable network error", async () => {
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const streamFailure = new TypeError("network connection lost while reading body");
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      pull(controller) {
+        controller.error(streamFailure);
+      },
+    }), { headers: { "Content-Type": "application/json" } });
+
+    await assert.rejects(
+      fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+        endpointBase: "https://records.example/api/trade-record",
+        timeoutMs: 1_000,
+      }),
+      (error) => error instanceof TradeRecordNetworkError
+        && error.cause === streamFailure
+        && isRetryableTradeRecordFetchError(error),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not classify HTTP or response-content validation failures as network errors", async () => {
+  const originalFetch = globalThis.fetch;
+
+  try {
+    globalThis.fetch = async () => Response.json(
+      { ok: false, code: "INVALID_REQUEST", message: "invalid record" },
+      { status: 400 },
+    );
+    await assert.rejects(
+      fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+        endpointBase: "https://records.example/api/trade-record",
+      }),
+      (error) => error instanceof TradeRecordApiRequestError
+        && !(error instanceof TradeRecordNetworkError)
+        && error.code === "INVALID_REQUEST",
+    );
+
+    globalThis.fetch = async () => new Response("not JSON", {
+      headers: { "Content-Type": "text/plain" },
+    });
+    await assert.rejects(
+      fetchTradeRecord("AAAAAAAAAAAAAAAA", {
+        endpointBase: "https://records.example/api/trade-record",
+      }),
+      (error) => error instanceof Error
+        && !(error instanceof TradeRecordNetworkError)
+        && /JSON 응답을 반환하지 않았습니다/u.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("treats trade-record timeouts as retryable verification failures", () => {
+  assert.equal(
+    isRetryableTradeRecordFetchError(new TradeRecordApiRequestError("REQUEST_TIMEOUT", "timeout", 0)),
+    true,
+  );
+  assert.equal(
+    isRetryableTradeRecordFetchError(new TradeRecordApiRequestError("NOT_FOUND", "not found", 404)),
+    true,
+  );
+  assert.equal(isRetryableTradeRecordFetchError(new TradeRecordNetworkError(new TypeError("offline"))), true);
+  assert.equal(
+    isRetryableTradeRecordFetchError(new TradeRecordApiRequestError("INVALID_REQUEST", "invalid", 400)),
+    false,
+  );
+  assert.equal(isRetryableTradeRecordFetchError(new Error("invalid signature")), false);
 });
 
 test("committed deployment public JWK is structurally valid and verification route is wired in both entries", async () => {

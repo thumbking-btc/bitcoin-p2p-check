@@ -63,7 +63,7 @@
 
 ## 로컬 실행과 검증
 
-Node.js 22.19.0을 사용합니다. 잠금 파일 기준으로 의존성을 설치한 뒤 `verify` 한 번으로 lint, typecheck, production build, 전체 빌드 결과 test, Worker type drift와 production/preview Wrangler dry run을 순서대로 실행합니다.
+Node.js 22.19.0을 사용합니다. 잠금 파일 기준으로 의존성을 설치한 뒤 `verify` 한 번으로 lint, typecheck, production build, 전체 빌드 결과 test, Worker type drift와 production/staging/preview Wrangler dry run을 순서대로 실행합니다.
 
 ```bash
 npm ci
@@ -75,18 +75,23 @@ npm run dev
 
 - `npm run dev`: vinext 개발 서버를 실행합니다.
 - `npm run start`: `wrangler.jsonc`의 production 형태를 로컬 Worker로 실행합니다. 거래 기록 시험에는 commit하지 않은 local signing secret이 필요합니다.
+- `npm run start:staging`: 운영 저장소·서명 키가 없고 거래 기록 기능이 fail closed인 격리 staging 구성을 실행합니다.
 - `npm run start:preview`: KV와 signing secret 없이 거래 기록 기능이 fail closed인 `wrangler.preview.jsonc`를 실행합니다.
 - `npm run test:built`: 기존 `dist`를 대상으로 모든 `tests/*.test.mjs`를 실행합니다.
 - `npm test`: 새로 build한 뒤 전체 빌드 결과 test를 실행합니다.
 - `npm run verify:ci`: `verify` 뒤 개발·빌드 도구를 포함한 전체 의존성의 high severity 보안 감사를 실행합니다.
 
-local secret은 `.dev.vars` 또는 `.env` 계열에만 두고 commit하지 마십시오. production KV, production signing key와 preview 환경을 함께 사용하지 마십시오.
+local secret은 `.dev.vars` 또는 `.env` 계열에만 두고 commit하지 마십시오. production Durable Object·legacy KV·signing key를 staging 또는 preview 환경과 함께 사용하지 마십시오.
 
 ## 배포
 
 Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 합니다. production 배포의 유일한 정상 경로는 `.github/workflows/verify.yml`입니다. 최신 `main` SHA에서 `verify`가 성공하고 GitHub `production` environment의 required reviewer가 승인한 뒤에만, 같은 run이 보존한 `verified-dist-<SHA>`와 `verified-worker-<SHA>`를 다시 빌드하지 않고 `wrangler.jsonc`로 `bitcoin-p2p-check` Worker에 배포합니다. 두 산출물에는 provenance를, Worker bundle에는 CycloneDX SBOM attestation을 연결합니다.
 
-`wrangler.jsonc`는 production 거래 기록 KV와 필수 `TRADE_RECORD_SIGNING_KEY`를 사용하고 production preview URL을 끕니다. `wrangler.preview.jsonc`는 별도 Worker 이름, 별도 rate-limit namespace, `DEPLOYMENT_ENV=preview`, `TRADE_RECORDS_ENABLED=false`를 사용하며 production KV와 signing secret을 선언하지 않습니다. 명시적 preview가 필요한 운영자만 `npm run deploy:preview`를 사용하십시오. branch push에 연결하지 마십시오.
+`wrangler.jsonc`는 거래 기록별 SQLite Durable Object를 강한 일관성의 기본 저장소로 사용하고, 기존 기록의 lazy migration과 제한적인 구버전 호환을 위해 production KV에 순서 보장형 비동기 mirror를 유지하며 필수 `TRADE_RECORD_SIGNING_KEY`를 사용합니다. 이 mirror는 create/finalize 성공과 동기화된 rollback 안전망이 아니며, revoke만 구버전 재노출을 막기 위해 KV 반영을 확인합니다. production preview URL은 꺼져 있습니다.
+
+`wrangler.staging.jsonc`는 별도 Worker `bitcoin-p2p-check-staging`, `DEPLOYMENT_ENV=staging`, `TRADE_RECORDS_ENABLED=false`를 사용하며 production Durable Object·KV·서명 secret을 선언하지 않습니다. `staging` 브랜치 push는 검증만 수행합니다. 운영자가 `workflow_dispatch`의 `deploy_staging`을 명시적으로 승인하면 검증한 정확한 bundle을 고유 version preview URL에 업로드하고, 재귀 asset graph와 version ID·Git SHA smoke를 통과한 그 version만 canonical staging으로 승격합니다. `versions upload`는 존재하지 않는 Worker를 만들지 못하므로 최초 생성에만 운영 런북의 일회성 bootstrap 절차가 필요하며, 그 뒤 로컬 staging 배포는 금지됩니다.
+
+`wrangler.preview.jsonc`도 별도 Worker 이름과 별도 rate-limit namespace를 사용하며 production 저장소와 signing secret을 선언하지 않습니다. 명시적 preview가 필요한 운영자만 `npm run deploy:preview`를 사용하십시오. 어떤 Worker도 Cloudflare Git branch build에 연결하지 마십시오.
 
 저장소 설정과 Cloudflare 대시보드 상태는 코드만으로 강제하거나 확인할 수 없습니다. `main` 보호, required status check, environment reviewer, Cloudflare Build 연결 해제, secret, 경보와 backup은 [프로덕션 운영 런북](./docs/production-operations.md)의 수동 체크리스트에 따라 확인하고 증적을 남기십시오. 개발자 PC의 `npm run deploy`, `npm run deploy:production` 또는 직접 `wrangler deploy`는 production 승인 gate를 우회하므로 정상 운영에 사용하지 마십시오.
 
@@ -97,7 +102,7 @@ node scripts/smoke-deployment.mjs https://<PRODUCTION_HOST>
 # 또는 BASE_URL=https://<PRODUCTION_HOST> node scripts/smoke-deployment.mjs
 ```
 
-smoke는 정적 HTML의 hash 기반 CSP, `sw.js`의 `no-store`, 버전 metadata, 시장 API, 유효 형식이지만 존재하지 않는 거래 기록 ID의 JSON 404, 알 수 없는 API의 JSON 404를 모두 읽기 전용 `GET`으로 확인합니다. 거래 기록을 생성·변경·삭제하지 않습니다.
+smoke는 정적 HTML의 hash 기반 CSP, `sw.js`의 `no-store`, 배포 환경과 정확한 Worker version ID·Git SHA tag, 시장 API, 유효 형식이지만 존재하지 않는 거래 기록 ID의 JSON 404, 알 수 없는 API의 JSON 404를 모두 읽기 전용 `GET`으로 확인합니다. 또한 `/`, `/install/`, `/privacy/`, `/verify/`에서 시작해 동일 출처 HTML 참조, JavaScript 정적·동적 import, CSS `@import`·`url()`, web manifest icon, service worker app shell을 최대 128개까지 재귀 추적하고 상태, media type, `nosniff`, fingerprint cache 정책을 확인합니다. 거래 기록을 생성·변경·삭제하지 않습니다.
 
 Cloudflare Worker version ID, 전체 Git SHA, GitHub Actions run과 annotated release tag를 서로 연결하고, rollback도 새 검증·승인을 거쳐 수행하십시오. 실제 iPhone, Android, Windows PWA와 native share는 [실기기 릴리스 체크리스트](./docs/release-device-checklist.md)를 사용하십시오. **법률 검토는 완료되지 않았으며**, 이 프로젝트의 기술 검증이 규제·개인정보·소비자 보호 적합성을 뜻하지 않습니다.
 

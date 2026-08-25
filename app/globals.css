@@ -23,6 +23,16 @@ button, input, select, textarea { font: inherit; }
 button, summary, label { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
+.deployment-notice { position: sticky; top: 0; z-index: 1000; display: flex; min-width: 0; align-items: center; justify-content: center; gap: 10px; padding: max(8px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px)); border-bottom: 2px solid #6b3300; background: #fff0d9; color: #402000; box-shadow: 0 2px 0 rgba(17, 24, 32, .18); font-size: 12px; line-height: 1.35; }
+.deployment-notice[hidden] { display: none; }
+.deployment-notice strong { flex: 0 0 auto; padding: 3px 7px; background: #6b3300; color: #fff; font: 850 11px/1.2 var(--mono); letter-spacing: .08em; }
+.deployment-notice span { min-width: 0; font-weight: 720; overflow-wrap: anywhere; }
+.deployment-notice-mismatch { border-color: #6f1d17; background: #f8e5e2; color: #571812; }
+.deployment-notice-mismatch strong { background: #6f1d17; }
+html[data-deployment-environment]:not([data-deployment-environment="production"]) .install-entry,
+html[data-deployment-environment]:not([data-deployment-environment="production"]) .install-invite,
+html[data-deployment-environment]:not([data-deployment-environment="production"]) .site-route-install { display: none; }
+
 .site-main { width: min(100% - 28px, 880px); margin-inline: auto; padding: 18px 0 96px; }
 .trade-tool { border: 1px solid var(--ink); background: var(--surface); box-shadow: 7px 7px 0 rgba(17, 24, 32, .12); }
 .trade-tool.is-draft-hydrating .role-fieldset,
@@ -51,7 +61,7 @@ a { color: inherit; }
 .stale-warning { margin: 7px 0 0; color: var(--red); font-size: 11px; font-weight: 720; }
 .imported-trade-notice { margin: 7px 0 0; padding: 7px 8px; border-left: 3px solid var(--orange-dark); background: #fff0db; color: var(--ink-soft); font-size: 11px; font-weight: 700; line-height: 1.4; }
 .draft-storage-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
-.draft-storage-notice button, .share-verification-actions button { min-height: 28px; padding: 3px 7px; border: 1px solid var(--control-line); border-radius: 0; background: #fff; color: var(--ink); cursor: pointer; font: 720 11px/1.2 var(--sans); white-space: nowrap; }
+.draft-storage-notice button, .share-verification-actions button { min-height: 44px; padding: 6px 9px; border: 1px solid var(--control-line); border-radius: 0; background: #fff; color: var(--ink); cursor: pointer; font: 720 11px/1.2 var(--sans); white-space: nowrap; }
 
 .role-fieldset { min-width: 0; margin: 10px 0 0; padding: 0; border: 0; }
 .role-fieldset legend { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }

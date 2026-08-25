@@ -40,21 +40,16 @@ export function SupportPanel() {
         </div>
 
         <figure className="support-figure">
-          <svg
+          <Image
             className="support-qr"
-            viewBox="0 0 445 445"
-            role="img"
-            aria-labelledby="support-qr-title support-qr-desc"
-          >
-            <title id="support-qr-title">엄지왕 라이트닝 후원 QR</title>
-            <desc id="support-qr-desc">엄지왕 라이트닝 후원 주소를 담은 QR 코드</desc>
-            <image
-              href="/lightning-support-qr.png"
-              width="445"
-              height="445"
-              preserveAspectRatio="none"
-            />
-          </svg>
+            src="/lightning-support-qr.png"
+            width={445}
+            height={445}
+            loading="lazy"
+            alt="엄지왕 라이트닝 후원 QR"
+            unoptimized
+          />
+          <figcaption className="visually-hidden">엄지왕 라이트닝 후원 주소를 담은 QR 코드</figcaption>
           <SupportAddressCopy address={LIGHTNING_ADDRESS} />
         </figure>
       </article>

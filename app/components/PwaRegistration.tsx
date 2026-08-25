@@ -2,15 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { APP_VERSION } from "../lib/app-version";
+import { shouldDisableServiceWorker } from "../lib/deployment-environment.mjs";
 
 const CACHE_PREFIX = "bitcoin-p2p-check-";
-const PRODUCTION_HOSTNAME = "bitcoin-p2p-check.thumbking-btc.workers.dev";
-
-function isPreviewHostname(hostname: string) {
-  return hostname !== PRODUCTION_HOSTNAME
-    && (hostname.endsWith("-bitcoin-p2p-check.thumbking-btc.workers.dev")
-      || hostname === "bitcoin-p2p-check-preview.thumbking-btc.workers.dev");
-}
 
 export function PwaRegistration() {
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
@@ -24,7 +18,8 @@ export function PwaRegistration() {
 
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
 
-    if (isPreviewHostname(window.location.hostname)) {
+    const annotatedEnvironment = document.documentElement.getAttribute("data-deployment-environment");
+    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment)) {
       void navigator.serviceWorker.getRegistrations()
         .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
         .catch(() => {});
