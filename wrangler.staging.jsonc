@@ -5,10 +5,19 @@
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
-  "preview_urls": true,
+  "preview_urls": false,
   "vars": {
     "DEPLOYMENT_ENV": "staging",
     "TRADE_RECORDS_ENABLED": "false"
+  },
+  "secrets": {
+    "required": ["TRADE_RECORD_SIGNING_KEY"]
+  },
+  "exports": {
+    "TradeRecordState": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
   },
   "ratelimits": [
     {
