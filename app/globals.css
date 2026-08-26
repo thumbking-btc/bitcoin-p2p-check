@@ -507,11 +507,11 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 @media (max-width: 380px) {
   .site-main { width: min(100% - 20px, 880px); }
   .privacy-page { width: min(100% - 20px, 880px); }
-  .tool-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+  .tool-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .brand-line { gap: 4px; }
   .brand-mark { width: 21px; height: 21px; font-size: 14px; }
   .tool-heading h1 { font-size: 18px; }
-  .refresh-button { min-height: 44px; justify-self: end; padding-inline: 4px; font-size: 11px; }
+  .refresh-button { width: 100%; min-height: 44px; justify-self: stretch; padding-inline: 4px; font-size: 11px; }
   .role-fieldset legend { gap: 5px; }
   .role-fieldset legend small { font-size: 10px; }
   .trade-form { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 8px; }
