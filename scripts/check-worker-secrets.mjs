@@ -26,7 +26,9 @@ const WORKER_PROFILES = Object.freeze({
   staging: Object.freeze({
     config: "wrangler.staging.jsonc",
     workerName: "bitcoin-p2p-check-staging",
-    expectedSecrets: Object.freeze([]),
+    expectedSecrets: Object.freeze([
+      Object.freeze({ name: "TRADE_RECORD_SIGNING_KEY", type: "secret_text" }),
+    ]),
   }),
   preview: Object.freeze({
     config: "wrangler.preview.jsonc",

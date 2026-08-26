@@ -14,7 +14,10 @@ import {
   TRADE_RECORD_SCHEMA_V1,
 } from "../app/lib/trade-record.ts";
 import {
+  PRODUCTION_TRADE_RECORD_PUBLIC_KEYS,
+  STAGING_TRADE_RECORD_PUBLIC_KEYS,
   TRADE_RECORD_PUBLIC_KEYS,
+  tradeRecordPublicKeysForDeployment,
   verifyTradeRecordSignature,
 } from "../app/lib/trade-record-verification.ts";
 import {
@@ -1035,4 +1038,17 @@ test("committed deployment public JWK is structurally valid and verification rou
   assert.match(verifier, /retryNotFound:\s*true/);
   assert.match(wrangler, /"ratelimits"/);
   assert.match(wrangler, /"name":\s*"TRADE_RECORD_CREATE_RATE_LIMITER"/);
+});
+
+test("keeps production and staging signature trust roots disjoint", () => {
+  const productionKids = Object.keys(PRODUCTION_TRADE_RECORD_PUBLIC_KEYS);
+  const stagingKids = Object.keys(STAGING_TRADE_RECORD_PUBLIC_KEYS);
+  assert.equal(productionKids.length, 1);
+  assert.equal(stagingKids.length, 1);
+  assert.equal(productionKids.some((kid) => stagingKids.includes(kid)), false);
+  assert.equal(TRADE_RECORD_PUBLIC_KEYS, PRODUCTION_TRADE_RECORD_PUBLIC_KEYS);
+  assert.equal(tradeRecordPublicKeysForDeployment("production"), PRODUCTION_TRADE_RECORD_PUBLIC_KEYS);
+  assert.equal(tradeRecordPublicKeysForDeployment("staging"), STAGING_TRADE_RECORD_PUBLIC_KEYS);
+  assert.deepEqual(tradeRecordPublicKeysForDeployment("preview"), {});
+  assert.deepEqual(tradeRecordPublicKeysForDeployment("unknown"), {});
 });

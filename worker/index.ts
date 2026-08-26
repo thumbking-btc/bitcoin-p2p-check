@@ -19,7 +19,8 @@ export type WorkerEnvironment = TradeRecordEnvironment
 
 const CSP_POLICY_PATH = "/csp-policy.txt";
 const NON_PRODUCTION_ROBOTS_POLICY = "noindex, nofollow, noarchive";
-const NON_PRODUCTION_NOTICE_MESSAGE = "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
+const STAGING_NOTICE_MESSAGE = "시험 환경입니다. 거래 기록은 스테이징 전용 저장소에 저장되며 실제 거래에 사용하면 안 됩니다.";
+const PREVIEW_NOTICE_MESSAGE = "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
 const STATIC_SECURITY_HEADERS = Object.freeze({
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -92,7 +93,9 @@ function nonProductionHtmlResponse(
     })
     .on("#deployment-environment-notice [data-deployment-message]", {
       element(element) {
-        element.setInnerContent(NON_PRODUCTION_NOTICE_MESSAGE);
+        element.setInnerContent(
+          deploymentEnvironment === "staging" ? STAGING_NOTICE_MESSAGE : PREVIEW_NOTICE_MESSAGE,
+        );
       },
     })
     .transform(response);

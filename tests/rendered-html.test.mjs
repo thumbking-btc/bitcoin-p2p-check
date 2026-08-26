@@ -758,6 +758,9 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
   assert.match(imageRenderer, /const WIDTH = 1_440/);
+  assert.match(imageRenderer, /STAGING · TEST ONLY/u);
+  assert.match(imageRenderer, /STAGING TEST RECORD/u);
+  assert.match(imageRenderer, /시험 기록 · 실제 거래 사용 금지/u);
   assert.match(imageRenderer, /const HEIGHT = 1_080/);
   assert.match(imageRenderer, /A signed trade record is required/);
   assert.match(imageRenderer, /비트코인 P2P 거래 기록/);

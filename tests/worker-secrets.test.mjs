@@ -177,7 +177,7 @@ test("wires exact staging deployment, version, and secret gates while production
   assert.deepEqual(getWorkerSecretProfile("staging"), {
     config: "wrangler.staging.jsonc",
     workerName: "bitcoin-p2p-check-staging",
-    expectedSecrets: [],
+    expectedSecrets: PRODUCTION_ALLOWLIST,
   });
   assert.deepEqual(getWorkerSecretProfile("preview"), {
     config: "wrangler.preview.jsonc",
@@ -194,52 +194,31 @@ test("wires exact staging deployment, version, and secret gates while production
   assert.match(stagingDeploymentChecker, /STAGING_WORKER_NAME = "bitcoin-p2p-check-staging"/u);
   assert.match(stagingDeploymentChecker, /"deployments", "status"/u);
 
-  const stagingBaseline = workflow.indexOf("Capture the exact staging baseline before upload");
-  const stagingPre = workflow.indexOf("Verify staging remote secret allowlist before upload");
-  const stagingUpload = workflow.indexOf("Upload the isolated staging candidate without promoting it");
-  const stagingCandidateConfig = workflow.indexOf("Verify the exact staging candidate configuration");
-  const stagingCandidatePrecheck = workflow.indexOf("Recheck the exact staging candidate before Preview smoke");
-  const stagingCandidateSmoke = workflow.indexOf("Verify the exact staging candidate Preview before promotion");
-  const stagingCandidatePostcheck = workflow.indexOf("Recheck the exact staging candidate after Preview smoke");
-  const stagingPromote = workflow.indexOf("Promote only the verified staging version");
-  const stagingPost = workflow.indexOf("Verify the exact staging deployment after promotion");
-  const stagingSmoke = workflow.indexOf("Verify canonical staging without creating records");
+  const stagingBaseline = workflow.indexOf("Capture the exact staging baseline before deployment");
+  const stagingPre = workflow.indexOf("Verify staging remote secret allowlist before deployment");
+  const stagingDeploy = workflow.indexOf("Deploy the verified isolated staging artifact atomically");
+  const stagingConfig = workflow.indexOf("Verify the exact staging deployment configuration");
+  const stagingSmoke = workflow.indexOf("Verify canonical staging identity and static behavior");
+  const stagingStateful = workflow.indexOf("Verify the full staging trade-record lifecycle with synthetic data");
   const stagingFinal = workflow.indexOf("Detect a staging deployment or branch advance after smoke");
-  assert.ok(stagingBaseline >= 0 && stagingBaseline < stagingPre && stagingPre < stagingUpload);
-  assert.ok(stagingUpload < stagingCandidateConfig && stagingCandidateConfig < stagingCandidatePrecheck);
-  assert.ok(stagingCandidatePrecheck < stagingCandidateSmoke && stagingCandidateSmoke < stagingCandidatePostcheck);
-  assert.ok(stagingCandidatePostcheck < stagingPromote && stagingPromote < stagingPost);
-  assert.ok(stagingPost < stagingSmoke && stagingSmoke < stagingFinal);
+  assert.ok(stagingBaseline >= 0 && stagingBaseline < stagingPre && stagingPre < stagingDeploy);
+  assert.ok(stagingDeploy < stagingConfig && stagingConfig < stagingSmoke);
+  assert.ok(stagingSmoke < stagingStateful && stagingStateful < stagingFinal);
   const stagingBaselineSection = workflow.slice(stagingBaseline, stagingPre);
-  const stagingPreSection = workflow.slice(stagingPre, stagingUpload);
-  const stagingUploadSection = workflow.slice(stagingUpload, stagingCandidateConfig);
-  const stagingCandidateConfigSection = workflow.slice(stagingCandidateConfig, stagingCandidatePrecheck);
-  const stagingCandidatePrecheckSection = workflow.slice(stagingCandidatePrecheck, stagingCandidateSmoke);
-  const stagingCandidateSmokeSection = workflow.slice(stagingCandidateSmoke, stagingCandidatePostcheck);
-  const stagingCandidatePostcheckSection = workflow.slice(stagingCandidatePostcheck, stagingPromote);
-  const stagingPromoteSection = workflow.slice(stagingPromote, stagingPost);
-  const stagingPostSection = workflow.slice(stagingPost, stagingSmoke);
+  const stagingPreSection = workflow.slice(stagingPre, stagingDeploy);
+  const stagingDeploySection = workflow.slice(stagingDeploy, stagingConfig);
+  const stagingConfigSection = workflow.slice(stagingConfig, stagingSmoke);
   const stagingFinalSection = workflow.slice(stagingFinal, workflow.indexOf("  deploy-production:"));
   for (const section of [
     stagingBaselineSection,
     stagingPreSection,
-    stagingUploadSection,
-    stagingCandidateConfigSection,
-    stagingCandidatePrecheckSection,
-    stagingCandidatePostcheckSection,
-    stagingPromoteSection,
-    stagingPostSection,
+    stagingDeploySection,
+    stagingConfigSection,
     stagingFinalSection,
   ]) {
     assert.match(section, /CLOUDFLARE_API_TOKEN:\s*\$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/u);
     assert.match(section, /CLOUDFLARE_ACCOUNT_ID:\s*\$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/u);
   }
-  assert.doesNotMatch(
-    stagingCandidateSmokeSection,
-    /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/u,
-  );
-  assert.match(stagingCandidatePrecheckSection, /check-staging-version\.mjs[^\r\n]+--require-preview/u);
-  assert.match(stagingCandidatePostcheckSection, /check-staging-version\.mjs[^\r\n]+--require-preview/u);
   assert.match(stagingBaselineSection, /check-staging-deployment\.mjs capture/u);
   assert.match(stagingPreSection, /npm run secrets:check:staging/u);
   assert.match(
@@ -247,25 +226,17 @@ test("wires exact staging deployment, version, and secret gates while production
     /check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}"/u,
   );
   assert.match(
-    stagingUploadSection,
-    /check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-baseline\.outputs\.deployment_id \}\}"[\s\S]*check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}"[\s\S]*npm run upload:staging:candidate/u,
+    stagingDeploySection,
+    /check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-baseline\.outputs\.deployment_id \}\}"[\s\S]*check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}"[\s\S]*npm run deploy:staging:verified[\s\S]*check-staging-deployment\.mjs capture/u,
   );
   assert.match(
-    stagingCandidateConfigSection,
-    /check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}"[\s\S]*check-staging-version\.mjs "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}" "\$\{\{ github\.sha \}\}"/u,
+    stagingConfigSection,
+    /check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}"[\s\S]*check-staging-version\.mjs "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}" "\$\{\{ github\.sha \}\}"/u,
   );
-  assert.match(
-    stagingPromoteSection,
-    /check-staging-version\.mjs "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}" "\$\{\{ github\.sha \}\}"[\s\S]*git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-baseline\.outputs\.deployment_id \}\}"\s+npx wrangler versions deploy[\s\S]*--name bitcoin-p2p-check-staging/u,
-  );
-  assert.match(stagingPostSection, /npm run secrets:check:staging/u);
-  assert.match(
-    stagingPostSection,
-    /id:\s*staging-promoted[\s\S]*check-staging-deployment\.mjs capture-exact "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}"[\s\S]*check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}"[\s\S]*check-staging-version\.mjs "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}" "\$\{\{ github\.sha \}\}"/u,
-  );
+  assert.match(workflow.slice(stagingStateful, stagingFinal), /smoke-staging-trade-record\.mjs[\s\S]*STAGING_STATEFUL_TEST_APPROVED:\s*"true"/u);
   assert.match(
     stagingFinalSection,
-    /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-promoted\.outputs\.deployment_id \}\}"/u,
+    /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-deployed\.outputs\.deployment_id \}\}"/u,
   );
 
   const productionJobIndex = workflow.indexOf("  deploy-production:");

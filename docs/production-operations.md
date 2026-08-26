@@ -48,7 +48,7 @@ GitHub **Settings → Environments → production**에는 다음 조건을 설�
 
 GitHub 요금제와 저장소 공개 범위에 따라 required reviewer 기능을 사용할 수 없는 경우가 있습니다. 그런 상태에서는 사람 승인이 강제된다고 표시하지 말고, 지원되는 요금제 또는 동등한 강제형 deployment protection을 먼저 마련하십시오([GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
 
-GitHub **Settings → Environments → staging**에도 최소권한 `CLOUDFLARE_API_TOKEN`과 `CLOUDFLARE_ACCOUNT_ID`를 environment secret으로 두고, 허용 branch를 `staging`으로 제한하십시오. `staging` push는 검증만 수행하며, `workflow_dispatch`에서 `deploy_staging=true`를 명시한 run만 후보 upload와 승격을 수행합니다.
+GitHub **Settings → Environments → staging**에도 최소권한 `CLOUDFLARE_API_TOKEN`과 `CLOUDFLARE_ACCOUNT_ID`를 environment secret으로 두고, 허용 branch를 `staging`으로 제한하십시오. `staging` push는 검증만 수행하며, `workflow_dispatch`에서 `deploy_staging=true`를 명시한 run만 검증된 산출물의 원자 배포와 synthetic lifecycle smoke를 수행합니다.
 
 ## 2. latest-main SHA 승인 체크리스트
 
@@ -75,14 +75,14 @@ gh run view <RUN_ID> --json headSha,headBranch,event,status,conclusion,url
 | 설정 파일 | `wrangler.jsonc` | `wrangler.staging.jsonc` | `wrangler.preview.jsonc` |
 | Worker 이름 | `bitcoin-p2p-check` | `bitcoin-p2p-check-staging` | `bitcoin-p2p-check-preview` |
 | `DEPLOYMENT_ENV` | `production` | `staging` | `preview` |
-| `TRADE_RECORDS_ENABLED` | `true` | `false` | `false` |
-| 거래 기록 상태 | declarative `TradeRecordState` export와 `context.exports` loopback의 record별 SQLite DO; 명시적 `env` binding 없음 | DO namespace 선언·binding 없음 | DO namespace 선언·binding 없음 |
+| `TRADE_RECORDS_ENABLED` | `true` | `true` | `false` |
+| 거래 기록 상태 | declarative `TradeRecordState` export와 `context.exports` loopback의 record별 SQLite DO; 명시적 `env` binding 없음 | 별도 `TradeRecordState` SQLite DO; production namespace와 공유하지 않음 | DO namespace 선언·binding 없음 |
 | `TRADE_RECORDS` KV | legacy migration/mirror namespace | binding 없음 | binding 없음 |
-| `TRADE_RECORD_SIGNING_KEY` | required secret | 선언·주입하지 않음 | 선언·주입하지 않음 |
-| 거래 기록 limiter | create 6/min, item 120/min | 없음 | 없음 |
-| version preview URL | `false` | 후보 검증용 `true` | 명시적 preview Worker 검증용 `true` |
+| `TRADE_RECORD_SIGNING_KEY` | production 전용 required secret | staging 전용 required secret | 선언·주입하지 않음 |
+| 거래 기록 limiter | create 6/min, item 120/min | 별도 namespace의 create 6/min, item 120/min | 없음 |
+| version preview URL | `false` | Durable Object 제한으로 `false` | 명시적 preview Worker 검증용 `true` |
 
-production Durable Object, KV namespace ID, 서명 secret, rate-limit namespace를 staging이나 preview에 복사하지 마십시오. 비프로덕션은 단순히 다른 이름을 쓰는 수준이 아니라 거래 기록 저장소와 signer에 접근할 수 없어야 합니다. production Worker의 `<version>-bitcoin-p2p-check...workers.dev` alias도 같은 Worker binding을 사용하므로 staging으로 취급하지 마십시오.
+production Durable Object, KV namespace ID, 서명 secret, 공개키 신뢰 범위와 rate-limit namespace를 staging이나 preview에 복사하지 마십시오. staging은 같은 기능 계약을 별도 저장소·별도 signer로 시험하며, preview는 거래 기록 기능을 계속 fail closed로 유지합니다. production Worker의 `<version>-bitcoin-p2p-check...workers.dev` alias도 같은 Worker binding을 사용하므로 staging으로 취급하지 마십시오.
 
 production의 `TradeRecordState`는 top-level Durable Object export와 [`context.exports` loopback binding](https://developers.cloudflare.com/workers/runtime-apis/context/#exports)으로만 접근합니다. 같은 Worker 안의 객체를 위한 `TRADE_RECORD_STATE` 환경 binding을 다시 추가하지 마십시오. 설정을 바꾼 뒤에는 `npm run types:worker`로 생성 타입을 갱신하고 `npm run types:check`로 drift를 검사하십시오.
 
@@ -93,7 +93,7 @@ npm run config:check
 node --test tests/worker-security-lifecycle.test.mjs
 ```
 
-`worker-security-lifecycle` 검사는 staging/preview/누락 환경에서 거래 기록 API가 binding에 접근하기 전에 fail closed 되는지, 읽기는 404이고 변경 method는 503인지 확인합니다. production에서는 create와 item limiter가 Durable Object를 선택하기 전에 실행되는지도 검사합니다. 테스트 파일이 없거나 이 검사가 제외된 release는 승인하지 마십시오.
+`worker-security-lifecycle` 검사는 preview/누락 환경에서 거래 기록 API가 binding에 접근하기 전에 fail closed 되는지 확인합니다. production과 staging에서는 create와 item limiter가 Durable Object를 선택하기 전에 실행되는지 검사합니다. 테스트 파일이 없거나 이 검사가 제외된 release는 승인하지 마십시오.
 
 명시적으로 배포한 staging 또는 preview에서 다음 **읽기 전용** 확인만 추가할 수 있습니다.
 
@@ -120,7 +120,7 @@ Wrangler 설정의 `secrets.required`는 배포에 필요한 secret 이름을 �
 
 ```bash
 npm run secrets:check:production # TRADE_RECORD_SIGNING_KEY 하나만 허용
-npm run secrets:check:staging    # 빈 목록만 허용
+npm run secrets:check:staging    # staging 전용 TRADE_RECORD_SIGNING_KEY 하나만 허용
 npm run secrets:check:preview    # 빈 목록만 허용
 ```
 
@@ -128,12 +128,12 @@ staging GitHub 배포 job은 원격 변경 직전과 직후에 각각 이 검사
 
 ```bash
 node scripts/check-worker-version-secrets.mjs production "$DEPLOYED_VERSION_ID" # TRADE_RECORD_SIGNING_KEY만 허용
-node scripts/check-worker-version-secrets.mjs staging "$CANDIDATE_VERSION_ID"   # secret binding을 허용하지 않음
+node scripts/check-worker-version-secrets.mjs staging "$DEPLOYED_VERSION_ID"   # staging signer 하나만 허용
 node scripts/check-staging-version.mjs "$CANDIDATE_VERSION_ID" "$EXPECTED_COMMIT_SHA"
 node scripts/check-staging-deployment.mjs assert-single "$CANDIDATE_VERSION_ID"
 ```
 
-secret version 검사는 `secret_text`만 secret 유형으로 인정하고, 다른 secret 계열 type·extra secret·중복 binding 이름·요청한 ID와 다른 응답·malformed/oversized JSON·조회 실패를 모두 fail closed로 처리합니다. staging exact version 검사는 Wrangler 4.125.0으로 Worker 이름을 `bitcoin-p2p-check-staging`에 고정하여 조회하고, 응답의 exact version ID, `source=wrangler`, 40자리 commit tag, compatibility date와 flags 및 다음 전체 binding allowlist만 허용합니다: `ASSETS`, `WORKER_VERSION`, `DEPLOYMENT_ENV=staging`, `TRADE_RECORDS_ENABLED=false`, staging 전용 `LIGHTNING_REQUEST_RATE_LIMITER` namespace `2026082591`. deployment 검사는 bounded JSON에서 단일 version 100%만 허용하므로 canonical smoke 한 번이 우연히 후보에 도달한 traffic split도 합격시킬 수 없습니다. `secret list`만으로는 이미 생성된 특정 version이 실제 상속한 binding을 증명할 수 없으므로 이 검사들을 생략하지 마십시오.
+secret version 검사는 `secret_text`만 secret 유형으로 인정하고, 다른 secret 계열 type·extra secret·중복 binding 이름·요청한 ID와 다른 응답·malformed/oversized JSON·조회 실패를 모두 fail closed로 처리합니다. staging exact version 검사는 Wrangler 4.125.0으로 Worker 이름을 `bitcoin-p2p-check-staging`에 고정하여 조회하고, exact version ID, `source=wrangler`, 40자리 commit tag, compatibility 설정, SQLite `TradeRecordState` export, staging signer와 세 개의 staging 전용 rate-limit binding만 허용합니다. deployment 검사는 bounded JSON에서 단일 version 100%만 허용합니다. `secret list`만으로는 이미 생성된 특정 version이 실제 상속한 binding을 증명할 수 없으므로 이 검사들을 생략하지 마십시오.
 
 `wrangler secret put`은 새 Worker version을 만들고 즉시 배포하므로 개발자 PC에서 실행하면 승인 gate를 우회합니다. Cloudflare도 이 명령의 즉시 배포 특성과, 배포하지 않고 version만 만드는 `wrangler versions secret put`을 구분합니다([Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)). 모든 production secret 생성·교체는 `production` environment 승인을 받는 전용 GitHub Actions job 안에서만 수행하십시오.
 
@@ -258,14 +258,14 @@ bootstrap은 신규 격리 Worker 생성 예외일 뿐 production Worker의 alia
 1. 원격 `staging`이 배포하려는 정확한 SHA인지 확인합니다.
 2. `Verify` workflow를 `staging` ref에서 수동 실행하고 `deploy_staging=true`, `deploy_production=false`를 선택합니다.
 3. verify job은 production과 staging dry-run bundle 및 동일 정적 산출물을 보존합니다.
-4. deploy-staging job은 최신 원격 `staging` SHA를 다시 확인하고 현재 활성 staging deployment ID와 기존 version 단일 100% 상태를 고정한 뒤 원격 secret이 빈 목록인지 검사합니다.
-5. 보존한 `.verified-staging-worker/index.js`를 `versions upload`로 올리고, 정확한 후보 version의 ID·source·commit tag·compatibility 설정·전체 binding allowlist와 secret 부재를 검사합니다. 하나라도 다르면 승격하지 않습니다.
-6. Wrangler가 반환한 고유 preview URL에서 앱 버전, `deploymentEnvironment=staging`, 정확한 Worker version ID, 네 HTML 경로와 전체 asset graph를 smoke합니다.
-7. 승격 직전에 활성 deployment ID와 기존 version 단일 100% 상태가 모두 고정값 그대로인지 다시 확인하고, 후보 smoke가 성공한 정확한 version ID만 `versions deploy <id>@100%`로 `bitcoin-p2p-check-staging`에 승격합니다.
-8. 승격 직후 활성 deployment가 후보 단일 100%인지 확인하여 새 deployment ID를 고정하고 원격 secret과 후보 전체 구성을 다시 검사한 뒤, canonical staging URL에서 같은 version ID로 smoke합니다. traffic split, extra secret, 승인되지 않은 binding 또는 다른 version이 보이면 배포를 실패 처리합니다.
-9. canonical smoke 뒤 `origin/staging`을 fetch하여 배포 SHA와 같은지 확인하고, 활성 deployment ID와 후보 단일 100% 상태도 승격 직후 고정값 그대로인지 다시 검사합니다. deployment나 branch가 전진했다면 임의로 덮어쓰거나 되돌리지 않고 workflow를 실패 처리하여 후속 배포가 필요함을 기록합니다.
+4. deploy-staging job은 최신 원격 `staging` SHA를 다시 확인하고 현재 활성 staging deployment ID와 version 단일 100% 상태를 고정한 뒤 원격 signer secret allowlist를 검사합니다.
+5. 보존한 `.verified-staging-worker/index.js`를 `wrangler deploy --no-bundle`로 원자 배포합니다. Durable Object Worker에는 preview URL이 없으므로 `versions upload`나 gradual promotion을 사용하지 않습니다.
+6. 배포 직후 exact version ID·source·commit tag·compatibility 설정·SQLite export·전체 binding과 signer allowlist를 확인합니다.
+7. canonical staging URL에서 앱 버전, `deploymentEnvironment=staging`, 정확한 Worker version ID, 네 HTML 경로와 전체 asset graph를 smoke합니다.
+8. synthetic 조건으로 비공개 기록 생성, pending GET 404, 확정, 공개 GET과 staging 공개키 서명 검증, 철회, 철회 후 GET 404를 확인합니다. capability는 출력하지 않고 실패 시 `finally`에서 철회를 재시도합니다.
+9. smoke 뒤 `origin/staging`을 fetch하여 배포 SHA와 같은지 확인하고, 활성 deployment ID와 version 단일 100% 상태가 배포 직후 고정값 그대로인지 다시 검사합니다.
 
-staging Worker에는 거래 기록 저장소와 signer가 없으므로 mutation 시험을 추가하지 마십시오. 자동 branch build, production Worker preview alias 또는 로컬 `wrangler deploy`를 이 절차의 대체 경로로 사용하지 마십시오.
+자동 branch build, production Worker preview alias 또는 개발자 PC의 임의 `wrangler deploy`를 이 절차의 대체 경로로 사용하지 마십시오.
 
 ### 정상 배포 — 현재 차단됨
 

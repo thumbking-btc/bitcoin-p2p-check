@@ -23,6 +23,9 @@ const EXPECTED_COMPATIBILITY_FLAGS = Object.freeze([
   "global_fetch_strictly_public",
   "nodejs_compat",
 ]);
+const EXPECTED_STAGING_EXPORTS = Object.freeze({
+  TradeRecordState: Object.freeze({ type: "durable-object", storage: "sqlite" }),
+});
 const EXPECTED_STAGING_BINDINGS = Object.freeze([
   Object.freeze({ name: "ASSETS", type: "assets" }),
   Object.freeze({ name: "DEPLOYMENT_ENV", text: "staging", type: "plain_text" }),
@@ -32,7 +35,20 @@ const EXPECTED_STAGING_BINDINGS = Object.freeze([
     simple: Object.freeze({ limit: 12, period: 60 }),
     type: "ratelimit",
   }),
-  Object.freeze({ name: "TRADE_RECORDS_ENABLED", text: "false", type: "plain_text" }),
+  Object.freeze({
+    name: "TRADE_RECORD_CREATE_RATE_LIMITER",
+    namespace_id: "2026082692",
+    simple: Object.freeze({ limit: 6, period: 60 }),
+    type: "ratelimit",
+  }),
+  Object.freeze({
+    name: "TRADE_RECORD_READ_RATE_LIMITER",
+    namespace_id: "2026082693",
+    simple: Object.freeze({ limit: 120, period: 60 }),
+    type: "ratelimit",
+  }),
+  Object.freeze({ name: "TRADE_RECORD_SIGNING_KEY", type: "secret_text" }),
+  Object.freeze({ name: "TRADE_RECORDS_ENABLED", text: "true", type: "plain_text" }),
   Object.freeze({ name: "WORKER_VERSION", type: "version_metadata" }),
 ]);
 
@@ -132,6 +148,9 @@ export function validateExactStagingVersion(
   }
   if (version.resources.script_runtime.compatibility_date !== EXPECTED_COMPATIBILITY_DATE) {
     throw new Error("staging compatibility date가 검증된 값과 다릅니다.");
+  }
+  if (!isDeepStrictEqual(version.resources.script_runtime.exports, EXPECTED_STAGING_EXPORTS)) {
+    throw new Error("staging Durable Object export가 exact allowlist와 다릅니다.");
   }
   assertExactCompatibilityFlags(version.resources.script_runtime.compatibility_flags);
   assertExactStagingBindings(version.resources.bindings);

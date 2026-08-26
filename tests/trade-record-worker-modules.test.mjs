@@ -190,7 +190,8 @@ test("lifecycle TTL and environment gating retain pending and absolute-expiry se
   assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: false }), true);
   assert.equal(recordsExplicitlyDisabled({ TRADE_RECORDS_ENABLED: "off" }), true);
   assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: " Preview ", TRADE_RECORDS_ENABLED: true }), true);
-  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: true }), true);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: true }), false);
+  assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: false }), true);
   assert.equal(recordsExplicitlyDisabled({ DEPLOYMENT_ENV: "unknown", TRADE_RECORDS_ENABLED: true }), true);
 });
 

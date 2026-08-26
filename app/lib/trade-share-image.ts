@@ -1,6 +1,7 @@
 import { createVerifiedTextQr } from "./verified-qr.mjs";
 import { formatTradeBitcoinAmount } from "./trade-share-copy.mjs";
 import { getPaymentExpiryState } from "./payment-lifecycle";
+import { inferDeploymentEnvironment } from "./deployment-environment.mjs";
 
 export type TradeSharePayment = {
   rail: "onchain" | "lightning";
@@ -310,6 +311,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   canvas.height = HEIGHT;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas 2D is unavailable.");
+  const stagingRecord = inferDeploymentEnvironment(new URL(input.record.verificationUrl).hostname) === "staging";
 
   drawPaperTexture(context);
   context.strokeStyle = INK;
@@ -326,11 +328,22 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.textAlign = "right";
   context.textBaseline = "middle";
   setFont(context, 20, 760);
-  context.fillText("서명된 공유 기록", 1_384, 74);
+  context.fillText(stagingRecord ? "STAGING · TEST ONLY" : "서명된 공유 기록", 1_384, 74);
 
   context.fillStyle = INK;
   roundedRect(context, 40, 138, 1_360, 900, 14);
   context.fill();
+  if (stagingRecord) {
+    context.save();
+    context.translate(WIDTH / 2, HEIGHT / 2);
+    context.rotate(-Math.PI / 7);
+    context.globalAlpha = 0.12;
+    context.fillStyle = ORANGE;
+    context.textAlign = "center";
+    setFont(context, 112, 900);
+    context.fillText("STAGING TEST RECORD", 0, 0);
+    context.restore();
+  }
   context.strokeStyle = "rgba(245, 240, 227, 0.34)";
   context.lineWidth = 2;
   roundedRect(context, 64, 164, 1_312, 846, 7);
@@ -473,7 +486,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.fillText("거래 조건 확인·결제정보 복사 가능", 1_350, 916);
   context.fillStyle = MUTED_PAPER;
   setFont(context, 16, 560);
-  context.fillText("주소·금액·입금·수령 내역을 서로 확인", 1_350, 952);
+  context.fillText(stagingRecord ? "시험 기록 · 실제 거래 사용 금지" : "주소·금액·입금·수령 내역을 서로 확인", 1_350, 952);
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((result) => result ? resolve(result) : reject(new Error("PNG encoding failed.")), "image/png");

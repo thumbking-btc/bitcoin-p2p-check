@@ -9,7 +9,15 @@ import {
 } from "../lib/trade-record-client";
 import { getPaymentExpiryState, isoTimeToEpochSeconds, type PaymentExpiryState } from "../lib/payment-lifecycle";
 import { deriveAppliedPriceKrw, isTradeRecordId, type TradeRecord } from "../lib/trade-record";
-import { verifyTradeRecordSignature, type TradeRecordVerificationResult } from "../lib/trade-record-verification";
+import {
+  tradeRecordPublicKeysForDeployment,
+  verifyTradeRecordSignature,
+  type TradeRecordVerificationResult,
+} from "../lib/trade-record-verification";
+import {
+  inferDeploymentEnvironment,
+  normalizeDeploymentEnvironment,
+} from "../lib/deployment-environment.mjs";
 import { createVerifiedTextQr } from "../lib/verified-qr.mjs";
 import styles from "./verify.module.css";
 
@@ -226,7 +234,15 @@ export function TradeRecordVerifier() {
       }
       try {
         const response = await fetchTradeRecord(id, { retryNotFound: true, signal: controller.signal });
-        const result = await verifyTradeRecordSignature(response);
+        const annotatedEnvironment = normalizeDeploymentEnvironment(
+          document.documentElement.getAttribute("data-deployment-environment"),
+        );
+        const deploymentEnvironment = annotatedEnvironment === "unknown"
+          ? inferDeploymentEnvironment(window.location.hostname)
+          : annotatedEnvironment;
+        const result = await verifyTradeRecordSignature(response, {
+          publicKeys: tradeRecordPublicKeysForDeployment(deploymentEnvironment),
+        });
         if (!controller.signal.aborted) setState({ status: "checked", result });
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -292,6 +308,9 @@ export function TradeRecordVerifier() {
       <section className={`${styles.status} ${styles.success}`} role="status">
         <strong>서명 후 기록이 바뀌지 않았습니다.</strong>
         <p>아래 정보는 이 사이트가 공유 링크를 만들 때 서명한 기록과 일치합니다.</p>
+        {inferDeploymentEnvironment(typeof window === "undefined" ? "" : window.location.hostname) === "staging"
+          ? <p className={styles.warning}>STAGING 시험 기록입니다. 실제 거래의 증빙으로 사용하지 마십시오.</p>
+          : null}
         {state.result.recordExpired ? <p className={styles.warning}>이 공유 링크의 제공 기한이 지났습니다.</p> : null}
       </section>
 

@@ -18,7 +18,7 @@ function exactVersion() {
     number: 7,
     metadata: {
       created_on: "2026-08-26T00:00:00.000Z",
-      has_preview: true,
+      has_preview: false,
       source: "wrangler",
     },
     annotations: {
@@ -32,11 +32,25 @@ function exactVersion() {
         assets: true,
         compatibility_date: "2026-08-25",
         compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
+        exports: { TradeRecordState: { type: "durable-object", storage: "sqlite" } },
         usage_model: "standard",
       },
       bindings: [
         { name: "WORKER_VERSION", type: "version_metadata" },
-        { name: "TRADE_RECORDS_ENABLED", text: "false", type: "plain_text" },
+        { name: "TRADE_RECORDS_ENABLED", text: "true", type: "plain_text" },
+        { name: "TRADE_RECORD_SIGNING_KEY", type: "secret_text" },
+        {
+          name: "TRADE_RECORD_CREATE_RATE_LIMITER",
+          namespace_id: "2026082692",
+          simple: { limit: 6, period: 60 },
+          type: "ratelimit",
+        },
+        {
+          name: "TRADE_RECORD_READ_RATE_LIMITER",
+          namespace_id: "2026082693",
+          simple: { limit: 120, period: 60 },
+          type: "ratelimit",
+        },
         {
           name: "LIGHTNING_REQUEST_RATE_LIMITER",
           namespace_id: "2026082591",
@@ -79,7 +93,20 @@ test("accepts only the exact staging Worker version identity, runtime, and bindi
         simple: { limit: 12, period: 60 },
         type: "ratelimit",
       },
-      { name: "TRADE_RECORDS_ENABLED", text: "false", type: "plain_text" },
+      {
+        name: "TRADE_RECORD_CREATE_RATE_LIMITER",
+        namespace_id: "2026082692",
+        simple: { limit: 6, period: 60 },
+        type: "ratelimit",
+      },
+      {
+        name: "TRADE_RECORD_READ_RATE_LIMITER",
+        namespace_id: "2026082693",
+        simple: { limit: 120, period: 60 },
+        type: "ratelimit",
+      },
+      { name: "TRADE_RECORD_SIGNING_KEY", type: "secret_text" },
+      { name: "TRADE_RECORDS_ENABLED", text: "true", type: "plain_text" },
       { name: "WORKER_VERSION", type: "version_metadata" },
     ],
   });
@@ -143,19 +170,11 @@ test("rejects a wrong Worker target, version ID, upload source, tag, or compatib
   );
 });
 
-test("requires explicit Preview evidence only for the candidate Preview gate", () => {
-  assert.doesNotThrow(() => validate(exactVersion(), { requirePreview: true }));
-
-  for (const hasPreview of [false, undefined]) {
-    const version = exactVersion();
-    if (hasPreview === undefined) delete version.metadata.has_preview;
-    else version.metadata.has_preview = hasPreview;
-    assert.doesNotThrow(() => validate(version));
-    assert.throws(
-      () => validate(version, { requirePreview: true }),
-      /Preview 활성화 증적/u,
-    );
-  }
+test("requires the Durable Object export and does not require Preview URLs", () => {
+  assert.doesNotThrow(() => validate());
+  const version = exactVersion();
+  delete version.resources.script_runtime.exports;
+  assert.throws(() => validate(version), /Durable Object export/u);
 });
 
 test("rejects missing, extra, duplicated, or modified staging bindings", () => {
@@ -164,11 +183,11 @@ test("rejects missing, extra, duplicated, or modified staging bindings", () => {
     (version) => {
       version.resources.bindings.push({ name: "UNREVIEWED_SECRET", type: "secret_text" });
     },
-    (version) => { version.resources.bindings[1].text = "true"; },
-    (version) => { version.resources.bindings[2].namespace_id = "production-namespace"; },
-    (version) => { version.resources.bindings[2].simple.limit = 13; },
-    (version) => { version.resources.bindings[2].simple.mitigation_timeout = 60; },
-    (version) => { version.resources.bindings[4].unexpected = true; },
+    (version) => { version.resources.bindings.find((binding) => binding.name === "DEPLOYMENT_ENV").text = "production"; },
+    (version) => { version.resources.bindings.find((binding) => binding.name === "LIGHTNING_REQUEST_RATE_LIMITER").namespace_id = "production-namespace"; },
+    (version) => { version.resources.bindings.find((binding) => binding.name === "LIGHTNING_REQUEST_RATE_LIMITER").simple.limit = 13; },
+    (version) => { version.resources.bindings.find((binding) => binding.name === "LIGHTNING_REQUEST_RATE_LIMITER").simple.mitigation_timeout = 60; },
+    (version) => { version.resources.bindings.find((binding) => binding.name === "ASSETS").unexpected = true; },
   ];
 
   for (const mutate of mutations) {
@@ -212,5 +231,5 @@ test("pins the staging-only Wrangler target and bounded subprocess", async () =>
   assert.match(checker, /"--name", STAGING_WORKER_NAME/u);
   assert.match(checker, /maxBuffer: MAX_STAGING_VERSION_JSON_BYTES/u);
   assert.match(checker, /timeout: 30_000/u);
-  assert.match(checker, /--require-preview/u);
+  assert.match(checker, /EXPECTED_STAGING_EXPORTS/u);
 });

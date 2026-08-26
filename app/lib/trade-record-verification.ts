@@ -9,7 +9,7 @@ import {
 
 export type TradeRecordPublicJwk = JsonWebKey & Readonly<{ kid: string }>;
 
-export const TRADE_RECORD_PUBLIC_KEYS: Readonly<Record<string, TradeRecordPublicJwk>> = Object.freeze({
+export const PRODUCTION_TRADE_RECORD_PUBLIC_KEYS: Readonly<Record<string, TradeRecordPublicJwk>> = Object.freeze({
   "p2p-trade-record-2026-08-25": Object.freeze({
     key_ops: ["verify"],
     ext: true,
@@ -20,6 +20,33 @@ export const TRADE_RECORD_PUBLIC_KEYS: Readonly<Record<string, TradeRecordPublic
     kid: "p2p-trade-record-2026-08-25",
   }),
 });
+
+export const STAGING_TRADE_RECORD_PUBLIC_KEYS: Readonly<Record<string, TradeRecordPublicJwk>> = Object.freeze({
+  "p2p-trade-record-staging-2026-08-26": Object.freeze({
+    key_ops: ["verify"],
+    ext: true,
+    kty: "EC",
+    x: "xAgP5A5xBu3YIy2mgQHGRFpSVyrMvsPCaAfh2S8qupA",
+    y: "uyqvbKlE0BE0OCI2UGrn4N2zmJkre44OK59vTiq1W6Y",
+    crv: "P-256",
+    kid: "p2p-trade-record-staging-2026-08-26",
+  }),
+});
+
+const NO_TRADE_RECORD_PUBLIC_KEYS: Readonly<Record<string, TradeRecordPublicJwk>> = Object.freeze({});
+
+/** Existing callers remain production-only unless they explicitly select staging. */
+export const TRADE_RECORD_PUBLIC_KEYS = PRODUCTION_TRADE_RECORD_PUBLIC_KEYS;
+
+export function tradeRecordPublicKeysForDeployment(
+  deploymentEnvironment: unknown,
+): Readonly<Record<string, TradeRecordPublicJwk>> {
+  if (typeof deploymentEnvironment !== "string") return NO_TRADE_RECORD_PUBLIC_KEYS;
+  const normalized = deploymentEnvironment.trim().toLowerCase();
+  if (normalized === "production") return PRODUCTION_TRADE_RECORD_PUBLIC_KEYS;
+  if (normalized === "staging") return STAGING_TRADE_RECORD_PUBLIC_KEYS;
+  return NO_TRADE_RECORD_PUBLIC_KEYS;
+}
 
 export type TradeRecordVerificationResult =
   | Readonly<{

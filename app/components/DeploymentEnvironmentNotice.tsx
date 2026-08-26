@@ -60,7 +60,9 @@ export function DeploymentEnvironmentNotice() {
     ? ""
     : mismatch
       ? `호스트는 ${notice.inferredEnvironment.toUpperCase()}, Worker는 ${notice.reportedEnvironment.toUpperCase()}로 식별됩니다.`
-      : "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
+      : notice.environment === "staging"
+        ? "시험 환경입니다. 거래 기록은 스테이징 전용 저장소에 저장되며 실제 거래에 사용하면 안 됩니다."
+        : "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
 
   return (
     <aside

@@ -1,4 +1,4 @@
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -46,17 +46,6 @@ function canonicalBootstrapArgs(expectedVersionTag, expectedAppVersion) {
     "--message",
     `Authorized local bootstrap · staging v${expectedAppVersion} · ${expectedVersionTag}`,
   ];
-}
-
-function isSafeWorkerServiceTag(value) {
-  if (typeof value !== "string") return false;
-  const characters = [...value];
-  return characters.length >= 1
-    && characters.length <= 256
-    && characters.every((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint !== undefined && codePoint > 0x1f && codePoint !== 0x7f;
-    });
 }
 
 function parseWranglerOutputEvents(raw) {
@@ -136,107 +125,41 @@ export function parseStagingBootstrapDeploy(
   });
 }
 
-export function parseStagingUpload(raw, expectedWorkerName, expectedVersionTag) {
-  if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > MAX_WRANGLER_OUTPUT_BYTES) {
-    throw new Error("Wrangler output 파일이 너무 큽니다.");
-  }
-  requireStagingWorkerName(expectedWorkerName);
-  requireVersionTag(expectedVersionTag);
-  const events = raw
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  const uploads = events.filter((event) => event?.type === "version-upload");
-  if (uploads.length !== 1) throw new Error(`version-upload event가 정확히 하나가 아닙니다: ${uploads.length}`);
-
-  const upload = uploads[0];
-  // Wrangler의 worker_tag는 Worker service 식별자이며 --tag version annotation이 아닙니다.
-  // version annotation은 원격 exact 검사로, Preview 응답은 version ID와 전용 hostname으로 고정합니다.
-  if (upload.version !== 1
-    || upload.worker_name !== expectedWorkerName
-    || !isSafeWorkerServiceTag(upload.worker_tag)
-    || upload.worker_name_overridden !== false
-    || typeof upload.version_id !== "string"
-    || !VERSION_ID_PATTERN.test(upload.version_id)
-    || typeof upload.preview_url !== "string") {
-    throw new Error("Wrangler version-upload 결과가 예상한 격리 Worker와 일치하지 않습니다.");
-  }
-  const previewUrl = new URL(upload.preview_url);
-  const expectedPreviewHostname = `${upload.version_id.slice(0, 8)}-${expectedWorkerName}.thumbking-btc.workers.dev`;
-  if (previewUrl.protocol !== "https:"
-    || previewUrl.hostname !== expectedPreviewHostname
-    || previewUrl.origin !== `https://${expectedPreviewHostname}`
-    || previewUrl.pathname !== "/"
-    || previewUrl.search
-    || previewUrl.hash) {
-    throw new Error("Wrangler가 반환한 version preview URL이 예상 형식이 아닙니다.");
-  }
-  return Object.freeze({
-    versionId: upload.version_id,
-    workerServiceTag: upload.worker_tag,
-    previewUrl: previewUrl.origin,
-  });
-}
-
 async function main() {
   const cliArguments = process.argv.slice(2);
   const [modeOrOutputFile, bootstrapOutputFile, bootstrapResultFile] = cliArguments;
   const bootstrapMode = modeOrOutputFile === "--bootstrap";
 
-  if (bootstrapMode) {
-    const expectedCommitSha = process.env.BOOTSTRAP_COMMIT_SHA ?? "";
-    const expectedAppVersion = process.env.EXPECTED_APP_VERSION ?? "";
-    if (cliArguments.length !== 3
-      || !bootstrapOutputFile
-      || !bootstrapResultFile
-      || !expectedCommitSha
-      || !expectedAppVersion) {
-      throw new Error(
-        "bootstrap 기록에는 Wrangler output 파일, 신규 result 파일, BOOTSTRAP_COMMIT_SHA와 EXPECTED_APP_VERSION이 필요합니다.",
-      );
-    }
-    if (path.resolve(bootstrapOutputFile) === path.resolve(bootstrapResultFile)) {
-      throw new Error("Wrangler output 파일과 bootstrap result 파일은 서로 달라야 합니다.");
-    }
-    const deploy = parseStagingBootstrapDeploy(
-      await readFile(bootstrapOutputFile, "utf8"),
-      STAGING_WORKER_NAME,
-      expectedCommitSha,
-      expectedAppVersion,
+  const expectedCommitSha = process.env.BOOTSTRAP_COMMIT_SHA ?? "";
+  const expectedAppVersion = process.env.EXPECTED_APP_VERSION ?? "";
+  if (!bootstrapMode
+    || cliArguments.length !== 3
+    || !bootstrapOutputFile
+    || !bootstrapResultFile
+    || !expectedCommitSha
+    || !expectedAppVersion) {
+    throw new Error(
+      "bootstrap 기록에는 Wrangler output 파일, 신규 result 파일, BOOTSTRAP_COMMIT_SHA와 EXPECTED_APP_VERSION이 필요합니다.",
     );
-    await writeFile(
-      bootstrapResultFile,
-      `${JSON.stringify({
-        version_id: deploy.versionId,
-        canonical_url: deploy.canonicalUrl,
-      })}\n`,
-      { encoding: "utf8", flag: "wx", mode: 0o600 },
-    );
-    console.log(`스테이징 bootstrap version ${deploy.versionId}를 고정했습니다.`);
-    return;
   }
-
-  const outputFile = modeOrOutputFile;
-  const expectedWorkerName = process.env.EXPECTED_WORKER_NAME ?? "";
-  const expectedWorkerTag = process.env.GITHUB_SHA ?? "";
-  const githubOutput = process.env.GITHUB_OUTPUT ?? "";
-  if (!outputFile
-    || !expectedWorkerName
-    || !expectedWorkerTag
-    || !githubOutput) {
-    throw new Error("Wrangler output 파일, EXPECTED_WORKER_NAME, GITHUB_SHA, GITHUB_OUTPUT이 필요합니다.");
+  if (path.resolve(bootstrapOutputFile) === path.resolve(bootstrapResultFile)) {
+    throw new Error("Wrangler output 파일과 bootstrap result 파일은 서로 달라야 합니다.");
   }
-  const upload = parseStagingUpload(
-    await readFile(outputFile, "utf8"),
-    expectedWorkerName,
-    expectedWorkerTag,
+  const deploy = parseStagingBootstrapDeploy(
+    await readFile(bootstrapOutputFile, "utf8"),
+    STAGING_WORKER_NAME,
+    expectedCommitSha,
+    expectedAppVersion,
   );
-  await appendFile(
-    githubOutput,
-    `version_id=${upload.versionId}\npreview_url=${upload.previewUrl}\n`,
-    "utf8",
+  await writeFile(
+    bootstrapResultFile,
+    `${JSON.stringify({
+      version_id: deploy.versionId,
+      canonical_url: deploy.canonicalUrl,
+    })}\n`,
+    { encoding: "utf8", flag: "wx", mode: 0o600 },
   );
-  console.log(`스테이징 후보 version ${upload.versionId}를 고정했습니다.`);
+  console.log(`스테이징 bootstrap version ${deploy.versionId}를 고정했습니다.`);
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;

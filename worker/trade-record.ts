@@ -1,7 +1,7 @@
 import { validateBolt11Invoice } from "../app/lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../app/lib/onchain-request.mjs";
 import {
-  TRADE_RECORD_PUBLIC_KEYS,
+  tradeRecordPublicKeysForDeployment,
   type TradeRecordPublicJwk,
 } from "../app/lib/trade-record-verification.ts";
 import {
@@ -812,7 +812,7 @@ export async function handleTradeRecordRequest(
       return await createRecord(
         request,
         environment,
-        options.publicKeys ?? TRADE_RECORD_PUBLIC_KEYS,
+        options.publicKeys ?? tradeRecordPublicKeysForDeployment(environment.DEPLOYMENT_ENV),
         options.fetcher ?? fetch,
       );
     }

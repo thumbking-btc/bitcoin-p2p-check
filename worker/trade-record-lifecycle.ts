@@ -201,5 +201,5 @@ export function recordsExplicitlyDisabled(environment: TradeRecordFeatureEnviron
   const enabled = typeof environment.TRADE_RECORDS_ENABLED === "boolean"
     ? String(environment.TRADE_RECORDS_ENABLED)
     : environment.TRADE_RECORDS_ENABLED?.trim().toLowerCase();
-  return deployment !== "production" || enabled !== "true";
+  return (deployment !== "production" && deployment !== "staging") || enabled !== "true";
 }

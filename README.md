@@ -89,7 +89,7 @@ Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 �
 
 `wrangler.jsonc`는 거래 기록별 SQLite Durable Object를 강한 일관성의 기본 저장소로 사용하고, 기존 기록의 lazy migration과 제한적인 구버전 호환을 위해 production KV에 순서 보장형 비동기 mirror를 유지하며 필수 `TRADE_RECORD_SIGNING_KEY`를 사용합니다. 이 mirror는 create/finalize 성공과 동기화된 rollback 안전망이 아니며, revoke만 구버전 재노출을 막기 위해 KV 반영을 확인합니다. production preview URL은 꺼져 있습니다.
 
-`wrangler.staging.jsonc`는 별도 Worker `bitcoin-p2p-check-staging`, `DEPLOYMENT_ENV=staging`, `TRADE_RECORDS_ENABLED=false`를 사용하며 production Durable Object·KV·서명 secret을 선언하지 않습니다. `staging` 브랜치 push는 검증만 수행합니다. 운영자가 `workflow_dispatch`의 `deploy_staging`을 명시적으로 승인하면 검증한 정확한 bundle을 고유 version preview URL에 업로드하고, 재귀 asset graph와 version ID·Git SHA smoke를 통과한 그 version만 canonical staging으로 승격합니다. `versions upload`는 존재하지 않는 Worker를 만들지 못하므로 최초 생성에만 운영 런북의 일회성 bootstrap 절차가 필요하며, 그 뒤 로컬 staging 배포는 금지됩니다.
+`wrangler.staging.jsonc`는 별도 Worker `bitcoin-p2p-check-staging`, `DEPLOYMENT_ENV=staging`, `TRADE_RECORDS_ENABLED=true`를 사용합니다. production KV와 signer를 재사용하지 않고 staging 전용 SQLite Durable Object, P-256 signing secret, 공개키 신뢰 범위와 rate-limit namespace를 사용합니다. `staging` 브랜치 push는 검증만 수행하며, 운영자가 `workflow_dispatch`의 `deploy_staging`을 명시적으로 승인하면 검증한 정확한 bundle을 canonical staging에 원자 배포하고 정적 smoke와 synthetic 생성·비공개 조회 차단·확정·서명 조회·철회 흐름을 확인합니다. Durable Object Worker에는 version preview URL이 없으므로 `versions upload` 후보 경로를 사용하지 않습니다.
 
 `wrangler.preview.jsonc`도 별도 Worker 이름과 별도 rate-limit namespace를 사용하며 production 저장소와 signing secret을 선언하지 않습니다. 명시적 preview가 필요한 운영자만 `npm run deploy:preview`를 사용하십시오. 어떤 Worker도 Cloudflare Git branch build에 연결하지 마십시오.
 

@@ -11,11 +11,13 @@ const expectedTopLevelKeys = Object.freeze([
   "assets",
   "compatibility_date",
   "compatibility_flags",
+  "exports",
   "main",
   "name",
   "observability",
   "preview_urls",
   "ratelimits",
+  "secrets",
   "vars",
   "version_metadata",
   "workers_dev",
@@ -75,20 +77,42 @@ export function validateStagingConfig(config) {
     "스테이징 compatibility flags가 검증값과 다릅니다.",
   );
   requireExact(config.workers_dev, true, "스테이징 canonical workers.dev 주소가 비활성화되어 있습니다.");
-  requireExact(config.preview_urls, true, "승격 전 후보 검증용 preview URL이 비활성화되어 있습니다.");
+  requireExact(config.preview_urls, false, "Durable Object staging Worker의 preview URL이 비활성화되지 않았습니다.");
   requireExact(
     config.vars,
-    { DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: "false" },
+    { DEPLOYMENT_ENV: "staging", TRADE_RECORDS_ENABLED: "true" },
     "스테이징 환경 변수 구성이 승인된 값과 다릅니다.",
   );
   requireExact(
+    config.secrets,
+    { required: ["TRADE_RECORD_SIGNING_KEY"] },
+    "스테이징 signing secret 선언이 승인된 exact allowlist와 다릅니다.",
+  );
+  requireExact(
+    config.exports,
+    { TradeRecordState: { type: "durable-object", storage: "sqlite" } },
+    "스테이징 Durable Object export가 승인된 구성과 다릅니다.",
+  );
+  requireExact(
     config.ratelimits,
-    [{
-      name: "LIGHTNING_REQUEST_RATE_LIMITER",
-      namespace_id: "2026082591",
-      simple: { limit: 12, period: 60 },
-    }],
-    "스테이징 rate-limit binding이 격리된 Lightning 전용 구성이 아닙니다.",
+    [
+      {
+        name: "TRADE_RECORD_CREATE_RATE_LIMITER",
+        namespace_id: "2026082692",
+        simple: { limit: 6, period: 60 },
+      },
+      {
+        name: "TRADE_RECORD_READ_RATE_LIMITER",
+        namespace_id: "2026082693",
+        simple: { limit: 120, period: 60 },
+      },
+      {
+        name: "LIGHTNING_REQUEST_RATE_LIMITER",
+        namespace_id: "2026082591",
+        simple: { limit: 12, period: 60 },
+      },
+    ],
+    "스테이징 rate-limit bindings가 격리된 exact allowlist와 다릅니다.",
   );
   requireExact(
     config.version_metadata,
