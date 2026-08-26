@@ -198,19 +198,25 @@ test("wires exact staging deployment, version, and secret gates while production
   const stagingPre = workflow.indexOf("Verify staging remote secret allowlist before upload");
   const stagingUpload = workflow.indexOf("Upload the isolated staging candidate without promoting it");
   const stagingCandidateConfig = workflow.indexOf("Verify the exact staging candidate configuration");
-  const stagingCandidateSmoke = workflow.indexOf("Verify the exact staging candidate before promotion");
+  const stagingCandidatePrecheck = workflow.indexOf("Recheck the exact staging candidate before Preview smoke");
+  const stagingCandidateSmoke = workflow.indexOf("Verify the exact staging candidate Preview before promotion");
+  const stagingCandidatePostcheck = workflow.indexOf("Recheck the exact staging candidate after Preview smoke");
   const stagingPromote = workflow.indexOf("Promote only the verified staging version");
   const stagingPost = workflow.indexOf("Verify the exact staging deployment after promotion");
   const stagingSmoke = workflow.indexOf("Verify canonical staging without creating records");
   const stagingFinal = workflow.indexOf("Detect a staging deployment or branch advance after smoke");
   assert.ok(stagingBaseline >= 0 && stagingBaseline < stagingPre && stagingPre < stagingUpload);
-  assert.ok(stagingUpload < stagingCandidateConfig && stagingCandidateConfig < stagingCandidateSmoke);
-  assert.ok(stagingCandidateSmoke < stagingPromote && stagingPromote < stagingPost);
+  assert.ok(stagingUpload < stagingCandidateConfig && stagingCandidateConfig < stagingCandidatePrecheck);
+  assert.ok(stagingCandidatePrecheck < stagingCandidateSmoke && stagingCandidateSmoke < stagingCandidatePostcheck);
+  assert.ok(stagingCandidatePostcheck < stagingPromote && stagingPromote < stagingPost);
   assert.ok(stagingPost < stagingSmoke && stagingSmoke < stagingFinal);
   const stagingBaselineSection = workflow.slice(stagingBaseline, stagingPre);
   const stagingPreSection = workflow.slice(stagingPre, stagingUpload);
   const stagingUploadSection = workflow.slice(stagingUpload, stagingCandidateConfig);
-  const stagingCandidateConfigSection = workflow.slice(stagingCandidateConfig, stagingCandidateSmoke);
+  const stagingCandidateConfigSection = workflow.slice(stagingCandidateConfig, stagingCandidatePrecheck);
+  const stagingCandidatePrecheckSection = workflow.slice(stagingCandidatePrecheck, stagingCandidateSmoke);
+  const stagingCandidateSmokeSection = workflow.slice(stagingCandidateSmoke, stagingCandidatePostcheck);
+  const stagingCandidatePostcheckSection = workflow.slice(stagingCandidatePostcheck, stagingPromote);
   const stagingPromoteSection = workflow.slice(stagingPromote, stagingPost);
   const stagingPostSection = workflow.slice(stagingPost, stagingSmoke);
   const stagingFinalSection = workflow.slice(stagingFinal, workflow.indexOf("  deploy-production:"));
@@ -219,6 +225,8 @@ test("wires exact staging deployment, version, and secret gates while production
     stagingPreSection,
     stagingUploadSection,
     stagingCandidateConfigSection,
+    stagingCandidatePrecheckSection,
+    stagingCandidatePostcheckSection,
     stagingPromoteSection,
     stagingPostSection,
     stagingFinalSection,
@@ -226,6 +234,12 @@ test("wires exact staging deployment, version, and secret gates while production
     assert.match(section, /CLOUDFLARE_API_TOKEN:\s*\$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/u);
     assert.match(section, /CLOUDFLARE_ACCOUNT_ID:\s*\$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/u);
   }
+  assert.doesNotMatch(
+    stagingCandidateSmokeSection,
+    /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/u,
+  );
+  assert.match(stagingCandidatePrecheckSection, /check-staging-version\.mjs[^\r\n]+--require-preview/u);
+  assert.match(stagingCandidatePostcheckSection, /check-staging-version\.mjs[^\r\n]+--require-preview/u);
   assert.match(stagingBaselineSection, /check-staging-deployment\.mjs capture/u);
   assert.match(stagingPreSection, /npm run secrets:check:staging/u);
   assert.match(

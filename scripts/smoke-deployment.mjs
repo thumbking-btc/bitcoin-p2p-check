@@ -15,6 +15,9 @@ const MAX_TEXT_ASSET_BYTES = 2 * 1_024 * 1_024;
 const MAX_REFERENCED_ASSETS = 128;
 const WORKER_NAME_PATTERN = /^(?=.{1,63}$)[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const APP_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
+const STAGING_VERSION_PREVIEW_HOST_SUFFIX = "-bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
 
 export const SMOKE_ENDPOINTS = Object.freeze([
   Object.freeze({ path: "/api/version", status: 200, mediaType: "application/json", cache: "no-store", validate: "version" }),
@@ -38,6 +41,7 @@ export function smokeUsage() {
     "선택 사항: --timeout-ms <10..60000> 또는 SMOKE_TIMEOUT_MS 환경 변수를 사용하십시오.",
     "환경 고정: --expected-environment <production|staging|preview> 또는 EXPECTED_DEPLOYMENT_ENV를 사용하십시오.",
     "버전 고정: --expected-worker-version-id <id> 또는 EXPECTED_WORKER_VERSION_ID를 사용하십시오.",
+    "버전 Preview: --version-preview는 candidate version ID와 해당 staging Preview URL을 함께 검증합니다.",
     "후보 고정: --worker-version-override-name <Worker>와 --worker-version-override-id <UUID>를 함께 사용하십시오.",
   ].join("\n");
 }
@@ -55,6 +59,7 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
   let expectedWorkerVersionIdArgument;
   let workerVersionOverrideNameArgument;
   let workerVersionOverrideIdArgument;
+  let versionPreview = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -109,6 +114,10 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
       index += 1;
       continue;
     }
+    if (argument === "--version-preview") {
+      versionPreview = true;
+      continue;
+    }
     if (argument.startsWith("--worker-version-override-id=")) {
       workerVersionOverrideIdArgument = argument.slice("--worker-version-override-id=".length);
       continue;
@@ -148,16 +157,61 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
   if (workerVersionOverrideName || workerVersionOverrideId) {
     createVersionOverrideHeader(workerVersionOverrideName, workerVersionOverrideId);
   }
+  const baseUrl = normalizeBaseUrl(rawBaseUrl);
+  validateVersionPreviewTarget({
+    baseUrl,
+    expectedAppVersion,
+    expectedWorkerTag,
+    expectedWorkerVersionId,
+    expectedDeploymentEnvironment,
+    workerVersionOverrideName,
+    workerVersionOverrideId,
+    versionPreview,
+  });
   return {
     help: false,
-    baseUrl: normalizeBaseUrl(rawBaseUrl),
+    baseUrl,
     timeoutMs,
     ...(expectedAppVersion ? { expectedAppVersion } : {}),
     ...(expectedWorkerTag ? { expectedWorkerTag } : {}),
     ...(expectedWorkerVersionId ? { expectedWorkerVersionId } : {}),
     ...(expectedDeploymentEnvironment ? { expectedDeploymentEnvironment } : {}),
     ...(workerVersionOverrideName ? { workerVersionOverrideName, workerVersionOverrideId } : {}),
+    ...(versionPreview ? { versionPreview: true } : {}),
   };
+}
+
+export function validateVersionPreviewTarget({
+  baseUrl,
+  expectedAppVersion,
+  expectedWorkerTag,
+  expectedWorkerVersionId,
+  expectedDeploymentEnvironment,
+  workerVersionOverrideName,
+  workerVersionOverrideId,
+  versionPreview,
+} = {}) {
+  if (!versionPreview) return;
+  if (typeof expectedAppVersion !== "string" || !APP_VERSION_PATTERN.test(expectedAppVersion)) {
+    throw new Error("version Preview에는 정확한 expected app version이 필요합니다.");
+  }
+  if (expectedDeploymentEnvironment !== "staging") {
+    throw new Error("version Preview에는 expected environment staging이 필요합니다.");
+  }
+  if (typeof expectedWorkerTag !== "string" || !COMMIT_SHA_PATTERN.test(expectedWorkerTag)) {
+    throw new Error("version Preview에는 40자리 소문자 hex expected Worker tag가 필요합니다.");
+  }
+  if (typeof expectedWorkerVersionId !== "string" || !VERSION_ID_PATTERN.test(expectedWorkerVersionId)) {
+    throw new Error("version Preview에는 정확한 candidate Worker version ID가 필요합니다.");
+  }
+  if (workerVersionOverrideName || workerVersionOverrideId) {
+    throw new Error("version Preview URL과 Worker version override를 함께 사용할 수 없습니다.");
+  }
+  const origin = normalizeBaseUrl(baseUrl);
+  const expectedOrigin = `https://${expectedWorkerVersionId.slice(0, 8)}${STAGING_VERSION_PREVIEW_HOST_SUFFIX}`;
+  if (origin !== expectedOrigin) {
+    throw new Error(`version Preview URL이 candidate Worker version ID와 일치하지 않습니다: 예상 ${expectedOrigin}, 실제 ${origin}`);
+  }
 }
 
 export function createVersionOverrideHeader(workerName, versionId) {
@@ -195,6 +249,13 @@ function hasDirective(value, name) {
 
 function hasZeroMaxAge(value) {
   return value.split(",").some((part) => /^max-age\s*=\s*0$/iu.test(part.trim()));
+}
+
+function hasExactDirectiveSet(value, expectedDirectives) {
+  const directives = value.split(",").map((part) => part.trim().toLowerCase());
+  return directives.length === expectedDirectives.length
+    && new Set(directives).size === expectedDirectives.length
+    && expectedDirectives.every((directive) => directives.includes(directive));
 }
 
 export function validateSmokeResponse(endpoint, response, expectations = {}) {
@@ -260,8 +321,11 @@ export function validateSmokeResponse(endpoint, response, expectations = {}) {
       if (expectedDeploymentEnvironment === "production" && robots.includes("noindex")) {
         throw new Error("프로덕션 HTML에 noindex가 적용되어 있습니다.");
       }
-      if (expectedDeploymentEnvironment !== "production"
-        && (!robots.includes("noindex") || !robots.includes("nofollow") || !robots.includes("noarchive"))) {
+      if (expectations.versionPreview && !hasExactDirectiveSet(robots, ["noindex"])) {
+        throw new Error(`version Preview HTML의 X-Robots-Tag가 정확한 noindex가 아닙니다: ${robots || "없음"}`);
+      }
+      if (!expectations.versionPreview && expectedDeploymentEnvironment !== "production"
+        && !hasExactDirectiveSet(robots, ["noindex", "nofollow", "noarchive"])) {
         throw new Error(`비프로덕션 HTML의 X-Robots-Tag가 안전하지 않습니다: ${robots || "없음"}`);
       }
     }
@@ -296,7 +360,11 @@ export function validateVersionPayload(value, expectations = {}) {
   if (expectations.expectedAppVersion && value.appVersion !== expectations.expectedAppVersion) {
     throw new Error(`배포 앱 버전이 다릅니다: 예상 ${expectations.expectedAppVersion}, 실제 ${value.appVersion}`);
   }
-  if (expectations.expectedWorkerTag && value.workerVersion?.tag !== expectations.expectedWorkerTag) {
+  const workerTag = value.workerVersion?.tag;
+  const versionPreviewHasEmptyRuntimeTag = expectations.versionPreview && workerTag === "";
+  if (expectations.expectedWorkerTag
+    && workerTag !== expectations.expectedWorkerTag
+    && !versionPreviewHasEmptyRuntimeTag) {
     throw new Error(`배포 Worker tag가 다릅니다: 예상 ${expectations.expectedWorkerTag}, 실제 ${value.workerVersion?.tag ?? "없음"}`);
   }
   if (expectations.expectedWorkerVersionId && value.workerVersion?.id !== expectations.expectedWorkerVersionId) {
@@ -738,8 +806,19 @@ export async function runDeploymentSmoke({
   expectedDeploymentEnvironment,
   workerVersionOverrideName,
   workerVersionOverrideId,
+  versionPreview = false,
 } = {}) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  validateVersionPreviewTarget({
+    baseUrl: normalizedBaseUrl,
+    expectedAppVersion,
+    expectedWorkerTag,
+    expectedWorkerVersionId,
+    expectedDeploymentEnvironment,
+    workerVersionOverrideName,
+    workerVersionOverrideId,
+    versionPreview,
+  });
   const versionOverrideHeader = workerVersionOverrideName || workerVersionOverrideId
     ? createVersionOverrideHeader(workerVersionOverrideName, workerVersionOverrideId)
     : undefined;
@@ -749,6 +828,7 @@ export async function runDeploymentSmoke({
     expectedWorkerTag,
     expectedWorkerVersionId,
     expectedDeploymentEnvironment,
+    versionPreview,
   };
   const validatedEndpointAssets = new Map();
   const queuedAssets = new Map();

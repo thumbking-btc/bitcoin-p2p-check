@@ -106,6 +106,7 @@ export function validateExactStagingVersion(
   queriedWorkerName,
   expectedVersionId,
   expectedCommitSha,
+  { requirePreview = false } = {},
 ) {
   if (queriedWorkerName !== STAGING_WORKER_NAME) {
     throw new Error("조회한 Worker 이름이 격리된 staging Worker와 다릅니다.");
@@ -125,6 +126,9 @@ export function validateExactStagingVersion(
     || !isPlainObject(version.resources)
     || !isPlainObject(version.resources.script_runtime)) {
     throw new Error("Wrangler staging version 증적이 예상한 ID, source, tag 또는 구조와 다릅니다.");
+  }
+  if (requirePreview && version.metadata.has_preview !== true) {
+    throw new Error("staging candidate version의 Preview 활성화 증적을 확인하지 못했습니다.");
   }
   if (version.resources.script_runtime.compatibility_date !== EXPECTED_COMPATIBILITY_DATE) {
     throw new Error("staging compatibility date가 검증된 값과 다릅니다.");
@@ -185,9 +189,10 @@ function readStagingVersion(versionId) {
 }
 
 async function main() {
-  const [versionId, expectedCommitSha, ...extraArguments] = process.argv.slice(2);
-  if (extraArguments.length !== 0) {
-    throw new Error("사용법: check-staging-version.mjs <exact-version-id> <expected-commit-sha>");
+  const [versionId, expectedCommitSha, previewFlag, ...extraArguments] = process.argv.slice(2);
+  const requirePreview = previewFlag === "--require-preview";
+  if (extraArguments.length !== 0 || (previewFlag && !requirePreview)) {
+    throw new Error("사용법: check-staging-version.mjs <exact-version-id> <expected-commit-sha> [--require-preview]");
   }
   assertVersionId(versionId, "staging version ID");
   assertCommitSha(expectedCommitSha);
@@ -197,6 +202,7 @@ async function main() {
     STAGING_WORKER_NAME,
     versionId,
     expectedCommitSha,
+    { requirePreview },
   );
   console.log(`staging Worker version ${versionId}의 exact 구성과 commit ${expectedCommitSha}를 확인했습니다.`);
 }

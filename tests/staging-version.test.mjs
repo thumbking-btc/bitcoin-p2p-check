@@ -18,6 +18,7 @@ function exactVersion() {
     number: 7,
     metadata: {
       created_on: "2026-08-26T00:00:00.000Z",
+      has_preview: true,
       source: "wrangler",
     },
     annotations: {
@@ -49,12 +50,13 @@ function exactVersion() {
   };
 }
 
-function validate(version = exactVersion()) {
+function validate(version = exactVersion(), options) {
   return validateExactStagingVersion(
     JSON.stringify(version),
     STAGING_WORKER_NAME,
     VERSION_ID,
     COMMIT_SHA,
+    options,
   );
 }
 
@@ -141,6 +143,21 @@ test("rejects a wrong Worker target, version ID, upload source, tag, or compatib
   );
 });
 
+test("requires explicit Preview evidence only for the candidate Preview gate", () => {
+  assert.doesNotThrow(() => validate(exactVersion(), { requirePreview: true }));
+
+  for (const hasPreview of [false, undefined]) {
+    const version = exactVersion();
+    if (hasPreview === undefined) delete version.metadata.has_preview;
+    else version.metadata.has_preview = hasPreview;
+    assert.doesNotThrow(() => validate(version));
+    assert.throws(
+      () => validate(version, { requirePreview: true }),
+      /Preview 활성화 증적/u,
+    );
+  }
+});
+
 test("rejects missing, extra, duplicated, or modified staging bindings", () => {
   const mutations = [
     (version) => { version.resources.bindings.pop(); },
@@ -195,4 +212,5 @@ test("pins the staging-only Wrangler target and bounded subprocess", async () =>
   assert.match(checker, /"--name", STAGING_WORKER_NAME/u);
   assert.match(checker, /maxBuffer: MAX_STAGING_VERSION_JSON_BYTES/u);
   assert.match(checker, /timeout: 30_000/u);
+  assert.match(checker, /--require-preview/u);
 });

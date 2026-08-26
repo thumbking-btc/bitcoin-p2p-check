@@ -172,16 +172,30 @@ test("keeps staging isolated and promotes only an exact smoke-tested candidate",
   assert.match(workflow, /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
   assert.match(workflow, /EXPECTED_WORKER_VERSION_ID="\$\{\{ steps\.staging-upload\.outputs\.version_id \}\}"/u);
   const uploadIndex = workflow.indexOf("Upload the isolated staging candidate without promoting it");
-  const candidateSmokeIndex = workflow.indexOf("Verify the exact staging candidate before promotion");
+  const candidatePrecheckIndex = workflow.indexOf("Recheck the exact staging candidate before Preview smoke");
+  const candidateSmokeIndex = workflow.indexOf("Verify the exact staging candidate Preview before promotion");
+  const candidatePostcheckIndex = workflow.indexOf("Recheck the exact staging candidate after Preview smoke");
   const promoteIndex = workflow.indexOf("Promote only the verified staging version");
   const canonicalSmokeIndex = workflow.indexOf("Verify canonical staging without creating records");
   const finalBranchCheckIndex = workflow.indexOf("Detect a staging deployment or branch advance after smoke");
-  assert.ok(uploadIndex >= 0 && uploadIndex < candidateSmokeIndex);
-  assert.ok(candidateSmokeIndex < promoteIndex);
+  assert.ok(uploadIndex >= 0 && uploadIndex < candidatePrecheckIndex);
+  assert.ok(candidatePrecheckIndex < candidateSmokeIndex && candidateSmokeIndex < candidatePostcheckIndex);
+  assert.ok(candidatePostcheckIndex < promoteIndex);
   assert.ok(promoteIndex < canonicalSmokeIndex && canonicalSmokeIndex < finalBranchCheckIndex);
-  assert.match(workflow.slice(candidateSmokeIndex, promoteIndex), /steps\.staging-upload\.outputs\.preview_url/u);
-  assert.match(workflow.slice(candidateSmokeIndex, promoteIndex), /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
+  const candidatePrecheck = workflow.slice(candidatePrecheckIndex, candidateSmokeIndex);
+  const candidateSmoke = workflow.slice(candidateSmokeIndex, candidatePostcheckIndex);
+  const candidatePostcheck = workflow.slice(candidatePostcheckIndex, promoteIndex);
+  assert.match(candidateSmoke, /steps\.staging-upload\.outputs\.preview_url/u);
+  assert.match(candidateSmoke, /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
+  assert.match(candidateSmoke, /smoke-deployment\.mjs --version-preview/u);
+  assert.doesNotMatch(candidateSmoke, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID|check-staging-version\.mjs/u);
+  for (const check of [candidatePrecheck, candidatePostcheck]) {
+    assert.match(check, /check-staging-version\.mjs[^\r\n]+--require-preview/u);
+    assert.match(check, /CLOUDFLARE_API_TOKEN:[^\r\n]+secrets\.CLOUDFLARE_API_TOKEN/u);
+    assert.match(check, /CLOUDFLARE_ACCOUNT_ID:[^\r\n]+secrets\.CLOUDFLARE_ACCOUNT_ID/u);
+  }
   assert.match(workflow.slice(promoteIndex, canonicalSmokeIndex), /git fetch --no-tags origin staging[\s\S]*origin\/staging[\s\S]*versions deploy[\s\S]*version_id/u);
+  assert.doesNotMatch(workflow.slice(canonicalSmokeIndex), /smoke-deployment\.mjs --version-preview/u);
   assert.match(workflow.slice(canonicalSmokeIndex), /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
   assert.match(workflow.slice(finalBranchCheckIndex), /git fetch --no-tags origin staging[\s\S]*git rev-parse origin\/staging[\s\S]*github\.sha[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*staging-promoted\.outputs\.deployment_id/u);
 
@@ -214,6 +228,10 @@ test("accepts only one exact Wrangler upload result for the isolated staging Wor
   );
   assert.throws(
     () => parseStagingUpload(valid.replace("thumbking-btc", "attacker"), "bitcoin-p2p-check-staging", "a".repeat(40)),
+    /예상 형식/u,
+  );
+  assert.throws(
+    () => parseStagingUpload(valid.replace("https://12345678-", "https://87654321-"), "bitcoin-p2p-check-staging", "a".repeat(40)),
     /예상 형식/u,
   );
   assert.throws(

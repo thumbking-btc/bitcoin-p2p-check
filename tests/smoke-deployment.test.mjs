@@ -14,7 +14,9 @@ import {
   runDeploymentSmoke,
   SMOKE_ENDPOINTS,
   validateReferencedAssetResponse,
+  validateSmokeResponse,
   validateVersionPayload,
+  validateVersionPreviewTarget,
 } from "../scripts/smoke-deployment.mjs";
 
 const STATIC_CACHE = "public, max-age=0, must-revalidate";
@@ -291,6 +293,95 @@ test("BASE_URL parsing accepts CLI or environment input and rejects unsafe origi
   );
 });
 
+test("version Preview mode binds the staging Preview hostname to the exact candidate version ID", () => {
+  const versionId = "12345678-1234-4abc-8def-1234567890ab";
+  const baseUrl = "https://12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
+  const previewEnvironment = {
+    EXPECTED_APP_VERSION: "2.3.0",
+    EXPECTED_DEPLOYMENT_ENV: "staging",
+    EXPECTED_WORKER_TAG: "a".repeat(40),
+  };
+  assert.deepEqual(
+    parseSmokeOptions(
+      ["--version-preview", "--expected-worker-version-id", versionId, baseUrl],
+      previewEnvironment,
+    ),
+    {
+      help: false,
+      baseUrl,
+      timeoutMs: 10_000,
+      expectedAppVersion: "2.3.0",
+      expectedWorkerTag: "a".repeat(40),
+      expectedWorkerVersionId: versionId,
+      expectedDeploymentEnvironment: "staging",
+      versionPreview: true,
+    },
+  );
+  assert.doesNotThrow(() => validateVersionPreviewTarget({
+    baseUrl,
+    expectedAppVersion: "2.3.0",
+    expectedDeploymentEnvironment: "staging",
+    expectedWorkerTag: "a".repeat(40),
+    expectedWorkerVersionId: versionId,
+    versionPreview: true,
+  }));
+  assert.throws(
+    () => parseSmokeOptions(["--version-preview", baseUrl], previewEnvironment),
+    /정확한 candidate Worker version ID/u,
+  );
+  assert.throws(
+    () => parseSmokeOptions([
+      "--version-preview",
+      "--expected-worker-version-id",
+      versionId,
+      "https://87654321-bitcoin-p2p-check-staging.thumbking-btc.workers.dev",
+    ], previewEnvironment),
+    /candidate Worker version ID와 일치하지 않습니다/u,
+  );
+  assert.throws(
+    () => parseSmokeOptions([
+      "--version-preview",
+      "--expected-worker-version-id",
+      versionId,
+      "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev",
+    ], previewEnvironment),
+    /candidate Worker version ID와 일치하지 않습니다/u,
+  );
+  assert.throws(
+    () => parseSmokeOptions([
+      "--version-preview",
+      "--expected-worker-version-id",
+      versionId,
+      "https://12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev:8443",
+    ], previewEnvironment),
+    /candidate Worker version ID와 일치하지 않습니다/u,
+  );
+  for (const [environment, expectedError] of [
+    [{ ...previewEnvironment, EXPECTED_APP_VERSION: "" }, /expected app version/u],
+    [{ ...previewEnvironment, EXPECTED_DEPLOYMENT_ENV: "production" }, /environment staging/u],
+    [{ ...previewEnvironment, EXPECTED_WORKER_TAG: "A".repeat(40) }, /40자리 소문자 hex/u],
+  ]) {
+    assert.throws(
+      () => parseSmokeOptions(
+        ["--version-preview", "--expected-worker-version-id", versionId, baseUrl],
+        environment,
+      ),
+      expectedError,
+    );
+  }
+  assert.throws(
+    () => parseSmokeOptions(
+      ["--version-preview", "--expected-worker-version-id", versionId, baseUrl],
+      {
+        ...previewEnvironment,
+        SMOKE_WORKER_VERSION_OVERRIDE_NAME: "bitcoin-p2p-check-staging",
+        SMOKE_WORKER_VERSION_OVERRIDE_ID: versionId,
+      },
+    ),
+    /version override를 함께 사용할 수 없습니다/u,
+  );
+});
+
 test("deployment smoke sends the exact version override on every endpoint and asset request", async () => {
   const versionId = "12345678-1234-4abc-8def-1234567890ab";
   const calls = [];
@@ -343,6 +434,82 @@ test("deployment smoke can bind release expectations to Worker version metadata"
     }, { expectedWorkerTag }),
     /Worker tag가 다릅니다/u,
   );
+});
+
+test("version Preview mode only tolerates an empty runtime tag and exact noindex robots", () => {
+  const expectedWorkerTag = "a".repeat(40);
+  const expectedWorkerVersionId = "12345678-1234-4abc-8def-1234567890ab";
+  const payload = {
+    ok: true,
+    appVersion: "2.3.0",
+    deploymentEnvironment: "staging",
+    workerVersion: {
+      id: expectedWorkerVersionId,
+      tag: "",
+      timestamp: "2026-08-26T00:00:00.000Z",
+    },
+  };
+  const expectations = {
+    expectedWorkerTag,
+    expectedWorkerVersionId,
+    expectedDeploymentEnvironment: "staging",
+    versionPreview: true,
+  };
+  assert.equal(validateVersionPayload(payload, expectations), payload);
+  assert.throws(
+    () => validateVersionPayload({
+      ...payload,
+      workerVersion: { ...payload.workerVersion, tag: "wrong-nonempty-tag" },
+    }, expectations),
+    /Worker tag가 다릅니다/u,
+  );
+  assert.throws(
+    () => validateVersionPayload(payload, { ...expectations, versionPreview: false }),
+    /Worker tag가 다릅니다/u,
+  );
+
+  const endpoint = SMOKE_ENDPOINTS.find(({ path: endpointPath }) => endpointPath === "/");
+  const response = (robots) => new Response("<!doctype html>", {
+    headers: {
+      ...STATIC_SECURITY_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": NO_STORE,
+      "Content-Security-Policy": CSP,
+      "X-Deployment-Environment": "staging",
+      "X-Robots-Tag": robots,
+    },
+  });
+  assert.doesNotThrow(() => validateSmokeResponse(endpoint, response("noindex"), expectations));
+  assert.throws(
+    () => validateSmokeResponse(endpoint, response("noindex, nofollow, noarchive"), expectations),
+    /정확한 noindex가 아닙니다/u,
+  );
+  assert.throws(
+    () => validateSmokeResponse(endpoint, response("noindex"), {
+      ...expectations,
+      versionPreview: false,
+    }),
+    /X-Robots-Tag가 안전하지 않습니다/u,
+  );
+  assert.doesNotThrow(
+    () => validateSmokeResponse(endpoint, response("NOFOLLOW, noarchive, noindex"), {
+      ...expectations,
+      versionPreview: false,
+    }),
+  );
+  for (const robots of [
+    "evilnoindex, evilnofollow, evilnoarchive",
+    "noindex, nofollow, noarchive, unreviewed",
+    "noindex, noindex, nofollow, noarchive",
+  ]) {
+    assert.throws(
+      () => validateSmokeResponse(endpoint, response(robots), {
+        ...expectations,
+        versionPreview: false,
+      }),
+      /X-Robots-Tag가 안전하지 않습니다/u,
+    );
+  }
 });
 
 test("deployment smoke rejects a missing JavaScript chunk referenced by root HTML", async () => {

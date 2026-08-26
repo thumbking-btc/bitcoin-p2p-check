@@ -226,11 +226,23 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Verify the exact staging candidate before promotion
+      - name: Recheck the exact staging candidate before Preview smoke
+        run: node scripts/check-staging-version.mjs "${{ steps.staging-upload.outputs.version_id }}" "${{ github.sha }}" --require-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify the exact staging candidate Preview before promotion
         shell: bash
         run: |
           APP_VERSION="$(node -p "require('./package.json').version")"
-          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" EXPECTED_WORKER_TAG="${{ github.sha }}" EXPECTED_WORKER_VERSION_ID="${{ steps.staging-upload.outputs.version_id }}" node scripts/smoke-deployment.mjs "${{ steps.staging-upload.outputs.preview_url }}"
+          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" EXPECTED_WORKER_TAG="${{ github.sha }}" EXPECTED_WORKER_VERSION_ID="${{ steps.staging-upload.outputs.version_id }}" node scripts/smoke-deployment.mjs --version-preview "${{ steps.staging-upload.outputs.preview_url }}"
+
+      - name: Recheck the exact staging candidate after Preview smoke
+        run: node scripts/check-staging-version.mjs "${{ steps.staging-upload.outputs.version_id }}" "${{ github.sha }}" --require-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Promote only the verified staging version
         shell: bash

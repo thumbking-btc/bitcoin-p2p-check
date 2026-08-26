@@ -151,7 +151,7 @@ export function parseStagingUpload(raw, expectedWorkerName, expectedVersionTag) 
 
   const upload = uploads[0];
   // Wrangler의 worker_tag는 Worker service 식별자이며 --tag version annotation이 아닙니다.
-  // 실제 version annotation은 후보와 canonical /api/version smoke에서 고정합니다.
+  // version annotation은 원격 exact 검사로, Preview 응답은 version ID와 전용 hostname으로 고정합니다.
   if (upload.version !== 1
     || upload.worker_name !== expectedWorkerName
     || !isSafeWorkerServiceTag(upload.worker_tag)
@@ -162,8 +162,10 @@ export function parseStagingUpload(raw, expectedWorkerName, expectedVersionTag) 
     throw new Error("Wrangler version-upload 결과가 예상한 격리 Worker와 일치하지 않습니다.");
   }
   const previewUrl = new URL(upload.preview_url);
+  const expectedPreviewHostname = `${upload.version_id.slice(0, 8)}-${expectedWorkerName}.thumbking-btc.workers.dev`;
   if (previewUrl.protocol !== "https:"
-    || !previewUrl.hostname.endsWith(`-${expectedWorkerName}.thumbking-btc.workers.dev`)
+    || previewUrl.hostname !== expectedPreviewHostname
+    || previewUrl.origin !== `https://${expectedPreviewHostname}`
     || previewUrl.pathname !== "/"
     || previewUrl.search
     || previewUrl.hash) {
