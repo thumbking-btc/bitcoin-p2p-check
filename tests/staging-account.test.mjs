@@ -80,13 +80,13 @@ test("uses a separate read-only identity credential against the exact account en
   }
 });
 
-test("bootstrap artifact validation rechecks account identity immediately before mutation", async () => {
+test("every staging artifact deployment path rechecks account identity immediately before mutation", async () => {
   const [artifactGuard, operations] = await Promise.all([
     readFile(new URL("../scripts/check-staging-artifact.mjs", import.meta.url), "utf8"),
     readFile(new URL("../docs/production-operations.md", import.meta.url), "utf8"),
   ]);
   assert.match(artifactGuard, /import \{ verifyStagingAccountIdentity \}/u);
-  assert.match(artifactGuard, /await verifyStagingAccountIdentity\(\)/u);
+  assert.equal(artifactGuard.match(/await verifyStagingAccountIdentity\(\)/gu)?.length, 2);
   assert.match(operations, /CLOUDFLARE_STAGING_IDENTITY_TOKEN/u);
   assert.match(operations, /node scripts\/check-staging-account\.mjs/u);
   assert.match(operations, /Workers Scripts Read/u);

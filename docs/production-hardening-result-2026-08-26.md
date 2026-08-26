@@ -40,6 +40,7 @@
 - 요청·upstream 응답의 무제한 또는 전체 본문 버퍼링과 timeout 부재
 - KV eventual consistency로 finalize·revoke·read 순서가 역전될 수 있던 거래 기록 lifecycle
 - 철회 capability의 탭 간 덮어쓰기, 확정 응답 유실, 삭제 뒤 부활과 충돌 token 처리 문제
+- 비계약 HTML/WAF 401·403·404를 영구 권한 실패로 오인해 유일한 철회 capability를 삭제할 수 있던 문제
 - Lightning Address/LNURL redirect, callback, metadata, payer data와 invoice 검증 경계 부족
 - 업비트 시세 신선도·WebSocket watchdog·공유 차단/복구 부족
 - 접근성 결과와 시각 결과 불일치 가능성, 320px overflow와 44×44 조작 대상 부족
@@ -107,7 +108,7 @@
 - 앱과 Worker runtime typecheck, Node 시험, 세 Worker 환경 시험, Playwright·axe·PWA 시험을 통합 gate로 구성했습니다.
 - GitHub Actions를 전체 commit SHA로 고정하고 Dependabot, CycloneDX SBOM, provenance attestation과 서드파티 고지를 추가했습니다.
 - clean `npm ci`, lockfile 일치, notices, types, 세 Wrangler 구성 dry-run과 high-severity audit를 강제합니다.
-- staging은 별도 Worker, exact binding·secret allowlist, commit tag와 단일 100% deployment를 확인합니다.
+- staging은 별도 Worker, exact account·workers.dev subdomain, binding·secret allowlist, Wrangler가 직접 반환한 version ID, commit tag와 단일 100% deployment를 확인합니다.
 - SQLite Durable Object export가 있는 staging은 Cloudflare 제약에 따라 version Preview를 만들지 않고, 검증된 산출물을 원자적으로 직접 배포한 뒤 canonical URL에서 전체 lifecycle을 synthetic 데이터로 검사합니다.
 - production은 Durable Object declarative `exports`와 호환되는 전환·원자 배포 경로가 마련될 때까지 fail closed 처리했습니다.
 
@@ -150,11 +151,11 @@ Node.js 22.19.0과 고정된 Wrangler 4.125.0에서 변경 범위에 맞는 정�
 | 앱 TypeScript | 통과 |
 | Worker runtime TypeScript | 통과 |
 | 서드파티 notices 일치 | 8개 잠금 runtime package 통과 |
-| Node 시험 | 226/226 통과 |
+| Node 시험 | 228/228 통과 |
 | production Worker runtime | 16/16 통과 |
 | staging Worker runtime | 4/4 통과 |
 | preview Worker runtime | 4/4 통과 |
-| Chromium E2E·접근성·PWA | 관련 시험 통과. Windows 로컬 Wrangler 프록시가 장시간 전체 실행 중 종료되어 전체 21개 연속 재실행은 환경 실패로 중단 |
+| Chromium E2E·접근성·PWA | 신규 capability 보존 시험 2개와 관련 시험 통과. Windows 로컬 Wrangler 프록시가 장시간 전체 실행 중 종료되어 전체 23개 연속 재실행은 환경 실패로 중단 |
 | Worker types | 최신 상태 확인 |
 | production/staging/preview dry-run | 모두 통과 |
 | npm audit | 취약점 0건 |

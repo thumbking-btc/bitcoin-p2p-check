@@ -1,24 +1,75 @@
 import { randomBytes } from "node:crypto";
 import { calculateP2PQuote } from "../app/lib/p2p-quote.mjs";
 import {
+  isTerminalTradeRecordRevocationError,
+  revokeTradeRecord,
+} from "../app/lib/trade-record-client.ts";
+import {
   STAGING_TRADE_RECORD_PUBLIC_KEYS,
   verifyTradeRecordSignature,
 } from "../app/lib/trade-record-verification.ts";
 
 const STAGING_ORIGIN = "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
+const MAX_JSON_RESPONSE_BYTES = 65_536;
+
+async function readBoundedJson(response) {
+  const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== "application/json" || !response.body) {
+    if (response.body) void response.body.cancel("unexpected response").catch(() => undefined);
+    throw new Error("staging smoke 응답이 JSON이 아닙니다.");
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_JSON_RESPONSE_BYTES) {
+        void reader.cancel("response too large").catch(() => undefined);
+        throw new Error("staging smoke 응답이 허용 크기를 초과했습니다.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    throw new Error("staging smoke 응답 JSON을 확인하지 못했습니다.");
+  }
+}
 
 async function jsonResponse(url, init = {}) {
   const response = await fetch(url, {
     ...init,
     headers: { Accept: "application/json", ...init.headers },
+    redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
-  const value = await response.json();
+  const value = await readBoundedJson(response);
   return { response, value };
 }
 
 function assertStatus(actual, expected, step) {
   if (actual !== expected) throw new Error(`${step} 응답이 HTTP ${actual}입니다.`);
+}
+
+function assertRecordAbsent(result, step) {
+  assertStatus(result.response.status, 404, step);
+  if (result.value?.ok !== false
+    || result.value?.code !== "RECORD_NOT_FOUND"
+    || typeof result.value?.message !== "string") {
+    throw new Error(`${step} 응답이 거래 기록 API 계약과 일치하지 않습니다.`);
+  }
 }
 
 async function main() {
@@ -42,7 +93,8 @@ async function main() {
 
   const capability = randomBytes(32).toString("base64url");
   let id = "";
-  let revoked = false;
+  let confirmedAbsent = false;
+  let operationFailure;
   try {
     const createdResult = await jsonResponse(`${STAGING_ORIGIN}/api/trade-record`, {
       method: "POST",
@@ -77,7 +129,7 @@ async function main() {
     }
 
     const pendingRead = await jsonResponse(`${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}`);
-    assertStatus(pendingRead.response.status, 404, "비공개 준비 기록 조회 차단");
+    assertRecordAbsent(pendingRead, "비공개 준비 기록 조회 차단");
 
     const finalizedResult = await jsonResponse(
       `${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}/finalize`,
@@ -93,31 +145,52 @@ async function main() {
     });
     if (verification.status !== "valid") throw new Error(`staging 공개 기록 서명 검증 실패: ${verification.status}`);
 
-    const revokeResult = await jsonResponse(`${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${capability}` },
+    const revokeResult = await revokeTradeRecord(id, capability, {
+      endpointBase: `${STAGING_ORIGIN}/api/trade-record`,
+      timeoutMs: 20_000,
     });
-    assertStatus(revokeResult.response.status, 200, "공개 기록 철회");
-    revoked = true;
+    if (revokeResult.lifecycle !== "revoked") throw new Error("공개 기록 철회 응답을 확인하지 못했습니다.");
 
     const revokedRead = await jsonResponse(`${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}`);
-    assertStatus(revokedRead.response.status, 404, "철회 기록 조회 차단");
-    console.log("staging synthetic 거래 기록 생성·비공개·확정·서명 조회·철회 흐름을 확인했습니다.");
-  } finally {
-    if (id && !revoked) {
+    assertRecordAbsent(revokedRead, "철회 기록 조회 차단");
+    confirmedAbsent = true;
+  } catch (error) {
+    operationFailure = error;
+  }
+
+  let cleanupFailure;
+  if (id && !confirmedAbsent) {
+    for (let attempt = 1; attempt <= 3 && !confirmedAbsent; attempt += 1) {
       try {
-        await jsonResponse(`${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${capability}` },
-        });
-      } catch {
-        // Do not replace the original smoke failure or print the capability.
+        try {
+          await revokeTradeRecord(id, capability, {
+            endpointBase: `${STAGING_ORIGIN}/api/trade-record`,
+            timeoutMs: 20_000,
+          });
+        } catch (error) {
+          if (!isTerminalTradeRecordRevocationError(error)) throw error;
+        }
+        const cleanupRead = await jsonResponse(`${STAGING_ORIGIN}/api/trade-record/${encodeURIComponent(id)}`);
+        assertRecordAbsent(cleanupRead, "synthetic 기록 정리 확인");
+        confirmedAbsent = true;
+      } catch (error) {
+        cleanupFailure = error;
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 250));
       }
     }
   }
+
+  if (id && !confirmedAbsent) {
+    throw new AggregateError(
+      [operationFailure, cleanupFailure].filter((error) => error !== undefined),
+      "synthetic staging 거래 기록의 철회와 최종 부재를 확인하지 못했습니다.",
+    );
+  }
+  if (operationFailure) throw operationFailure;
+  console.log("staging synthetic 거래 기록 생성·비공개·확정·서명 조회·철회 흐름을 확인했습니다.");
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+main().catch(() => {
+  console.error("staging synthetic 거래 기록 lifecycle smoke가 실패했습니다. 민감 응답은 로그에 출력하지 않았습니다.");
   process.exitCode = 1;
 });

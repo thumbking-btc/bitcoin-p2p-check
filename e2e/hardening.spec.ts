@@ -540,6 +540,39 @@ test("permanent revoke failures discard unusable browser capabilities", async ({
   await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(0);
 });
 
+test("a non-contract edge 403 preserves the only revoke capability", async ({ page }) => {
+  await installFakeMarket(page);
+  const id = "AAAAAAAAAAAAAAAP";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "p".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    }));
+  }, { id, key });
+  await page.route(`**/api/trade-record/${id}`, async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "text/html",
+      headers: { "Cache-Control": "no-store" },
+      body: "<html><body>temporary edge denial</body></html>",
+    });
+  });
+
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
+
+  await expect(page.getByText(/거래 기록을 철회하지 못했습니다/u)).toBeVisible();
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).not.toBeNull();
+  await expect(page.getByRole("button", { name: `공개 기록 ${id} 철회` })).toBeVisible();
+});
+
 test("a rapid cross-tab clear prevents a stale capability write from restoring browser persistence", async ({ context, page }) => {
   await installFakeMarket(page);
   await page.goto("/");
@@ -714,6 +747,43 @@ test("a permanent finalization authorization failure removes the invalid capabil
 
   await page.clock.fastForward(5 * 60_000 + 1_000);
   expect(finalizeRequests).toBe(1);
+});
+
+test("a non-contract finalization 403 keeps the capability for retry", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const id = "AAAAAAAAAAAAAAAQ";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "q".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalizing",
+      expiresAt: new Date(value.expiresAtMs).toISOString(),
+    }));
+  }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id, key });
+  let finalizeRequests = 0;
+  await page.route(`**/api/trade-record/${id}/finalize`, async (route) => {
+    finalizeRequests += 1;
+    await route.fulfill({
+      status: 403,
+      contentType: "text/html",
+      headers: { "Cache-Control": "no-store" },
+      body: "<html><body>temporary edge denial</body></html>",
+    });
+  });
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect.poll(() => finalizeRequests).toBe(1);
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).not.toBeNull();
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toBeVisible();
+
+  await page.clock.fastForward(5 * 60_000 + 1_000);
+  await expect.poll(() => finalizeRequests).toBeGreaterThan(1);
 });
 
 test("a memory-only finalizing 404 stops at the pending recovery deadline", async ({ page }) => {

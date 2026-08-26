@@ -163,7 +163,7 @@ async function timedJsonRequest(
 ): Promise<Readonly<{ response: Response; value: unknown }>> {
   const deadline = requestDeadline(externalSignal, timeoutMs);
   try {
-    const response = await fetch(input, { ...init, signal: deadline.signal });
+    const response = await fetch(input, { ...init, redirect: "error", signal: deadline.signal });
     return { response, value: await readBoundedResponse(response, deadline.signal) };
   } catch (error) {
     if (deadline.didTimeout()) {
@@ -195,11 +195,10 @@ export class TradeRecordNetworkError extends Error {
 }
 
 export function isTerminalTradeRecordRevocationError(error: unknown): boolean {
-  return error instanceof TradeRecordApiRequestError
-    && (error.status === 401
-      || error.status === 403
-      || error.status === 404
-      || error.code === "RECORD_REVOKED");
+  if (!(error instanceof TradeRecordApiRequestError)) return false;
+  return (error.code === "INVALID_CAPABILITY" && (error.status === 401 || error.status === 403))
+    || (error.code === "RECORD_NOT_FOUND" && error.status === 404)
+    || (error.code === "RECORD_REVOKED" && error.status === 409);
 }
 
 export function isRetryableTradeRecordFetchError(error: unknown): boolean {

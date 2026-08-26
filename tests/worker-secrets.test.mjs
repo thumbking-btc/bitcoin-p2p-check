@@ -227,8 +227,9 @@ test("wires exact staging deployment, version, and secret gates while production
   );
   assert.match(
     stagingDeploySection,
-    /check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-baseline\.outputs\.deployment_id \}\}"[\s\S]*check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}"[\s\S]*npm run deploy:staging:verified[\s\S]*check-staging-deployment\.mjs capture/u,
+    /check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-baseline\.outputs\.deployment_id \}\}"[\s\S]*check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-baseline\.outputs\.version_id \}\}"[\s\S]*npm run deploy:staging:verified[\s\S]*record-staging-upload\.mjs --deploy[\s\S]*check-staging-deployment\.mjs capture-exact/u,
   );
+  assert.match(stagingDeploySection, /CLOUDFLARE_STAGING_IDENTITY_TOKEN:\s*\$\{\{ secrets\.CLOUDFLARE_STAGING_IDENTITY_TOKEN \}\}/u);
   assert.match(
     stagingConfigSection,
     /check-worker-version-secrets\.mjs staging "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}"[\s\S]*check-staging-version\.mjs "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}" "\$\{\{ github\.sha \}\}"/u,
@@ -236,7 +237,7 @@ test("wires exact staging deployment, version, and secret gates while production
   assert.match(workflow.slice(stagingStateful, stagingFinal), /smoke-staging-trade-record\.mjs[\s\S]*STAGING_STATEFUL_TEST_APPROVED:\s*"true"/u);
   assert.match(
     stagingFinalSection,
-    /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-deployed\.outputs\.deployment_id \}\}"/u,
+    /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single "\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}" "\$\{\{ steps\.staging-deployment\.outputs\.deployment_id \}\}"/u,
   );
 
   const productionJobIndex = workflow.indexOf("  deploy-production:");

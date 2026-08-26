@@ -220,6 +220,7 @@ async function main() {
     ) {
       throw new Error("스테이징 업로드는 staging 브랜치의 명시적으로 승인된 GitHub Actions workflow_dispatch에서만 허용합니다.");
     }
+    await verifyStagingAccountIdentity();
   }
 
   const requiredArtifacts = [

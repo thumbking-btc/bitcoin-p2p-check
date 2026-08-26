@@ -48,7 +48,7 @@ GitHub **Settings → Environments → production**에는 다음 조건을 설�
 
 GitHub 요금제와 저장소 공개 범위에 따라 required reviewer 기능을 사용할 수 없는 경우가 있습니다. 그런 상태에서는 사람 승인이 강제된다고 표시하지 말고, 지원되는 요금제 또는 동등한 강제형 deployment protection을 먼저 마련하십시오([GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
 
-GitHub **Settings → Environments → staging**에도 최소권한 `CLOUDFLARE_API_TOKEN`과 `CLOUDFLARE_ACCOUNT_ID`를 environment secret으로 두고, 허용 branch를 `staging`으로 제한하십시오. `staging` push는 검증만 수행하며, `workflow_dispatch`에서 `deploy_staging=true`를 명시한 run만 검증된 산출물의 원자 배포와 synthetic lifecycle smoke를 수행합니다.
+GitHub **Settings → Environments → staging**에는 최소권한 쓰기용 `CLOUDFLARE_API_TOKEN`, exact `CLOUDFLARE_ACCOUNT_ID`, 별도 읽기 전용 `CLOUDFLARE_STAGING_IDENTITY_TOKEN`을 environment secret으로 두고, 허용 branch를 `staging`으로 제한하십시오. 배포 직전 읽기 전용 token으로 exact account와 workers.dev subdomain을 확인한 뒤에만 쓰기 token을 사용합니다. `staging` push는 검증만 수행하며, `workflow_dispatch`에서 `deploy_staging=true`를 명시한 run만 검증된 산출물의 원자 배포와 synthetic lifecycle smoke를 수행합니다.
 
 ## 2. latest-main SHA 승인 체크리스트
 

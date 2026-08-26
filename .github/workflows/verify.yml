@@ -206,23 +206,32 @@ jobs:
         shell: bash
         run: |
           APP_VERSION="$(node -p "require('./package.json').version")"
+          DEPLOY_MESSAGE="GitHub Actions ${{ github.run_id }} · staging v${APP_VERSION} · ${{ github.sha }}"
           git fetch --no-tags origin staging
           test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
           node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-baseline.outputs.version_id }}" "${{ steps.staging-baseline.outputs.deployment_id }}"
           node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-baseline.outputs.version_id }}"
-          npm run deploy:staging:verified -- --tag "${{ github.sha }}" --message "GitHub Actions ${{ github.run_id }} · staging v${APP_VERSION} · ${{ github.sha }}"
-          node scripts/check-staging-deployment.mjs capture
+          WRANGLER_OUTPUT_FILE_PATH=.wrangler/staging-deploy.jsonl npm run deploy:staging:verified -- --tag "${{ github.sha }}" --message "$DEPLOY_MESSAGE"
+          STAGING_COMMIT_SHA="${{ github.sha }}" STAGING_DEPLOY_MESSAGE="$DEPLOY_MESSAGE" node scripts/record-staging-upload.mjs --deploy .wrangler/staging-deploy.jsonl
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_STAGING_IDENTITY_TOKEN: ${{ secrets.CLOUDFLARE_STAGING_IDENTITY_TOKEN }}
           STAGING_DEPLOY_APPROVED: "true"
+
+      - name: Capture only the version returned by the staging deploy
+        id: staging-deployment
+        run: node scripts/check-staging-deployment.mjs capture-exact "${{ steps.staging-deployed.outputs.version_id }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify the exact staging deployment configuration
         run: |
           npm run secrets:check:staging
           node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-deployed.outputs.version_id }}"
           node scripts/check-staging-version.mjs "${{ steps.staging-deployed.outputs.version_id }}" "${{ github.sha }}"
-          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-deployed.outputs.version_id }}" "${{ steps.staging-deployed.outputs.deployment_id }}"
+          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-deployed.outputs.version_id }}" "${{ steps.staging-deployment.outputs.deployment_id }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -243,7 +252,7 @@ jobs:
         run: |
           git fetch --no-tags origin staging
           test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
-          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-deployed.outputs.version_id }}" "${{ steps.staging-deployed.outputs.deployment_id }}"
+          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-deployed.outputs.version_id }}" "${{ steps.staging-deployment.outputs.deployment_id }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

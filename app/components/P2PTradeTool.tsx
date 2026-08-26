@@ -528,12 +528,14 @@ function FinalizingTradeRecordReconciler({
       } catch (reason) {
         if (controller.signal.aborted) return;
         const invalidCapability = reason instanceof TradeRecordApiRequestError
+          && reason.code === "INVALID_CAPABILITY"
           && (reason.status === 401 || reason.status === 403);
         if (invalidCapability) {
           onInvalidCapability(record);
           return;
         }
         const confirmedMissing = reason instanceof TradeRecordApiRequestError
+          && reason.code === "RECORD_NOT_FOUND"
           && reason.status === 404;
         if (confirmedMissing
           && (record.persistence === "browser"
@@ -1679,7 +1681,7 @@ export function P2PTradeTool() {
       if (isTerminalTradeRecordRevocationError(reason)) {
         const browserRemovalFailed = forgetManagedRecord(record);
         const alreadyAbsent = reason instanceof TradeRecordApiRequestError
-          && (reason.status === 404 || reason.code === "RECORD_REVOKED");
+          && (reason.code === "RECORD_NOT_FOUND" || reason.code === "RECORD_REVOKED");
         const terminalMessage = alreadyAbsent
           ? "거래 기록이 이미 없거나 철회되어 브라우저의 관리 권한을 정리했습니다."
           : "오류: 거래 기록 관리 권한이 더 이상 유효하지 않아 브라우저에서 제거했습니다. 공개 기록이 남아 있다면 이 권한으로는 철회할 수 없습니다.";

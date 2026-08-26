@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { validateProductionConfig } from "../scripts/check-release-artifact.mjs";
 import { validateStagingConfig } from "../scripts/check-staging-artifact.mjs";
 import {
+  parseStagingAtomicDeploy,
   parseStagingBootstrapDeploy,
 } from "../scripts/record-staging-upload.mjs";
 
@@ -103,13 +104,14 @@ test("keeps the production Worker and every privileged binding on an exact allow
 });
 
 test("keeps staging isolated and deploys only an exact smoke-tested artifact", async () => {
-  const [workflow, packageText, stagingText, productionText, previewText, guard] = await Promise.all([
+  const [workflow, packageText, stagingText, productionText, previewText, guard, statefulSmoke] = await Promise.all([
     readFile(new URL("../.github/workflows/verify.yml", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../wrangler.staging.jsonc", import.meta.url), "utf8"),
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
     readFile(new URL("../wrangler.preview.jsonc", import.meta.url), "utf8"),
     readFile(new URL("../scripts/check-staging-artifact.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/smoke-staging-trade-record.mjs", import.meta.url), "utf8"),
   ]);
   const packageJson = JSON.parse(packageText);
   const staging = JSON.parse(stagingText);
@@ -167,7 +169,8 @@ test("keeps staging isolated and deploys only an exact smoke-tested artifact", a
   assert.match(workflow, /github\.ref == 'refs\/heads\/staging'[\s\S]*github\.event_name == 'workflow_dispatch'[\s\S]*inputs\.deploy_staging/u);
   assert.match(workflow, /environment:\s*staging/u);
   assert.match(workflow, /name:\s*verified-staging-worker-\$\{\{ github\.sha \}\}/u);
-  assert.doesNotMatch(workflow, /WRANGLER_OUTPUT_FILE|--version-preview|--require-preview/u);
+  assert.doesNotMatch(workflow, /--version-preview|--require-preview/u);
+  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH=\.wrangler\/staging-deploy\.jsonl/u);
   assert.match(workflow, /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
   assert.match(workflow, /EXPECTED_WORKER_VERSION_ID="\$\{\{ steps\.staging-deployed\.outputs\.version_id \}\}"/u);
   const deployIndex = workflow.indexOf("Deploy the verified isolated staging artifact atomically");
@@ -177,16 +180,82 @@ test("keeps staging isolated and deploys only an exact smoke-tested artifact", a
   const finalBranchCheckIndex = workflow.indexOf("Detect a staging deployment or branch advance after smoke");
   assert.ok(deployIndex >= 0 && deployIndex < configIndex && configIndex < canonicalSmokeIndex);
   assert.ok(canonicalSmokeIndex < statefulSmokeIndex && statefulSmokeIndex < finalBranchCheckIndex);
-  assert.match(workflow.slice(deployIndex, configIndex), /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*npm run deploy:staging:verified[\s\S]*check-staging-deployment\.mjs capture/u);
+  assert.match(workflow.slice(deployIndex, configIndex), /git fetch --no-tags origin staging[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*npm run deploy:staging:verified[\s\S]*record-staging-upload\.mjs --deploy[\s\S]*check-staging-deployment\.mjs capture-exact/u);
   assert.match(workflow.slice(canonicalSmokeIndex), /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
   assert.match(workflow.slice(statefulSmokeIndex, finalBranchCheckIndex), /smoke-staging-trade-record\.mjs[\s\S]*STAGING_STATEFUL_TEST_APPROVED:\s*"true"/u);
-  assert.match(workflow.slice(finalBranchCheckIndex), /git fetch --no-tags origin staging[\s\S]*git rev-parse origin\/staging[\s\S]*github\.sha[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*staging-deployed\.outputs\.deployment_id/u);
+  assert.match(workflow.slice(finalBranchCheckIndex), /git fetch --no-tags origin staging[\s\S]*git rev-parse origin\/staging[\s\S]*github\.sha[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*staging-deployment\.outputs\.deployment_id/u);
 
   assert.match(guard, /GITHUB_REF !== "refs\/heads\/staging"/u);
   assert.match(guard, /GITHUB_EVENT_NAME !== "workflow_dispatch"/u);
   assert.match(guard, /expectedTopLevelKeys/u);
   assert.match(guard, /Object\.keys\(config\)\.sort\(\)/u);
+  assert.match(guard, /await verifyStagingAccountIdentity\(\)/u);
   assert.match(guard, /directory: "\.\/dist\/client"/u);
+  assert.match(statefulSmoke, /redirect:\s*"error"/u);
+  assert.match(statefulSmoke, /MAX_JSON_RESPONSE_BYTES/u);
+  assert.match(statefulSmoke, /revokeTradeRecord/u);
+  assert.match(statefulSmoke, /assertRecordAbsent/u);
+  assert.match(statefulSmoke, /attempt <= 3/u);
+  assert.doesNotMatch(statefulSmoke, /console\.(?:log|error)\([^\n]*capability/u);
+});
+
+test("pins the exact version returned by the atomic staging deploy", () => {
+  const versionId = "87654321-4321-4abc-8def-abcdef123456";
+  const expectedTag = "b".repeat(40);
+  const expectedMessage = `GitHub Actions 12345 · staging v2.3.0 · ${expectedTag}`;
+  const canonicalUrl = "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
+  const session = {
+    type: "wrangler-session",
+    version: 1,
+    wrangler_version: "4.125.0",
+    command_line_args: [
+      "deploy",
+      ".verified-staging-worker/index.js",
+      "--no-bundle",
+      "--upload-source-maps",
+      "--strict",
+      "--no-autoconfig",
+      "--config",
+      "wrangler.staging.jsonc",
+      "--tag",
+      expectedTag,
+      "--message",
+      expectedMessage,
+    ],
+    log_file_path: "/home/runner/.config/.wrangler/logs/wrangler-deploy.log",
+    timestamp: "2026-08-26T00:00:00.000Z",
+  };
+  const deploy = {
+    type: "deploy",
+    version: 1,
+    worker_name: "bitcoin-p2p-check-staging",
+    worker_tag: null,
+    version_id: versionId,
+    targets: [canonicalUrl],
+    worker_name_overridden: false,
+    timestamp: "2026-08-26T00:00:01.000Z",
+  };
+  const output = (...events) => `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+  const parseDeploy = (raw) => parseStagingAtomicDeploy(
+    raw,
+    "bitcoin-p2p-check-staging",
+    expectedTag,
+    expectedMessage,
+  );
+
+  assert.deepEqual(parseDeploy(output(session, deploy)), { versionId, canonicalUrl });
+  assert.throws(
+    () => parseDeploy(output({ ...session, command_line_args: session.command_line_args.with(1, ".wrangler/dry-run/staging/index.js") }, deploy)),
+    /atomic deploy 형식/u,
+  );
+  assert.throws(
+    () => parseDeploy(output(session, { ...deploy, version_id: "not-a-version" })),
+    /격리 Worker/u,
+  );
+  assert.throws(
+    () => parseStagingAtomicDeploy(output(session, deploy), "bitcoin-p2p-check-staging", expectedTag, "bad\nmessage"),
+    /deployment message/u,
+  );
 });
 
 test("accepts only one exact Wrangler bootstrap deploy result for the isolated staging Worker", () => {

@@ -24,6 +24,7 @@ import {
   fetchTradeRecord,
   isRetryableTradeRecordFetchError,
   isTerminalTradeRecordRevocationError,
+  revokeTradeRecord,
   TradeRecordApiRequestError,
   TradeRecordNetworkError,
 } from "../app/lib/trade-record-client.ts";
@@ -43,12 +44,41 @@ test("classifies only permanent revoke failures as terminal capability outcomes"
   }
   for (const error of [
     new TradeRecordApiRequestError("REQUEST_TIMEOUT", "timeout", 0),
+    new TradeRecordApiRequestError("HTTP_ERROR", "temporary HTML 401", 401),
+    new TradeRecordApiRequestError("HTTP_ERROR", "temporary HTML 403", 403),
+    new TradeRecordApiRequestError("HTTP_ERROR", "temporary HTML 404", 404),
+    new TradeRecordApiRequestError("INVALID_CAPABILITY", "wrong status", 404),
+    new TradeRecordApiRequestError("RECORD_NOT_FOUND", "wrong status", 403),
+    new TradeRecordApiRequestError("RECORD_REVOKED", "wrong status", 404),
     new TradeRecordApiRequestError("HTTP_ERROR", "conflict", 409),
     new TradeRecordApiRequestError("STORAGE_UNAVAILABLE", "unavailable", 503),
     new TradeRecordNetworkError(new TypeError("offline")),
     new Error("malformed response"),
   ]) {
     assert.equal(isTerminalTradeRecordRevocationError(error), false);
+  }
+});
+
+test("does not follow redirects or discard a capability for a non-contract 403 response", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      assert.equal(init?.redirect, "error");
+      return new Response("temporary edge response", {
+        status: 403,
+        headers: { "Content-Type": "text/html" },
+      });
+    };
+    await assert.rejects(
+      revokeTradeRecord("AAAAAAAAAAAAAAAA", "a".repeat(43), {
+        endpointBase: "https://records.example/api/trade-record",
+      }),
+      (error) => error instanceof Error
+        && !(error instanceof TradeRecordApiRequestError)
+        && !isTerminalTradeRecordRevocationError(error),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
