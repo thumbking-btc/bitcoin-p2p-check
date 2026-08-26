@@ -619,6 +619,7 @@ async function assertEmptyManagementBody(request: Request): Promise<void> {
       AbortSignal.timeout(EMPTY_MANAGEMENT_BODY_TIMEOUT_MS),
     );
   } catch {
+    cancelBody(request.body);
     fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
   }
 }
