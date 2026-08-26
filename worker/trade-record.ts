@@ -17,7 +17,7 @@ import {
   type SignedTradeRecord,
   type TradeRecordPayment,
 } from "../app/lib/trade-record.ts";
-import { BoundedBodyError, cancelBody, readBoundedJson } from "./http-body.ts";
+import { BoundedBodyError, cancelBody, readBoundedBytes, readBoundedJson } from "./http-body.ts";
 import { LightningAddressNormalizationError, normalizeLightningAddress } from "./lightning-address-normalize.ts";
 import { parsePremiumPayload } from "./market-source-parsers.ts";
 import { fail, json, methodNotAllowed, TradeRecordRequestError } from "./trade-record-http.ts";
@@ -43,7 +43,9 @@ import {
 
 const MAX_REQUEST_BYTES = 8_192;
 const MAX_PRIVATE_JWK_BYTES = 2_048;
-const MAX_UPBIT_RESPONSE_BYTES = 16_384;
+const MAX_UPBIT_PRICE_RESPONSE_BYTES = 16_384;
+const MAX_UPBIT_PREMIUM_RESPONSE_BYTES = 256_000;
+const EMPTY_MANAGEMENT_BODY_TIMEOUT_MS = 100;
 const WRITTEN_TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
 const UPBIT_PRICE_URL = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM_URL = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
@@ -141,14 +143,15 @@ async function readLimitedResponseJson(
   response: Response,
   maximumBytes: number,
   signal: AbortSignal,
+  sourceLabel: "기준가" | "프리미엄",
 ): Promise<unknown> {
   try {
     return await readBoundedJson(response, maximumBytes, signal);
   } catch (error) {
     if (error instanceof BoundedBodyError && error.failure === "too-large") {
-      fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답이 너무 큽니다.", 503);
+      fail("MARKET_VERIFICATION_UNAVAILABLE", `업비트 ${sourceLabel} 응답이 너무 큽니다.`, 503);
     }
-    fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답 형식을 확인하지 못했습니다.", 503);
+    fail("MARKET_VERIFICATION_UNAVAILABLE", `업비트 ${sourceLabel} 응답 형식을 확인하지 못했습니다.`, 503);
   }
 }
 
@@ -247,8 +250,9 @@ async function verifyUpbitReferencePrice(
     }
     const value = await readLimitedResponseJson(
       response,
-      MAX_UPBIT_RESPONSE_BYTES,
+      MAX_UPBIT_PRICE_RESPONSE_BYTES,
       controller.signal,
+      "기준가",
     );
     const ticker = Array.isArray(value) && value.length === 1 && isRecord(value[0]) ? value[0] : null;
     if (
@@ -337,8 +341,9 @@ async function verifyUpbitPremium(
     }
     const value = await readLimitedResponseJson(
       response,
-      MAX_UPBIT_RESPONSE_BYTES,
+      MAX_UPBIT_PREMIUM_RESPONSE_BYTES,
       controller.signal,
+      "프리미엄",
     );
     const parsed = parsePremiumPayload(value, new Date(nowMs).toISOString());
     if (!parsed.ok) {
@@ -605,10 +610,17 @@ function recordResponse(
   }, status);
 }
 
-function assertEmptyManagementBody(request: Request): void {
+async function assertEmptyManagementBody(request: Request): Promise<void> {
   if (!request.body) return;
-  cancelBody(request.body);
-  fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
+  try {
+    await readBoundedBytes(
+      request.clone(),
+      0,
+      AbortSignal.timeout(EMPTY_MANAGEMENT_BODY_TIMEOUT_MS),
+    );
+  } catch {
+    fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
+  }
 }
 
 async function assertManagementCapabilityMatchesId(request: Request, id: string): Promise<void> {
@@ -632,7 +644,7 @@ async function managementContext(
 }
 
 async function finalizeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
-  assertEmptyManagementBody(request);
+  await assertEmptyManagementBody(request);
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const management = await managementContext(request, records, id);
@@ -665,7 +677,7 @@ async function finalizeRecord(request: Request, environment: TradeRecordEnvironm
 }
 
 async function revokeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
-  assertEmptyManagementBody(request);
+  await assertEmptyManagementBody(request);
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const management = await managementContext(request, records, id);
@@ -754,7 +766,7 @@ async function routeThroughTradeRecordState(
       if (request.method !== "POST") return methodNotAllowed("POST");
       await enforceItemRateLimit(request, environment);
       id = finalizeMatch[1];
-      assertEmptyManagementBody(request);
+      await assertEmptyManagementBody(request);
       await assertManagementCapabilityMatchesId(request, id);
     } else {
       const itemMatch = /^\/api\/trade-record\/([^/]+)\/?$/u.exec(pathname);
@@ -763,7 +775,7 @@ async function routeThroughTradeRecordState(
       await enforceItemRateLimit(request, environment);
       id = itemMatch[1];
       if (request.method === "DELETE") {
-        assertEmptyManagementBody(request);
+        await assertEmptyManagementBody(request);
         await assertManagementCapabilityMatchesId(request, id);
       }
     }

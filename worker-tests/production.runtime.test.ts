@@ -154,6 +154,20 @@ describe("production Worker bindings and routing", () => {
     });
     expect((await exports.default.fetch(publicRequest())).status).toBe(404);
 
+    const rejectedFinalize = await exports.default.fetch(new Request(
+      `https://worker.test/api/trade-record/${id}/finalize`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${revokeToken}`,
+          "CF-Connecting-IP": "203.0.113.105",
+        },
+        body: "{}",
+      },
+    ));
+    expect(rejectedFinalize.status).toBe(400);
+    await expect(rejectedFinalize.json()).resolves.toMatchObject({ code: "INVALID_REQUEST" });
+
     const finalize = await exports.default.fetch(new Request(
       `https://worker.test/api/trade-record/${id}/finalize`,
       {
@@ -162,10 +176,26 @@ describe("production Worker bindings and routing", () => {
           Authorization: `Bearer ${revokeToken}`,
           "CF-Connecting-IP": "203.0.113.105",
         },
+        body: "",
       },
     ));
     expect(finalize.status).toBe(200);
     await expect(finalize.json()).resolves.toMatchObject({ id, lifecycle: "finalized" });
+    expect((await exports.default.fetch(publicRequest())).status).toBe(200);
+
+    const rejectedRevoke = await exports.default.fetch(new Request(
+      `https://worker.test/api/trade-record/${id}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${revokeToken}`,
+          "CF-Connecting-IP": "203.0.113.106",
+        },
+        body: "{}",
+      },
+    ));
+    expect(rejectedRevoke.status).toBe(400);
+    await expect(rejectedRevoke.json()).resolves.toMatchObject({ code: "INVALID_REQUEST" });
     expect((await exports.default.fetch(publicRequest())).status).toBe(200);
 
     const revoke = await exports.default.fetch(new Request(
@@ -176,6 +206,7 @@ describe("production Worker bindings and routing", () => {
           Authorization: `Bearer ${revokeToken}`,
           "CF-Connecting-IP": "203.0.113.106",
         },
+        body: "",
       },
     ));
     expect(revoke.status).toBe(200);

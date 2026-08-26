@@ -581,6 +581,27 @@ test("independently checks a submitted Korea premium before including it in the 
   assert.equal(mismatching.records.puts.length, 0);
 });
 
+test("accepts a valid Upbit premium response larger than the former 16 KiB limit", async () => {
+  const fixture = await signingEnvironment();
+  const draft = validDraft();
+  draft.condition.koreaPremiumRatio = 0.0213;
+  const response = await fixture.handle(createRequest(draft), undefined, {
+    fetcher: async (input) => String(input).includes("datalab-api")
+      ? Response.json({
+          data: { records: [{ code: "CRIX.UPBIT.KRW-BTC", disparityRate: 2.13 }] },
+          padding: "x".repeat(60_000),
+        })
+      : Response.json([{
+          market: "KRW-BTC",
+          trade_price: 100_000_000,
+          trade_timestamp: Date.now(),
+        }]),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal((await response.json()).record.condition.koreaPremiumRatio, 0.0213);
+});
+
 test("accepts exactly 0, 1, or 2 allowlisted Upbit redirects before signing", async () => {
   for (const redirectCount of [0, 1, 2]) {
     const allowed = await signingEnvironment();
