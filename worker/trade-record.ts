@@ -17,7 +17,7 @@ import {
   type SignedTradeRecord,
   type TradeRecordPayment,
 } from "../app/lib/trade-record.ts";
-import { BoundedBodyError, cancelBody, readBoundedBytes, readBoundedJson } from "./http-body.ts";
+import { BoundedBodyError, cancelBody, readBoundedJson } from "./http-body.ts";
 import { LightningAddressNormalizationError, normalizeLightningAddress } from "./lightning-address-normalize.ts";
 import { parsePremiumPayload } from "./market-source-parsers.ts";
 import { fail, json, methodNotAllowed, TradeRecordRequestError } from "./trade-record-http.ts";
@@ -85,7 +85,6 @@ export interface TradeRecordEnvironment {
   TRADE_RECORDS?: TradeRecordKvNamespace;
   TRADE_RECORD_CREATE_RATE_LIMITER?: TradeRecordRateLimit;
   TRADE_RECORD_READ_RATE_LIMITER?: TradeRecordRateLimit;
-  TRADE_RECORD_STATE?: TradeRecordStateNamespace;
   /** Secret: JSON-encoded private P-256 JWK with a public `kid`. */
   TRADE_RECORD_SIGNING_KEY?: string;
   /** Non-secret feature flag. Explicit false values disable this API before binding access. */
@@ -101,6 +100,8 @@ export type TradeRecordHandlerOptions = Readonly<{
   allowLegacyKv?: boolean;
   /** Internal recursion guard used only inside TradeRecordState. */
   storageMode?: "durable-object";
+  /** Durable Object loopback namespace supplied by the top-level Worker's ctx.exports. */
+  stateNamespace?: TradeRecordStateNamespace;
 }>;
 
 type PrivateSigningJwk = JsonWebKey & {
@@ -136,9 +137,13 @@ async function readLimitedJson(request: Request): Promise<unknown> {
   }
 }
 
-async function readLimitedResponseJson(response: Response, maximumBytes: number): Promise<unknown> {
+async function readLimitedResponseJson(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<unknown> {
   try {
-    return await readBoundedJson(response, maximumBytes);
+    return await readBoundedJson(response, maximumBytes, signal);
   } catch (error) {
     if (error instanceof BoundedBodyError && error.failure === "too-large") {
       fail("MARKET_VERIFICATION_UNAVAILABLE", "업비트 기준가 응답이 너무 큽니다.", 503);
@@ -240,7 +245,11 @@ async function verifyUpbitReferencePrice(
       await cancelBody(response.body);
       fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 기준가 응답을 확인하지 못했습니다.", 503);
     }
-    const value = await readLimitedResponseJson(response, MAX_UPBIT_RESPONSE_BYTES);
+    const value = await readLimitedResponseJson(
+      response,
+      MAX_UPBIT_RESPONSE_BYTES,
+      controller.signal,
+    );
     const ticker = Array.isArray(value) && value.length === 1 && isRecord(value[0]) ? value[0] : null;
     if (
       !ticker
@@ -326,7 +335,11 @@ async function verifyUpbitPremium(
       await cancelBody(response.body);
       fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 프리미엄 응답을 확인하지 못했습니다.", 503);
     }
-    const value = await readLimitedResponseJson(response, MAX_UPBIT_RESPONSE_BYTES);
+    const value = await readLimitedResponseJson(
+      response,
+      MAX_UPBIT_RESPONSE_BYTES,
+      controller.signal,
+    );
     const parsed = parsePremiumPayload(value, new Date(nowMs).toISOString());
     if (!parsed.ok) {
       fail("MARKET_VERIFICATION_UNAVAILABLE", "최신 업비트 프리미엄 데이터 형식을 확인하지 못했습니다.", 503);
@@ -592,11 +605,16 @@ function recordResponse(
   }, status);
 }
 
-async function assertEmptyManagementBody(request: Request): Promise<void> {
-  try {
-    await readBoundedBytes(request, 0);
-  } catch {
-    fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
+function assertEmptyManagementBody(request: Request): void {
+  if (!request.body) return;
+  cancelBody(request.body);
+  fail("INVALID_REQUEST", "이 관리 요청에는 본문을 포함할 수 없습니다.");
+}
+
+async function assertManagementCapabilityMatchesId(request: Request, id: string): Promise<void> {
+  const tokenHash = await sha256Base64Url(authorizationToken(request));
+  if (tokenHash.slice(0, 16) !== id) {
+    fail("INVALID_CAPABILITY", "거래 기록 관리 권한을 확인하지 못했습니다.", 403);
   }
 }
 
@@ -614,7 +632,7 @@ async function managementContext(
 }
 
 async function finalizeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
-  await assertEmptyManagementBody(request);
+  assertEmptyManagementBody(request);
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const management = await managementContext(request, records, id);
@@ -647,7 +665,7 @@ async function finalizeRecord(request: Request, environment: TradeRecordEnvironm
 }
 
 async function revokeRecord(request: Request, environment: TradeRecordEnvironment, id: string): Promise<Response> {
-  await assertEmptyManagementBody(request);
+  assertEmptyManagementBody(request);
   const records = environment.TRADE_RECORDS;
   if (!records) fail("STORAGE_UNAVAILABLE", "거래 기록 저장소를 사용할 수 없습니다.", 503);
   const management = await managementContext(request, records, id);
@@ -721,6 +739,7 @@ async function routeThroughTradeRecordState(
   request: Request,
   environment: TradeRecordEnvironment,
   pathname: string,
+  namespace: TradeRecordStateNamespace,
 ): Promise<Response> {
   let id: string;
   if (pathname === "/api/trade-record" || pathname === "/api/trade-record/") {
@@ -735,17 +754,20 @@ async function routeThroughTradeRecordState(
       if (request.method !== "POST") return methodNotAllowed("POST");
       await enforceItemRateLimit(request, environment);
       id = finalizeMatch[1];
+      assertEmptyManagementBody(request);
+      await assertManagementCapabilityMatchesId(request, id);
     } else {
       const itemMatch = /^\/api\/trade-record\/([^/]+)\/?$/u.exec(pathname);
       if (!itemMatch || !isTradeRecordId(itemMatch[1])) fail("RECORD_NOT_FOUND", "거래 기록을 찾지 못했습니다.", 404);
       if (request.method !== "GET" && request.method !== "DELETE") return methodNotAllowed("GET, DELETE");
       await enforceItemRateLimit(request, environment);
       id = itemMatch[1];
+      if (request.method === "DELETE") {
+        assertEmptyManagementBody(request);
+        await assertManagementCapabilityMatchesId(request, id);
+      }
     }
   }
-
-  const namespace = environment.TRADE_RECORD_STATE;
-  if (!namespace) fail("STORAGE_UNAVAILABLE", "강한 일관성 거래 기록 저장소를 사용할 수 없습니다.", 503);
 
   try {
     const objectId = namespace.idFromName(id);
@@ -775,8 +797,9 @@ export async function handleTradeRecordRequest(
       return json({ ok: false, code: "TRADE_RECORDS_DISABLED", message: "이 배포 환경에서는 거래 기록 API를 사용할 수 없습니다." }, 503);
     }
     if (options.storageMode !== "durable-object") {
-      if (environment.TRADE_RECORD_STATE) {
-        return await routeThroughTradeRecordState(request, environment, pathname);
+      const stateNamespace = options.stateNamespace;
+      if (stateNamespace) {
+        return await routeThroughTradeRecordState(request, environment, pathname, stateNamespace);
       }
       if (!options.allowLegacyKv) {
         fail("STORAGE_UNAVAILABLE", "강한 일관성 거래 기록 저장소를 사용할 수 없습니다.", 503);

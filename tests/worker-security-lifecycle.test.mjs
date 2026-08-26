@@ -75,6 +75,18 @@ class DenyRateLimit {
   }
 }
 
+async function settleWithin(promise, timeoutMs = 500) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`operation did not settle within ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function base64Url(bytes) {
   return Buffer.from(bytes).toString("base64url");
 }
@@ -270,6 +282,54 @@ test("bounded JSON reading prechecks length, enforces streamed bytes, cancels, a
   }
 });
 
+test("bounded body reads abort without awaiting hostile pulls or cancellation", async () => {
+  let markPullStarted;
+  const pullStarted = new Promise((resolve) => {
+    markPullStarted = resolve;
+  });
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull() {
+      markPullStarted();
+      return new Promise(() => {});
+    },
+    cancel() {
+      cancelled = true;
+      return new Promise(() => {});
+    },
+  });
+  const controller = new AbortController();
+  const pendingRead = readBoundedJson(new Response(body, {
+    headers: { "Content-Type": "application/json" },
+  }), 100, controller.signal);
+
+  await settleWithin(pullStarted);
+  controller.abort(new DOMException("body deadline exceeded", "TimeoutError"));
+  await assert.rejects(
+    settleWithin(pendingRead),
+    (error) => error instanceof DOMException && error.name === "TimeoutError",
+  );
+  assert.equal(cancelled, true);
+});
+
+test("bounded body cancellation observes producer rejection without replacing validation", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    cancel() {
+      cancelled = true;
+      return Promise.reject(new Error("producer cancellation failed"));
+    },
+  });
+  const response = new Response(body, { headers: { "Content-Type": "text/plain" } });
+
+  await assert.rejects(
+    settleWithin(readBoundedJson(response, 100)),
+    (error) => error instanceof BoundedBodyError && error.failure === "invalid-media-type",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(cancelled, true);
+});
+
 test("Lightning address canonicalization rejects Unicode, local names, ports, and unrelated hosts", () => {
   assert.deepEqual(normalizeLightningAddress("Seller@Wallet.Example.COM"), {
     address: "seller@wallet.example.com",
@@ -325,6 +385,61 @@ test("Lightning upstreams fail closed without a limiter and reject non-JSON or c
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lightning redirect validation cancels hostile bodies before rejecting location or host", async (context) => {
+  const handlers = [
+    {
+      name: "address",
+      request: lightningAddressRequest,
+      handle: (request, environment) => handleLightningAddressRequest(request, environment),
+    },
+    {
+      name: "raw LNURL",
+      request: rawLnurlRequest,
+      handle: (request, environment) => handleLightningPayRequest(request, environment),
+    },
+  ];
+  const scenarios = [
+    { name: "missing Location", headers: {}, expectedCalls: 1 },
+    { name: "unrelated host", headers: { Location: "https://attacker.example.net/pay" }, expectedCalls: 1 },
+    { name: "redirect limit", headers: { Location: "/another-hop" }, expectedCalls: 3 },
+  ];
+
+  for (const handler of handlers) {
+    for (const scenario of scenarios) {
+      await context.test(`${handler.name}: ${scenario.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        let cancellations = 0;
+        let calls = 0;
+        try {
+          globalThis.fetch = async () => {
+            calls += 1;
+            const body = new ReadableStream({
+              start(streamController) {
+                streamController.enqueue(new TextEncoder().encode("redirect body must be ignored"));
+              },
+              cancel() {
+                cancellations += 1;
+                return new Promise(() => {});
+              },
+            });
+            return new Response(body, { status: 302, headers: scenario.headers });
+          };
+
+          const response = await settleWithin(handler.handle(handler.request(), {
+            LIGHTNING_REQUEST_RATE_LIMITER: new AllowRateLimit(),
+          }));
+          assert.equal(response.status, 502);
+          assert.equal((await response.json()).code, "INVALID_PROVIDER_RESPONSE");
+          assert.equal(calls, scenario.expectedCalls);
+          assert.equal(cancellations, scenario.expectedCalls);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
   }
 });
 
@@ -969,26 +1084,91 @@ test("trade-record rate limits run before selecting or activating a Durable Obje
         DEPLOYMENT_ENV: "production",
         TRADE_RECORDS_ENABLED: true,
         [scenario.limiterKey]: limiter,
-        TRADE_RECORD_STATE: {
-          idFromName() {
-            namespaceSelections += 1;
-            throw new Error("Durable Object must not be selected after a rejected limit check.");
-          },
-          get() {
-            namespaceAccesses += 1;
-            throw new Error("Durable Object must not be accessed after a rejected limit check.");
-          },
+      };
+      const stateNamespace = {
+        idFromName() {
+          namespaceSelections += 1;
+          throw new Error("Durable Object must not be selected after a rejected limit check.");
+        },
+        get() {
+          namespaceAccesses += 1;
+          throw new Error("Durable Object must not be accessed after a rejected limit check.");
         },
       };
       const requests = scenario.requests();
       for (const request of requests) {
-        const response = await handleTradeRecordRequest(request, environment);
+        const response = await handleTradeRecordRequest(request, environment, { stateNamespace });
         assert.equal(response.status, 429);
         assert.equal((await response.json()).code, "RATE_LIMITED");
       }
       assert.equal(limiter.calls, requests.length);
       assert.equal(namespaceSelections, 0);
       assert.equal(namespaceAccesses, 0);
+    });
+  }
+});
+
+test("management requests reject hostile bodies and mismatched capabilities before selecting a Durable Object", async (context) => {
+  const token = capability();
+  const id = base64Url(sha256(new TextEncoder().encode(token))).slice(0, 16);
+  const wrongToken = capability();
+  const environment = {
+    DEPLOYMENT_ENV: "production",
+    TRADE_RECORDS_ENABLED: true,
+    TRADE_RECORD_READ_RATE_LIMITER: new AllowRateLimit(),
+  };
+
+  for (const scenario of [
+    { name: "finalize", method: "POST", suffix: "/finalize" },
+    { name: "delete", method: "DELETE", suffix: "" },
+  ]) {
+    await context.test(scenario.name, async () => {
+      let namespaceSelections = 0;
+      const stateNamespace = {
+        idFromName() {
+          namespaceSelections += 1;
+          throw new Error("Rejected management requests must not select a Durable Object.");
+        },
+        get() {
+          throw new Error("Rejected management requests must not access a Durable Object.");
+        },
+      };
+      const hostileBody = new ReadableStream({
+        pull() {
+          return new Promise(() => {});
+        },
+        cancel() {
+          return new Promise(() => {});
+        },
+      });
+      const bodyResponse = await settleWithin(handleTradeRecordRequest(new Request(
+        `https://records.example/api/trade-record/${id}${scenario.suffix}`,
+        {
+          method: scenario.method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "CF-Connecting-IP": "203.0.113.124",
+          },
+          body: hostileBody,
+          duplex: "half",
+        },
+      ), environment, { stateNamespace }));
+      assert.equal(bodyResponse.status, 400);
+      assert.equal((await bodyResponse.json()).code, "INVALID_REQUEST");
+
+      const capabilityResponse = await settleWithin(handleTradeRecordRequest(new Request(
+        `https://records.example/api/trade-record/${id}${scenario.suffix}`,
+        {
+          method: scenario.method,
+          headers: {
+            Authorization: `Bearer ${wrongToken}`,
+            "CF-Connecting-IP": "203.0.113.124",
+          },
+        },
+      ), environment, { stateNamespace }));
+      assert.equal(capabilityResponse.status, 403);
+      assert.equal((await capabilityResponse.json()).code, "INVALID_CAPABILITY");
+      assert.equal(namespaceSelections, 0);
     });
   }
 });
@@ -1005,7 +1185,7 @@ test("invalid trade-record paths and methods fail before selecting a Durable Obj
   for (const [name, request, expectedStatus] of scenarios) {
     await context.test(name, async () => {
       let namespaceSelections = 0;
-      const response = await handleTradeRecordRequest(request, {
+      const environment = {
         DEPLOYMENT_ENV: "production",
         TRADE_RECORDS_ENABLED: true,
         TRADE_RECORD_CREATE_RATE_LIMITER: {
@@ -1014,16 +1194,17 @@ test("invalid trade-record paths and methods fail before selecting a Durable Obj
         TRADE_RECORD_READ_RATE_LIMITER: {
           async limit() { throw new Error("Invalid routes must not consume the item limiter."); },
         },
-        TRADE_RECORD_STATE: {
-          idFromName() {
-            namespaceSelections += 1;
-            throw new Error("Invalid routes must not select a Durable Object.");
-          },
-          get() {
-            throw new Error("Invalid routes must not access a Durable Object.");
-          },
+      };
+      const stateNamespace = {
+        idFromName() {
+          namespaceSelections += 1;
+          throw new Error("Invalid routes must not select a Durable Object.");
         },
-      });
+        get() {
+          throw new Error("Invalid routes must not access a Durable Object.");
+        },
+      };
+      const response = await handleTradeRecordRequest(request, environment, { stateNamespace });
       assert.equal(response.status, expectedStatus);
       assert.equal(namespaceSelections, 0);
     });
@@ -1037,7 +1218,7 @@ test("market source has bounded parsing, no module-global request promises, and 
     import("../worker/market.ts"),
   ]);
   assert.equal(typeof marketModule.handleMarketRequest, "function");
-  assert.match(market, /readBoundedJson\(response, MAX_UPSTREAM_JSON_BYTES\)/u);
+  assert.match(market, /readBoundedJson\(\s*response,\s*MAX_UPSTREAM_JSON_BYTES,\s*controller\.signal\s*\)/u);
   assert.doesNotMatch(market, /let\s+pending(?:Snapshot|Reference|Premium)/u);
   assert.doesNotMatch(market, /response\.json\(\)/u);
   assert.match(client, /DEFAULT_TRADE_RECORD_CREATE_TIMEOUT_MS\s*=\s*15_000/u);

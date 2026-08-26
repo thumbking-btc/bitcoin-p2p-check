@@ -2,17 +2,20 @@ import { DurableObject } from "cloudflare:workers";
 import { getTradeRecordRetentionPolicy, TRADE_RECORD_SCHEMA_V1 } from "../app/lib/trade-record.ts";
 import {
   PENDING_RECORD_TTL_SECONDS,
+  parseManagementIndex,
   parseStoredRecord,
 } from "./trade-record-lifecycle.ts";
 import {
   handleTradeRecordRequest,
   type TradeRecordKvNamespace,
 } from "./trade-record.ts";
+import { fail } from "./trade-record-http.ts";
 
 const STORAGE_KEY_PREFIX = "trade-record:v1:";
 const MANAGEMENT_KEY_PREFIX = "trade-record:v1:manage:";
 const STORAGE_TABLE_NAME = "trade_record_entries";
 const MAX_ENTRY_BYTES = 8_192;
+const CLEANUP_RETRY_DELAY_MS = 30_000;
 
 type StoredRow = Readonly<{
   entry_key: string;
@@ -26,6 +29,11 @@ function remainingTtlSeconds(expiresAtMs: number, nowMs = Date.now()): number {
 
 function legacyEntryTtlSeconds(key: string, value: string, nowMs = Date.now()): number {
   if (key.startsWith(MANAGEMENT_KEY_PREFIX)) {
+    const tokenHash = key.slice(MANAGEMENT_KEY_PREFIX.length);
+    const management = parseManagementIndex(value);
+    if (management === null || management.id !== tokenHash.slice(0, 16)) {
+      fail("STORAGE_CORRUPT", "저장된 거래 기록 관리 인덱스를 확인하지 못했습니다.", 500);
+    }
     return getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1).retentionSeconds;
   }
   if (!key.startsWith(STORAGE_KEY_PREFIX)) return 0;
@@ -169,9 +177,17 @@ export class StrongTradeRecordStorage implements TradeRecordKvNamespace {
   }
 
   async deleteExpired(): Promise<void> {
-    if (!this.hasSchema()) return;
-    this.state.storage.sql.exec("DELETE FROM trade_record_entries WHERE expires_at_ms <= ?1", Date.now());
-    await this.scheduleNextAlarm();
+    try {
+      if (!this.hasSchema()) return;
+      this.state.storage.sql.exec("DELETE FROM trade_record_entries WHERE expires_at_ms <= ?1", Date.now());
+      await this.scheduleNextAlarm();
+    } catch (cleanupError) {
+      try {
+        await this.state.storage.setAlarm(Date.now() + CLEANUP_RETRY_DELAY_MS);
+      } catch {
+        throw cleanupError;
+      }
+    }
   }
 }
 

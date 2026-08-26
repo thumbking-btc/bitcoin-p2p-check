@@ -7,8 +7,10 @@ import {
   extractManifestReferencedAssets,
   extractReferencedAssets,
   extractServiceWorkerReferencedAssets,
+  createVersionOverrideHeader,
   normalizeBaseUrl,
   parseSmokeOptions,
+  readSmallText,
   runDeploymentSmoke,
   SMOKE_ENDPOINTS,
   validateReferencedAssetResponse,
@@ -123,10 +125,10 @@ test("deployment smoke uses only bounded, read-only GET requests, including a no
     },
   });
 
-  assert.equal(results.length, SMOKE_ENDPOINTS.length + 3);
+  assert.equal(results.length, SMOKE_ENDPOINTS.length + 4);
   assert.deepEqual(
     calls.filter((call) => !call.url.startsWith("/_next/static/")).map((call) => call.url),
-    [...SMOKE_ENDPOINTS.map((endpoint) => endpoint.path), "/manifest.webmanifest"],
+    [...SMOKE_ENDPOINTS.map((endpoint) => endpoint.path), "/manifest.webmanifest", "/api/version"],
   );
   assert.deepEqual(
     calls.filter((call) => call.url.startsWith("/_next/static/")).map((call) => call.url).sort(),
@@ -198,6 +200,52 @@ test("deployment smoke does not await stalled endpoint body cancellation", async
   assert.equal(cancelled, true);
 });
 
+test("small text reader enforces the byte limit while streaming without awaiting stalled cancellation", async () => {
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(8));
+      controller.enqueue(new Uint8Array(9));
+    },
+    cancel() {
+      cancelled = true;
+      return new Promise(() => {});
+    },
+  }));
+
+  await assert.rejects(
+    settleWithin(readSmallText(response, 16)),
+    /16 bytes를 초과/u,
+  );
+  assert.equal(cancelled, true);
+});
+
+test("small text reader preserves UTF-8 characters split across stream chunks", async () => {
+  const encoded = new TextEncoder().encode("가");
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoded.slice(0, 1));
+      controller.enqueue(encoded.slice(1));
+      controller.close();
+    },
+  }));
+
+  assert.equal(await readSmallText(response, encoded.byteLength), "가");
+});
+
+test("small text reader rejects an oversized Content-Length without reading or awaiting cancellation", async () => {
+  let cancelled = false;
+  const response = new Response(bodyWithStalledCancellation(() => {
+    cancelled = true;
+  }), { headers: { "Content-Length": "17" } });
+
+  await assert.rejects(
+    settleWithin(readSmallText(response, 16)),
+    /16 bytes를 초과/u,
+  );
+  assert.equal(cancelled, true);
+});
+
 test("BASE_URL parsing accepts CLI or environment input and rejects unsafe origins", () => {
   assert.deepEqual(parseSmokeOptions([], { BASE_URL: "https://deployment.example", SMOKE_TIMEOUT_MS: "250" }), {
     help: false,
@@ -217,6 +265,48 @@ test("BASE_URL parsing accepts CLI or environment input and rejects unsafe origi
     () => parseSmokeOptions(["--expected-environment=qa", "https://deployment.example"], {}),
     /production, staging 또는 preview/u,
   );
+  assert.deepEqual(parseSmokeOptions(["https://deployment.example"], {
+    SMOKE_WORKER_VERSION_OVERRIDE_NAME: "bitcoin-p2p-check",
+    SMOKE_WORKER_VERSION_OVERRIDE_ID: "12345678-1234-4abc-8def-1234567890ab",
+  }), {
+    help: false,
+    baseUrl: "https://deployment.example",
+    timeoutMs: 10_000,
+    workerVersionOverrideName: "bitcoin-p2p-check",
+    workerVersionOverrideId: "12345678-1234-4abc-8def-1234567890ab",
+  });
+  assert.throws(
+    () => parseSmokeOptions(["https://deployment.example"], {
+      SMOKE_WORKER_VERSION_OVERRIDE_NAME: "bitcoin-p2p-check",
+    }),
+    /함께 지정/u,
+  );
+  assert.equal(
+    createVersionOverrideHeader("bitcoin-p2p-check", "12345678-1234-4abc-8def-1234567890ab"),
+    'bitcoin-p2p-check="12345678-1234-4abc-8def-1234567890ab"',
+  );
+  assert.throws(
+    () => createVersionOverrideHeader("bad,name", "12345678-1234-4abc-8def-1234567890ab"),
+    /Worker 이름/u,
+  );
+});
+
+test("deployment smoke sends the exact version override on every endpoint and asset request", async () => {
+  const versionId = "12345678-1234-4abc-8def-1234567890ab";
+  const calls = [];
+  await runDeploymentSmoke({
+    baseUrl: "https://deployment.example",
+    timeoutMs: 100,
+    workerVersionOverrideName: "bitcoin-p2p-check",
+    workerVersionOverrideId: versionId,
+    log() {},
+    async fetcher(input, init) {
+      calls.push(init.headers["Cloudflare-Workers-Version-Overrides"]);
+      return responseFor(new URL(input));
+    },
+  });
+  assert.ok(calls.length > SMOKE_ENDPOINTS.length);
+  assert.deepEqual(new Set(calls), new Set([`bitcoin-p2p-check="${versionId}"`]));
 });
 
 test("deployment smoke can bind release expectations to Worker version metadata", async () => {
@@ -338,6 +428,34 @@ test("deployment smoke derives staging policy from version metadata", async () =
     },
   });
   assert.ok(results.some((result) => result.endpoint?.path === "/"));
+});
+
+test("deployment smoke rejects a deployment version that changes during recursive validation", async () => {
+  let versionRequests = 0;
+  await assert.rejects(
+    runDeploymentSmoke({
+      baseUrl: "https://deployment.example",
+      timeoutMs: 100,
+      log() {},
+      async fetcher(input) {
+        const url = new URL(input);
+        if (url.pathname !== "/api/version") return responseFor(url);
+        versionRequests += 1;
+        return Response.json({
+          ok: true,
+          appVersion: "2.3.0",
+          deploymentEnvironment: "production",
+          workerVersion: {
+            id: `worker-version-${versionRequests}`,
+            tag: "a".repeat(40),
+            timestamp: `2026-08-26T00:00:0${versionRequests}.000Z`,
+          },
+        }, { headers: { "Cache-Control": NO_STORE, "X-Deployment-Environment": "production" } });
+      },
+    }),
+    /스모크 실행 중 배포 version이 변경/u,
+  );
+  assert.equal(versionRequests, 2);
 });
 
 test("extractReferencedAssets keeps bounded same-origin scripts and styles only", () => {

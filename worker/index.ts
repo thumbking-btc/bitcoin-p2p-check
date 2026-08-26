@@ -1,23 +1,23 @@
-import { handleMarketRequest } from "./market";
-import type { LightningRequestEnvironment } from "./lightning-rate-limit";
-import { APP_VERSION } from "../app/lib/app-version";
+import { handleMarketRequest } from "./market.ts";
+import type { LightningRequestEnvironment } from "./lightning-rate-limit.ts";
+import { APP_VERSION } from "../app/lib/app-version.ts";
 import { normalizeDeploymentEnvironment } from "../app/lib/deployment-environment.mjs";
+import { loadValidatedCspPolicy } from "./csp-policy.ts";
 import {
   handleTradeRecordRequest,
   isTradeRecordApiPath,
   type TradeRecordEnvironment,
-} from "./trade-record";
+} from "./trade-record.ts";
 
-export { TradeRecordState } from "./trade-record-state";
+export { TradeRecordState } from "./trade-record-state.ts";
 
-export type WorkerExecutionContext = Pick<ExecutionContext, "waitUntil">;
+export type WorkerExecutionContext = Pick<ExecutionContext, "exports" | "waitUntil">;
 
 export type WorkerEnvironment = TradeRecordEnvironment
   & LightningRequestEnvironment
   & Partial<Pick<Env, "ASSETS" | "WORKER_VERSION">>;
 
 const CSP_POLICY_PATH = "/csp-policy.txt";
-const MAX_CSP_POLICY_LENGTH = 16_384;
 const NON_PRODUCTION_ROBOTS_POLICY = "noindex, nofollow, noarchive";
 const NON_PRODUCTION_NOTICE_MESSAGE = "시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.";
 const STATIC_SECURITY_HEADERS = Object.freeze({
@@ -125,18 +125,11 @@ export async function staticAssetResponse(request: Request, environment: WorkerE
     const policyRequest = new Request(new URL(CSP_POLICY_PATH, request.url), {
       headers: { Accept: "text/plain" },
     });
-    const policyResponse = await environment.ASSETS.fetch(policyRequest);
-    if (!policyResponse.ok) return staticAssetFailure(environment);
-    const policy = (await policyResponse.text()).trim();
-    if (
-      policy.length === 0
-      || policy.length > MAX_CSP_POLICY_LENGTH
-      || policy.includes("unsafe-inline")
-      || /[\r\n]/u.test(policy)
-      || !/\bscript-src\b[^;]*'sha256-/u.test(policy)
-    ) {
-      return staticAssetFailure(environment);
-    }
+    const policy = await loadValidatedCspPolicy(
+      () => environment.ASSETS!.fetch(policyRequest),
+      response.body,
+    );
+    if (!policy) return staticAssetFailure(environment);
     headers.set("Content-Security-Policy", policy);
   }
 
@@ -215,11 +208,13 @@ export default {
     }
 
     if (isTradeRecordApiPath(url.pathname)) {
-      return handleTradeRecordRequest(request, environment);
+      return handleTradeRecordRequest(request, environment, {
+        stateNamespace: context.exports.TradeRecordState,
+      });
     }
 
     if (url.pathname.startsWith("/api/")) return apiNotFoundResponse();
 
     return staticAssetResponse(request, environment);
   },
-};
+} satisfies ExportedHandler<Env>;

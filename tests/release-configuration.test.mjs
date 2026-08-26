@@ -52,7 +52,11 @@ test("fails closed on account telemetry until a redacting export pipeline is ver
 });
 
 test("keeps the production Worker and every privileged binding on an exact allowlist", async () => {
-  const production = JSON.parse(await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+  const [productionText, workflow] = await Promise.all([
+    readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/verify.yml", import.meta.url), "utf8"),
+  ]);
+  const production = JSON.parse(productionText);
   assert.equal(validateProductionConfig(production), true);
 
   const mutations = [
@@ -63,9 +67,13 @@ test("keeps the production Worker and every privileged binding on an exact allow
       ...production,
       kv_namespaces: [{ ...production.kv_namespaces[0], id: "00000000000000000000000000000000" }],
     }],
-    ["wrong Durable Object", {
+    ["unexpected Durable Object binding", {
       ...production,
-      durable_objects: { bindings: [{ name: "TRADE_RECORD_STATE", class_name: "OtherState" }] },
+      durable_objects: { bindings: [{ name: "TRADE_RECORD_STATE", class_name: "TradeRecordState" }] },
+    }],
+    ["wrong Durable Object export", {
+      ...production,
+      exports: { TradeRecordState: { type: "durable-object", storage: "kv" } },
     }],
     ["extra secret", {
       ...production,
@@ -81,7 +89,18 @@ test("keeps the production Worker and every privileged binding on an exact allow
   }
 
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.match(packageJson.scripts["deploy:production"], /--no-autoconfig/u);
+  assert.match(packageJson.scripts["deploy:production"], /process\.exit\(1\)/u);
+  assert.match(packageJson.scripts["upload:production:candidate"], /process\.exit\(1\)/u);
+  const productionJobIndex = workflow.indexOf("  deploy-production:");
+  assert.ok(productionJobIndex >= 0);
+  const productionJob = workflow.slice(productionJobIndex);
+  assert.match(productionJob, /environment:\s*production/u);
+  assert.match(productionJob, /Refuse production deployment until the Durable Object export bootstrap is approved/u);
+  assert.match(productionJob, /Production deployment blocked/u);
+  assert.match(productionJob, /exit 1/u);
+  assert.doesNotMatch(productionJob, /CLOUDFLARE_API_(?:TOKEN|KEY)/u);
+  assert.doesNotMatch(productionJob, /wrangler (?:deploy|versions upload|versions deploy)/u);
+  assert.doesNotMatch(workflow, /record-production-deploy\.mjs|production-upload|assert-zero-candidate/u);
 });
 
 test("keeps staging isolated and promotes only an exact smoke-tested candidate", async () => {
@@ -156,13 +175,15 @@ test("keeps staging isolated and promotes only an exact smoke-tested candidate",
   const candidateSmokeIndex = workflow.indexOf("Verify the exact staging candidate before promotion");
   const promoteIndex = workflow.indexOf("Promote only the verified staging version");
   const canonicalSmokeIndex = workflow.indexOf("Verify canonical staging without creating records");
+  const finalBranchCheckIndex = workflow.indexOf("Detect a staging deployment or branch advance after smoke");
   assert.ok(uploadIndex >= 0 && uploadIndex < candidateSmokeIndex);
   assert.ok(candidateSmokeIndex < promoteIndex);
-  assert.ok(promoteIndex < canonicalSmokeIndex);
+  assert.ok(promoteIndex < canonicalSmokeIndex && canonicalSmokeIndex < finalBranchCheckIndex);
   assert.match(workflow.slice(candidateSmokeIndex, promoteIndex), /steps\.staging-upload\.outputs\.preview_url/u);
   assert.match(workflow.slice(candidateSmokeIndex, promoteIndex), /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
   assert.match(workflow.slice(promoteIndex, canonicalSmokeIndex), /git fetch --no-tags origin staging[\s\S]*origin\/staging[\s\S]*versions deploy[\s\S]*version_id/u);
   assert.match(workflow.slice(canonicalSmokeIndex), /EXPECTED_WORKER_TAG="\$\{\{ github\.sha \}\}"/u);
+  assert.match(workflow.slice(finalBranchCheckIndex), /git fetch --no-tags origin staging[\s\S]*git rev-parse origin\/staging[\s\S]*github\.sha[\s\S]*check-staging-deployment\.mjs assert-single[\s\S]*staging-promoted\.outputs\.deployment_id/u);
 
   assert.match(guard, /GITHUB_REF !== "refs\/heads\/staging"/u);
   assert.match(guard, /GITHUB_EVENT_NAME !== "workflow_dispatch"/u);
@@ -369,11 +390,28 @@ test("documents the isolated local bootstrap gate and requires its parser before
   const bootstrapStart = runbook.indexOf("`wrangler versions upload`는 존재하지 않는 Worker를 최초 생성하지 못합니다.");
   const normalStagingStart = runbook.indexOf("bootstrap은 신규 격리 Worker 생성 예외", bootstrapStart);
   const bootstrapSection = runbook.slice(bootstrapStart, normalStagingStart);
+  const normalStagingSection = runbook.slice(
+    normalStagingStart,
+    runbook.indexOf("### 정상 배포 — 현재 차단됨", normalStagingStart),
+  );
   const versionsPreflightIndex = bootstrapSection.indexOf("npx wrangler versions list");
   const deploymentsPreflightIndex = bootstrapSection.indexOf("npx wrangler deployments list");
   const guardIndex = bootstrapSection.lastIndexOf("node scripts/check-staging-artifact.mjs --bootstrap");
   const deployIndex = bootstrapSection.indexOf("npx wrangler deploy .wrangler/dry-run/staging/index.js");
   const parserIndex = bootstrapSection.indexOf("node scripts/record-staging-upload.mjs --bootstrap");
+  const secretListIndex = bootstrapSection.indexOf("npm run secrets:check:staging", parserIndex);
+  const versionSecretIndex = bootstrapSection.indexOf(
+    'node scripts/check-worker-version-secrets.mjs staging "$version_id"',
+    parserIndex,
+  );
+  const versionConfigIndex = bootstrapSection.indexOf(
+    'node scripts/check-staging-version.mjs "$version_id" "$BOOTSTRAP_COMMIT_SHA"',
+    parserIndex,
+  );
+  const deploymentIndex = bootstrapSection.indexOf(
+    'node scripts/check-staging-deployment.mjs assert-single "$version_id"',
+    parserIndex,
+  );
   const smokeIndex = bootstrapSection.indexOf("node scripts/smoke-deployment.mjs");
 
   assert.ok(bootstrapStart >= 0 && normalStagingStart > bootstrapStart);
@@ -381,7 +419,9 @@ test("documents the isolated local bootstrap gate and requires its parser before
   assert.ok(deploymentsPreflightIndex >= 0 && deploymentsPreflightIndex < guardIndex);
   assert.ok(guardIndex >= 0 && guardIndex < deployIndex);
   assert.ok(deployIndex >= 0 && deployIndex < parserIndex);
-  assert.ok(parserIndex < smokeIndex);
+  assert.ok(parserIndex < secretListIndex && secretListIndex < versionSecretIndex);
+  assert.ok(versionSecretIndex < versionConfigIndex && versionConfigIndex < deploymentIndex);
+  assert.ok(deploymentIndex < smokeIndex);
   assert.match(
     bootstrapSection,
     /git -C "\$SOURCE_REPO" worktree add --detach "\$BOOTSTRAP_WORKTREE" "\$BOOTSTRAP_COMMIT_SHA"/u,
@@ -410,6 +450,11 @@ test("documents the isolated local bootstrap gate and requires its parser before
   assert.match(checker, /BOOTSTRAP_DEPLOY_APPROVED/u);
   assert.match(checker, /symbolic-ref/u);
   assert.match(checker, /--git-common-dir/u);
+  assert.match(
+    normalStagingSection,
+    /baseline capture부터 마지막 deployment·branch 재확인까지 단일 운영자 변경 창/u,
+  );
+  assert.match(normalStagingSection, /staging` branch push[\s\S]*Cloudflare Dashboard\/API[\s\S]*compare-and-swap/u);
 });
 
 test("local bootstrap guard rejects a GitHub-shaped execution context", () => {

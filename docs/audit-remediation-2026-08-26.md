@@ -13,13 +13,13 @@
 
 | 보고서 항목 | 재판정 및 조치 | 상태 |
 | --- | --- | --- |
-| H-01 / F-01 배포 우회 | 전체 검증, 동일 정적·Worker 산출물 보존, production environment 승인, 최신 `main` SHA 재확인, 직렬 배포, 배포 후 버전 결합 smoke를 구성했습니다. Cloudflare Git 연결 해제와 GitHub 보호 규칙은 운영자가 증적과 함께 확인해야 합니다. | 코드 완료·외부 검증 필요 |
+| H-01 / F-01 배포 우회 | 전체 검증과 동일 정적·Worker 산출물 보존은 구성했지만, declarative Durable Object `exports`는 `versions upload`·gradual deployment와 호환되지 않으므로 production job을 의도적으로 fail closed 처리했습니다. 별도 승인된 compatibility export bootstrap과 후속 atomic production workflow가 구현되기 전에는 배포할 수 없습니다. Cloudflare Git 연결 해제와 GitHub 보호 규칙도 운영자가 증적과 함께 확인해야 합니다. | 코드 차단 완료·배포 설계 및 외부 검증 필요 |
 | H-02 / F-02 비프로덕션 격리 | 별도 staging·preview Worker를 사용하고 production Durable Object·KV·서명 secret을 선언하지 않으며 모든 record mutation을 fail closed로 처리합니다. staging 화면에는 고정 환경 배너와 version API 대조를 표시하고 noindex/no-store를 적용합니다. | 자동 검증 완료; 실제 Dashboard binding 실측은 외부 확인 필요 |
 | H-03 / F-03 열린 BOLT11 만료 | 1초 재평가와 foreground 복귀 재평가를 적용하고, 만료 즉시 QR·복사를 제거했습니다. | 자동 검증 완료 |
 | H-04 / F-04 120초 경계 불일치 | 공통 lifecycle 판정으로 child·parent·공유 payload를 통일하고 `121→120→119→0` 브라우저 경계를 검증합니다. | 자동 검증 완료 |
 | H-05 / F-05 본문 전체 버퍼링 | 요청과 upstream 응답을 제한된 stream reader로 처리하고 초과 즉시 취소하며 정확한 JSON media type을 요구합니다. | 자동 검증 완료 |
 | H-06 / F-11 접근성 금액 불일치 | 시각 결과와 접근성 output이 같은 계산 상태를 사용하고 silent tick announce를 억제합니다. 실제 NVDA·VoiceOver·TalkBack 음성 결과는 실기기 gate입니다. | 코드 완료·외부 검증 필요 |
-| H-07 / F-06 개인정보·철회 | 공유 전 항목·목적·최대 보관·공개 범위·철회 권한을 고지하고, pending→공유→finalize와 취소/실패 revoke, 개인정보 안내 페이지를 추가했습니다. 법률 적합성 판단은 전문 검토가 필요합니다. | 코드 완료·외부 결정 필요 |
+| H-07 / F-06 개인정보·철회 | 공유 전 항목·목적·최대 보관·공개 범위·철회 권한을 고지하고, pending→공유→finalize와 취소/실패 revoke를 적용했습니다. 철회 capability는 기록별로 저장하며 확정 전 저장 실패 시 공개 요청을 시작하지 않습니다. 응답 유실은 `finalizing`으로 보존하고, 브라우저에 저장된 capability만 인증된 멱등 finalize를 재시도하며 memory-only·삭제 억제 상태는 공개 GET만 사용합니다. 조회 응답 ID는 요청 ID와 정확히 일치해야 하며 제거 tombstone은 늦게 끝난 복구보다 우선합니다. 저장된 finalize의 404가 확인된 경우에만 capability를 제거합니다. 탭 간 전체 삭제 뒤 stale write는 tombstone으로 다시 제거하고, 같은 ID의 다른 token은 기존 token을 메모리에 보존한 채 충돌 항목을 격리합니다. 복구 요청은 최대 4개 동시 실행, 600ms 시작 간격, 실패 후 5분 재시도로 제한합니다. 관리 목록에는 식별자·만료 시각과 철회 확인을 표시합니다. 법률 적합성 판단은 전문 검토가 필요합니다. | 코드 완료·외부 결정 필요 |
 
 ## Medium / P2
 
@@ -46,7 +46,7 @@
 | M-19 transient activation | “준비”와 별도 사용자 클릭 “공유”의 2단계로 분리했습니다. 실제 native share 성공 판정은 iOS/Android gate입니다. 원래 항목은 실기기 재현 전 개연성 판단이었습니다. | 코드 완료·외부 검증 필요; 원래 주장은 조건부 |
 | M-20 quota | 70/90% 경보와 용량 점검 절차를 문서화했습니다. 실제 요금제·사용량은 저장소에서 알 수 없으며 Free plan 결함이 확인된 것은 아닙니다. | 외부 운영 필요; 원래 주장은 조건부 |
 | M-21 Actions 공급망 | 모든 action을 전체 commit SHA로 고정하고 Dependabot, SBOM, notices, checksum, provenance attestation을 추가했습니다. | 자동 검증 완료 |
-| M-22 배포 경쟁 | production concurrency와 최신 `main` SHA guard를 추가했습니다. staging도 최신 `staging` SHA, 직렬 실행, 후보 version ID smoke, 정확한 version 승격을 요구합니다. 자동 rollback은 저장소·binding·key 호환성을 판단하지 못한 채 상태를 악화시킬 수 있어 강제하지 않고, 승인형 rollback 절차로 유지합니다. | 자동 검증 완료; canary/rollback 실행은 외부 운영 필요 |
+| M-22 배포 경쟁 | staging은 최신 `staging` SHA를 배포 전·승격 전·canonical smoke 후에 확인하고, 직렬 실행, 후보 version ID smoke와 정확한 version 승격을 요구합니다. production은 지원되지 않는 0% split 경로를 제거하고 승인형 compatibility export bootstrap 및 atomic workflow가 마련될 때까지 실패하도록 차단했습니다. Git과 Cloudflare 사이의 원자적 compare-and-swap은 없으므로 후속 production workflow에도 배포 전후 SHA 검사와 exact deployment 검사가 필요합니다. | staging 코드 검증 완료; production 설계 차단 |
 | M-23 Lightning 주소 정규화 | client와 Worker가 동일한 ASCII·domain·port·private-name 정규화 함수를 사용합니다. | 자동 검증 완료 |
 | M-24 market 응답 크기 | 고정 upstream도 bounded reader와 schema-before-use를 사용합니다. | 자동 검증 완료 |
 | M-25 capability 로그 | console payload에서 record ID·bearer pathname을 제외하고 route class만 남기며, Cloudflare-enriched URL metadata가 저장되지 않도록 account persistence도 끕니다. 검증된 외부 export allowlist와 보존 권한 구성은 외부 운영 gate입니다. | 코드 완료·외부 검증 필요 |
@@ -86,16 +86,34 @@
 - 거래 기록 GET과 JSON body stream에 전체 deadline이 없던 문제를 수정하고 hanging fetch·slow stream 회귀시험을 추가했습니다.
 - 클라이언트가 제출한 업비트 프리미엄 참고값은 서버가 데이터랩 원본과 0.5%p 범위로 독립 검증한 뒤에만 서명합니다.
 - staging/preview 배너, 동적 version alias의 서비스 워커 제거, modulepreload 검사, 지연 로딩 QR과 44px 관리 버튼을 재검증했습니다.
+- 독립 재검토에서 production 후보 `versions upload`와 100%+0% version override smoke 설계가 declarative Durable Object `exports` 제약과 충돌함을 확인했습니다. `exports`가 있는 Worker에는 이 upload·gradual 경로를 사용할 수 없고 최초 lifecycle 적용은 rollback 불가능한 100% 원자 변경이므로, 기존 경로를 제거하고 production job을 fail closed 처리했습니다.
+- production에는 기존 요청 동작을 유지하면서 class/export만 먼저 적용하는 별도 compatibility bootstrap artifact와 environment-protected atomic job이 필요합니다. bootstrap이 끝난 뒤에도 `versions upload`·0% split을 복원하지 않고 declarative `exports`에 맞는 atomic production workflow를 별도로 검토해야 합니다.
+- production·staging·preview의 원격 secret 이름·type allowlist 검사와 선택한 Worker version의 secret binding 검사는 구현했습니다. staging 배포에는 전후 검사가 연결되어 있으며, production 검사는 차단 해제 후 승인형 atomic workflow에 다시 연결해야 합니다. 이 검사는 secret 값 자체나 signer key fingerprint를 증명하지 않습니다.
+- CSP policy 파일도 제한된 크기와 엄격한 UTF-8로 읽고, 외부 HTTP 응답은 timeout signal을 body stream까지 전달하며 redirect·timeout 정리를 비차단 방식으로 수행합니다.
+- Durable Object 만료 정리 실패 시 후속 alarm을 예약하고, alarm 예약도 실패하면 최초 정리 오류를 다시 던져 플랫폼 자동 재시도를 보존합니다.
+- 브라우저 철회 capability의 aggregate snapshot을 기록별 저장으로 바꾸고, 32개 상한 손실·탭 간 덮어쓰기·확정 응답 유실·legacy 충돌·변조 항목 전파·삭제 뒤 부활을 회귀시험으로 고정했습니다. 저장된 `finalizing`은 인증된 멱등 finalize로 복구하되 memory-only 항목은 읽기 전용으로 확인하고, 같은 ID의 다른 token은 기존 capability를 덮어쓰지 않으며, 복구 요청은 bounded scheduler로 제한합니다.
+
+## 2026-08-26 외부 상태 실측
+
+아래 항목은 더 이상 단순한 미확인이 아니라 현재 계정에서 미완료가 확인된 release blocker입니다. secret 값 자체는 조회하거나 기록하지 않았습니다.
+
+- GitHub repository에는 environment, Actions repository secret, ruleset이 없고 `main` branch protection도 설정되지 않았습니다.
+- Cloudflare의 `bitcoin-p2p-check` Git build 연결이 `staging` push에서 실제 실행되어 production Worker에 비프로덕션 version을 생성했습니다.
+- production Worker의 공개 `staging` alias가 현재도 응답하며, 해당 version metadata에는 production `TRADE_RECORD_SIGNING_KEY` secret binding이 존재합니다. 거래 기록 기능이 꺼져 있어도 staging 격리 기준을 충족하지 않습니다.
+- 별도 `bitcoin-p2p-check-staging` Worker는 production Durable Object·KV 없이 배포되었고 secret 목록도 비어 있습니다. canonical URL은 `https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev/`이며 production Worker alias를 이 staging의 대체 주소로 사용하지 않습니다.
+- 따라서 저장소를 push하기 전에 Cloudflare Git 연결을 해제하고, 별도 승인 아래 기존 production Worker alias/version의 폐기와 signer 노출 범위 평가·필요 시 rotation을 완료해야 합니다. 이 재감사에서는 `main`, production deployment, 기존 alias와 secret을 변경하지 않았습니다.
 
 ## 프로덕션 승인 전 외부 완료 조건
 
 코드 branch의 완료와 프로덕션 운영 준비 완료는 같지 않습니다. 다음 항목은 [프로덕션 운영 런북](./production-operations.md)과 [실기기 체크리스트](./release-device-checklist.md)에 증적이 남기 전까지 미완료입니다.
 
-1. Cloudflare Git 직접 배포 연결 해제와 production/staging/preview binding 실측
-2. GitHub `main` 보호, 필수 verify, production reviewer와 최소권한 environment secret
-3. account custom/invocation log·trace persistence 비활성화 실측, Cloudflare-enriched URL metadata를 제거하는 외부 pipeline, synthetic·5xx·latency·quota 경보의 실제 test alert
-4. 암호화 backup 목적지·service identity·삭제 ledger 구성과 quarantine restore 훈련
-5. 승인형 signer rotation 절차와 비밀키 보관·침해 훈련
-6. iPhone Safari, Android Chrome, Windows 설치·회전·offline·native share 시험 및 NVDA·VoiceOver·TalkBack 시험
-7. 프로젝트 권리·라이선스, 개인정보·규제 범위와 사용자 고지에 대한 전문 검토
-8. 동일 산출물 배포와 읽기 전용 smoke가 성공한 뒤의 annotated tag·release record
+1. 실측으로 활성 상태가 확인된 Cloudflare Git 직접 배포 연결 해제, 기존 production Worker `staging` alias/version 폐기와 signer 노출 범위 평가·필요 시 rotation
+2. 실측으로 부재가 확인된 GitHub `main` 보호, 필수 verify, production reviewer와 최소권한 environment secret
+3. 별도 검증된 compatibility export bootstrap artifact와 `production` environment 보호형 100% atomic bootstrap job, lifecycle 경계 이후 forward-fix 계획
+4. declarative `exports` 제약을 준수하는 후속 production atomic workflow, 배포 전후 Git SHA 및 exact deployment/secret 검사
+5. account custom/invocation log·trace persistence 비활성화 실측, Cloudflare-enriched URL metadata를 제거하는 외부 pipeline, synthetic·5xx·latency·quota 경보의 실제 test alert
+6. 암호화 backup 목적지·service identity·삭제 ledger 구성과 quarantine restore 훈련
+7. 승인형 signer rotation 절차와 비밀키 보관·침해 훈련
+8. iPhone Safari, Android Chrome, Windows 설치·회전·offline·native share 시험 및 NVDA·VoiceOver·TalkBack 시험
+9. 프로젝트 권리·라이선스, 개인정보·규제 범위와 사용자 고지에 대한 전문 검토
+10. 동일 산출물 배포와 읽기 전용 smoke가 성공한 뒤의 annotated tag·release record

@@ -150,8 +150,20 @@ test("lifecycle storage helpers keep deterministic keys and managed/legacy envel
 
   const index = JSON.stringify({ version: 1, id: signed.record.id, state: "revoked" });
   assert.deepEqual(parseManagementIndex(index), { version: 1, id: signed.record.id, state: "revoked" });
-  assert.equal(parseManagementIndex(JSON.stringify({ version: 1, id: signed.record.id, state: "revoked", extra: true })), null);
-  assert.equal(parseManagementIndex("x".repeat(513)), null);
+  assert.equal(parseManagementIndex(null), null);
+  for (const corruptIndex of [
+    "not-json",
+    "x".repeat(513),
+    JSON.stringify({ version: 1, id: signed.record.id, state: "revoked", extra: true }),
+    JSON.stringify({ version: 2, id: signed.record.id, state: "revoked" }),
+    JSON.stringify({ version: 1, id: "too-short", state: "revoked" }),
+    JSON.stringify({ version: 1, id: signed.record.id, state: "active" }),
+  ]) {
+    assert.throws(
+      () => parseManagementIndex(corruptIndex),
+      (error) => assertRequestError(error, "STORAGE_CORRUPT", 500),
+    );
+  }
   assert.throws(
     () => parseStoredRecord("not-json"),
     (error) => assertRequestError(error, "STORAGE_CORRUPT", 500),

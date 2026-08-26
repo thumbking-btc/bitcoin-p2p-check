@@ -4,6 +4,11 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { TRADE_RECORD_SCHEMA } from "../app/lib/trade-record";
+import {
+  LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY,
+  MANAGED_TRADE_RECORD_CLOCK_SKEW_GRACE_MS,
+  MANAGED_TRADE_RECORD_STORAGE_PREFIX,
+} from "../app/lib/trade-share-session";
 
 const RECORD_ID = "AAAAAAAAAAAAAAAA";
 const CREATED_AT_MS = Date.parse("2027-01-15T08:00:00.000Z");
@@ -188,10 +193,10 @@ async function installFakeMarket(
   };
 }
 
-function signedLightningRecord() {
+function signedLightningRecord(id = RECORD_ID, revokeToken?: string) {
   const record = {
     schema: TRADE_RECORD_SCHEMA,
-    id: RECORD_ID,
+    id,
     createdAt: new Date(CREATED_AT_MS).toISOString(),
     expiresAt: new Date(RECORD_EXPIRES_AT_MS).toISOString(),
     condition: {
@@ -217,8 +222,9 @@ function signedLightningRecord() {
     record,
     signature: "A".repeat(86),
     keyId: "p2p-trade-record-2026-08-25",
-    id: RECORD_ID,
-    verificationUrl: `http://127.0.0.1:8787/verify/?id=${RECORD_ID}`,
+    id,
+    verificationUrl: `http://127.0.0.1:8787/verify/?id=${id}`,
+    ...(revokeToken ? { lifecycle: "finalized", revokeToken } : {}),
   };
 }
 
@@ -261,6 +267,656 @@ test("320px layout reflows without horizontal scrolling and receives enforced CS
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
   }
+});
+
+test("record-scoped revoke capabilities survive reload and merge independent storage events", async ({ page }) => {
+  await installFakeMarket(page);
+  await page.goto("/");
+  const firstId = "AAAAAAAAAAAAAAAB";
+  const secondId = "AAAAAAAAAAAAAAAC";
+  const storeRecord = async (id: string, revokeToken: string, dispatchEvent: boolean) => page.evaluate((value) => {
+    const serialized = JSON.stringify({
+      id: value.id,
+      revokeToken: value.revokeToken,
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    const key = `${value.prefix}${value.id}`;
+    window.localStorage.setItem(key, serialized);
+    if (value.dispatchEvent) {
+      window.dispatchEvent(new StorageEvent("storage", {
+        key,
+        newValue: serialized,
+        storageArea: window.localStorage,
+        url: window.location.href,
+      }));
+    }
+  }, { id, revokeToken, dispatchEvent, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX });
+
+  await storeRecord(firstId, "a".repeat(43), false);
+  await page.reload();
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("거래 기록 관리", { exact: true })).toBeVisible();
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
+
+  const tokenAfterLegacyCollision = await page.evaluate((value) => {
+    const scopedKey = `${value.prefix}${value.id}`;
+    const current = JSON.parse(window.localStorage.getItem(scopedKey) ?? "null") as Record<string, unknown>;
+    const stale = { ...current, revokeToken: "z".repeat(43) };
+    const serialized = JSON.stringify([stale]);
+    window.localStorage.setItem(value.legacyKey, serialized);
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: value.legacyKey,
+      newValue: serialized,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+    return JSON.parse(window.localStorage.getItem(scopedKey) ?? "null").revokeToken as string;
+  }, {
+    id: firstId,
+    legacyKey: LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY,
+    prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX,
+  });
+  expect(tokenAfterLegacyCollision).toBe("a".repeat(43));
+
+  await page.evaluate(({ id, prefix }) => {
+    const key = `${prefix}${id}`;
+    window.localStorage.setItem(key, "not-json");
+    window.dispatchEvent(new StorageEvent("storage", {
+      key,
+      newValue: "not-json",
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  }, { id: firstId, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+  await storeRecord(firstId, "a".repeat(43), true);
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
+
+  const finalizedExpiresAt = await page.evaluate(({ id, prefix }) => {
+    const key = `${prefix}${id}`;
+    const finalized = JSON.parse(window.localStorage.getItem(key) ?? "null") as Record<string, unknown>;
+    const stale = JSON.stringify({
+      ...finalized,
+      lifecycle: "pending",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString(),
+    });
+    window.localStorage.setItem(key, stale);
+    window.dispatchEvent(new StorageEvent("storage", {
+      key,
+      newValue: stale,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+    return finalized.expiresAt as string;
+  }, { id: firstId, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX });
+  await expect.poll(() => page.evaluate(({ id, prefix }) => {
+    const restored = JSON.parse(window.localStorage.getItem(`${prefix}${id}`) ?? "null") as Record<string, unknown>;
+    return { expiresAt: restored?.expiresAt, lifecycle: restored?.lifecycle };
+  }, { id: firstId, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX })).toEqual({
+    expiresAt: finalizedExpiresAt,
+    lifecycle: "finalized",
+  });
+  await page.reload();
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: null,
+      newValue: null,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+  await storeRecord(firstId, "a".repeat(43), true);
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await expect.poll(() => page.evaluate(
+    ({ id, prefix }) => window.localStorage.getItem(`${prefix}${id}`),
+    { id: firstId, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX },
+  )).toBeNull();
+
+  await storeRecord(secondId, "b".repeat(43), true);
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(2);
+  await page.evaluate(({ id, prefix }) => {
+    const key = `${prefix}${id}`;
+    window.localStorage.removeItem(key);
+    window.dispatchEvent(new StorageEvent("storage", {
+      key,
+      newValue: null,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  }, { id: secondId, prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+});
+
+test("a forward browser-clock jump across apparent expiry does not delete a capability", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const id = "AAAAAAAAAAAAAAAK";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "k".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(value.expiresAtMs).toISOString(),
+    }));
+  }, { expiresAtMs: CREATED_AT_MS + 60_000, id, key });
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+
+  await page.clock.fastForward(61_000);
+  await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).not.toBeNull();
+});
+
+test("a conflicting record-scoped token cannot replace the capability already held by an open tab", async ({ page }) => {
+  await installFakeMarket(page);
+  const id = "AAAAAAAAAAAAAAAI";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  const originalToken = "i".repeat(43);
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: value.token,
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    }));
+  }, { id, key, token: originalToken });
+  let authorization = "";
+  await page.route(`**/api/trade-record/${id}`, async (route) => {
+    authorization = route.request().headers().authorization ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({ ok: true, id }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await page.evaluate((value) => {
+    const conflicting = JSON.stringify({
+      id: value.id,
+      revokeToken: "z".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    window.localStorage.setItem(value.key, conflicting);
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: value.key,
+      newValue: conflicting,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  }, { id, key });
+
+  await expect(page.getByText(/서로 다른 철회 권한이 감지/u)).toBeVisible();
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
+  await expect.poll(() => authorization).toBe(`Bearer ${originalToken}`);
+});
+
+test("permanent revoke failures discard unusable browser capabilities", async ({ page }) => {
+  await installFakeMarket(page);
+  const invalidId = "AAAAAAAAAAAAAAAM";
+  const missingId = "AAAAAAAAAAAAAAAN";
+  const records = [
+    { id: invalidId, revokeToken: "m".repeat(43) },
+    { id: missingId, revokeToken: "n".repeat(43) },
+  ];
+  await page.addInitScript(({ prefix, values }) => {
+    for (const value of values) {
+      window.localStorage.setItem(`${prefix}${value.id}`, JSON.stringify({
+        id: value.id,
+        revokeToken: value.revokeToken,
+        verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+        lifecycle: "finalized",
+        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+      }));
+    }
+  }, { prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX, values: records });
+  await page.route("**/api/trade-record/*", async (route) => {
+    if (route.request().method() !== "DELETE") {
+      await route.fallback();
+      return;
+    }
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const invalid = id === invalidId;
+    await route.fulfill({
+      status: invalid ? 403 : 404,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({
+        ok: false,
+        code: invalid ? "INVALID_CAPABILITY" : "RECORD_NOT_FOUND",
+        message: invalid ? "권한 없음" : "기록 없음",
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(2);
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `공개 기록 ${invalidId} 철회` }).click();
+  await expect(page.getByText(/관리 권한이 더 이상 유효하지 않아/u)).toBeVisible();
+  await expect.poll(() => page.evaluate(
+    (key) => window.localStorage.getItem(key),
+    `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${invalidId}`,
+  )).toBeNull();
+  await expect(page.getByRole("button", { name: `공개 기록 ${invalidId} 철회` })).toHaveCount(0);
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `공개 기록 ${missingId} 철회` }).click();
+  await expect(page.getByText(/이미 없거나 철회되어/u)).toBeVisible();
+  await expect.poll(() => page.evaluate(
+    (key) => window.localStorage.getItem(key),
+    `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${missingId}`,
+  )).toBeNull();
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(0);
+});
+
+test("a rapid cross-tab clear prevents a stale capability write from restoring browser persistence", async ({ context, page }) => {
+  await installFakeMarket(page);
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+
+  const sourcePage = await context.newPage();
+  await sourcePage.goto("/privacy/");
+  const id = "AAAAAAAAAAAAAAAF";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await sourcePage.evaluate((value) => {
+    const serialized = JSON.stringify({
+      id: value.id,
+      revokeToken: "f".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    window.localStorage.setItem(value.key, serialized);
+    window.localStorage.clear();
+    window.localStorage.setItem(value.key, serialized);
+  }, { id, key });
+
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+  await expect.poll(async () => Promise.all([
+    page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key),
+    sourcePage.evaluate((storageKey) => window.localStorage.getItem(storageKey), key),
+  ])).toEqual([null, null]);
+
+  await sourcePage.evaluate((value) => {
+    window.localStorage.setItem(value.legacyKey, JSON.stringify([{
+      id: value.id,
+      revokeToken: "f".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    }]));
+  }, { id, legacyKey: LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY });
+  await expect.poll(async () => Promise.all([
+    page.evaluate((storageKey) => window.localStorage.getItem(storageKey), LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY),
+    sourcePage.evaluate((storageKey) => window.localStorage.getItem(storageKey), LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY),
+  ])).toEqual([null, null]);
+
+  await page.reload();
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  const tradeRecordCardModeAfterReload = page.getByRole("radio", { name: /거래 기록 카드/u });
+  await expect(tradeRecordCardModeAfterReload).toBeEnabled();
+  await tradeRecordCardModeAfterReload.check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(0);
+  await sourcePage.close();
+});
+
+test("a failed revoke after storage is cleared keeps the capability memory-only", async ({ page }) => {
+  await installFakeMarket(page);
+  const id = "AAAAAAAAAAAAAAAJ";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  const revokeToken = "j".repeat(43);
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: value.revokeToken,
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalized",
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+    }));
+  }, { id, key, revokeToken });
+  let authorization = "";
+  await page.route(`**/api/trade-record/${id}`, async (route) => {
+    authorization = route.request().headers().authorization ?? "";
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({ ok: false, code: "TEMPORARILY_UNAVAILABLE", message: "잠시 후 다시 시도" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: null,
+      newValue: null,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  });
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
+  await expect(page.getByText(/거래 기록을 철회하지 못했습니다/u)).toBeVisible();
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
+  expect(authorization).toBe(`Bearer ${revokeToken}`);
+});
+
+test("a persisted unresolved finalization retries idempotently and removes a missing private record", async ({ page }) => {
+  await installFakeMarket(page);
+  const id = "AAAAAAAAAAAAAAAD";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "d".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalizing",
+      expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1_000).toISOString(),
+    }));
+  }, { id, key });
+  let recordReads = 0;
+  await page.route(`**/api/trade-record/${id}/finalize`, async (route) => {
+    recordReads += 1;
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({ ok: false, code: "RECORD_NOT_FOUND", message: "기록 없음" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect.poll(() => recordReads).toBeGreaterThanOrEqual(1);
+  await expect.poll(
+    () => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key),
+    { timeout: 15_000 },
+  ).toBeNull();
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toHaveCount(0);
+  expect(recordReads).toBeGreaterThanOrEqual(1);
+});
+
+test("a permanent finalization authorization failure removes the invalid capability without retrying", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const id = "AAAAAAAAAAAAAAAM";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "m".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalizing",
+      expiresAt: new Date(value.expiresAtMs).toISOString(),
+    }));
+  }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id, key });
+  let finalizeRequests = 0;
+  await page.route(`**/api/trade-record/${id}/finalize`, async (route) => {
+    finalizeRequests += 1;
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({ ok: false, code: "INVALID_CAPABILITY", message: "권한 없음" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect.poll(() => finalizeRequests).toBe(1);
+  await expect(page.getByText(/유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 제거했습니다/u)).toBeVisible();
+  await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toHaveCount(0);
+
+  await page.clock.fastForward(5 * 60_000 + 1_000);
+  expect(finalizeRequests).toBe(1);
+});
+
+test("a memory-only finalizing 404 stops at the pending recovery deadline", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const id = "AAAAAAAAAAAAAAAL";
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
+  const recoveryDeadlineMs = CREATED_AT_MS + 60_000;
+  const finalExpiresAtMs = recoveryDeadlineMs
+    + 180 * 24 * 60 * 60 * 1_000
+    - 15 * 60 * 1_000
+    - MANAGED_TRADE_RECORD_CLOCK_SKEW_GRACE_MS;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "l".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalizing",
+      expiresAt: new Date(value.finalExpiresAtMs).toISOString(),
+    }));
+  }, { finalExpiresAtMs, id, key });
+  let finalizeRequests = 0;
+  let publicReads = 0;
+  let releaseFinalize = () => {};
+  const finalizeGate = new Promise<void>((resolve) => {
+    releaseFinalize = resolve;
+  });
+  await page.route(new RegExp(`/api/trade-record/${id}(?:/finalize)?$`, "u"), async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/finalize")) {
+      finalizeRequests += 1;
+      await finalizeGate;
+      try {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: false, code: "TEST_DELAYED", message: "지연됨" }),
+        });
+      } catch {
+        // The clear event aborts this authenticated retry before switching to a public read.
+      }
+      return;
+    }
+    publicReads += 1;
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, code: "RECORD_NOT_FOUND", message: "기록 없음" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  const tradeRecordCardMode = page.getByRole("radio", { name: /거래 기록 카드/u });
+  await expect(tradeRecordCardMode).toBeEnabled();
+  await tradeRecordCardMode.check({ force: true });
+  await expect.poll(() => finalizeRequests).toBe(1);
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: null,
+      newValue: null,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  });
+  await expect.poll(() => publicReads).toBeGreaterThanOrEqual(1);
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toBeVisible();
+  await expect(page.locator(".managed-trade-records time")).toHaveAttribute(
+    "datetime",
+    new Date(recoveryDeadlineMs).toISOString(),
+  );
+
+  await page.clock.fastForward(61_000);
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toHaveCount(0);
+  expect(finalizeRequests).toBe(1);
+  releaseFinalize();
+});
+
+test("clearing browser storage during reconciliation keeps a confirmed capability in memory only", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${RECORD_ID}`;
+  await page.addInitScript((value) => {
+    window.localStorage.setItem(value.key, JSON.stringify({
+      id: value.id,
+      revokeToken: "e".repeat(43),
+      verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+      lifecycle: "finalizing",
+      expiresAt: new Date(value.expiresAtMs).toISOString(),
+    }));
+  }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id: RECORD_ID, key });
+  let releaseRecordRead = () => {};
+  const recordReadGate = new Promise<void>((resolve) => {
+    releaseRecordRead = resolve;
+  });
+  let finalizeRequests = 0;
+  let readRequests = 0;
+  await page.route(new RegExp(`/api/trade-record/${RECORD_ID}(?:/finalize)?$`, "u"), async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/finalize")) {
+      finalizeRequests += 1;
+      await recordReadGate;
+    } else {
+      readRequests += 1;
+    }
+    try {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "Cache-Control": "no-store" },
+        body: JSON.stringify(signedLightningRecord(RECORD_ID, "e".repeat(43))),
+      });
+    } catch {
+      // Clearing storage switches the persisted finalize retry to a read-only request.
+    }
+  });
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toBeVisible();
+  await expect.poll(() => finalizeRequests).toBe(1);
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: null,
+      newValue: null,
+      storageArea: window.localStorage,
+      url: window.location.href,
+    }));
+  });
+  await page.clock.runFor(600);
+
+  await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+  await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
+  await expect.poll(() => page.evaluate(
+    (storageKey) => window.localStorage.getItem(storageKey),
+    key,
+  )).toBeNull();
+  expect(finalizeRequests).toBe(1);
+  expect(readRequests).toBeGreaterThanOrEqual(1);
+  releaseRecordRead();
+});
+
+test("finalizing records reconcile independently without aborting sibling requests", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS });
+  await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
+  const records = [
+    { id: "AAAAAAAAAAAAAAAG", revokeToken: "g".repeat(43) },
+    { id: "AAAAAAAAAAAAAAAH", revokeToken: "h".repeat(43) },
+  ];
+  await page.addInitScript((values) => {
+    for (const value of values) {
+      window.localStorage.setItem(`${value.prefix}${value.id}`, JSON.stringify({
+        id: value.id,
+        revokeToken: value.revokeToken,
+        verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
+        lifecycle: "finalizing",
+        expiresAt: new Date(value.expiresAtMs).toISOString(),
+      }));
+    }
+  }, records.map((record) => ({
+    ...record,
+    expiresAtMs: RECORD_EXPIRES_AT_MS,
+    prefix: MANAGED_TRADE_RECORD_STORAGE_PREFIX,
+  })));
+
+  let releaseSecond = () => {};
+  const secondGate = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  const requests = new Map(records.map(({ id }) => [id, 0]));
+  for (const [index, record] of records.entries()) {
+    await page.route(`**/api/trade-record/${record.id}/finalize`, async (route) => {
+      requests.set(record.id, (requests.get(record.id) ?? 0) + 1);
+      if (index === 1) await secondGate;
+      try {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          headers: { "Cache-Control": "no-store" },
+          body: JSON.stringify(signedLightningRecord(record.id, record.revokeToken)),
+        });
+      } catch {
+        // A regression with a shared controller aborts the first sibling request here.
+      }
+    });
+  }
+
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  await page.clock.runFor(600);
+  await expect.poll(() => requests.get(records[1].id)).toBe(1);
+  releaseSecond();
+  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(2);
+  expect(Object.fromEntries(requests)).toEqual({
+    [records[0].id]: 1,
+    [records[1].id]: 1,
+  });
 });
 
 test("preview stays visibly marked and hides install entry at 320px without JavaScript", async ({ browser, baseURL }) => {

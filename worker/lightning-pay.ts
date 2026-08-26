@@ -175,26 +175,22 @@ async function fetchJson(start: URL, signal: AbortSignal): Promise<{ value: unkn
     }
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
+      cancelBody(response.body);
       const location = response.headers.get("location");
       if (!location || redirects >= MAX_REDIRECTS) fail("INVALID_PROVIDER_RESPONSE", "라이트닝 지갑 서비스의 이동 경로를 확인하지 못했습니다.", 502);
       const next = providerUrl(location, current);
       if (!isSameOrSubdomain(next.hostname, anchorHostname)) {
         fail("INVALID_PROVIDER_RESPONSE", "라이트닝 지갑 서비스의 이동 도메인을 확인하지 못했습니다.", 502);
       }
-      try {
-        await response.body?.cancel("redirect response ignored");
-      } catch {
-        // The redirect validation error remains authoritative.
-      }
       current = next;
       continue;
     }
     if (!response.ok) {
-      await cancelBody(response.body);
+      cancelBody(response.body);
       fail(response.status === 404 ? "SOURCE_NOT_FOUND" : "PROVIDER_UNAVAILABLE", response.status === 404 ? "이 라이트닝 수취정보를 찾지 못했습니다." : "라이트닝 지갑 서비스가 요청을 처리하지 못했습니다.", response.status === 404 ? 404 : 502);
     }
     try {
-      return { value: await readBoundedJson(response, MAX_JSON_BYTES), finalUrl: current };
+      return { value: await readBoundedJson(response, MAX_JSON_BYTES, signal), finalUrl: current };
     } catch (error) {
       if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
         fail("PROVIDER_TIMEOUT", "라이트닝 지갑 서비스의 응답 시간이 초과되었습니다.", 504);

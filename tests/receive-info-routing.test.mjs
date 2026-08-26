@@ -15,7 +15,7 @@ test("routes market and signed-record APIs through the Worker", async () => {
 
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.match(worker, /isTradeRecordApiPath\(url\.pathname\)/);
-  assert.match(worker, /handleTradeRecordRequest\(request, environment\)/);
+  assert.match(worker, /handleTradeRecordRequest\(request, environment, \{[\s\S]*stateNamespace: context\.exports\.TradeRecordState,[\s\S]*\}\)/);
   assert.match(worker, /staticAssetResponse\(request, environment\)/);
   assert.match(market, /receiveMode === "lightning-address"/);
   assert.match(market, /handleLightningAddressRequest\(request, environment\)/);

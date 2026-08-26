@@ -20,16 +20,39 @@ import {
 import {
   fetchTradeRecord,
   isRetryableTradeRecordFetchError,
+  isTerminalTradeRecordRevocationError,
   TradeRecordApiRequestError,
   TradeRecordNetworkError,
 } from "../app/lib/trade-record-client.ts";
+import { managementKey, sha256Base64Url } from "../worker/trade-record-lifecycle.ts";
 import { handleTradeRecordRequest } from "../worker/trade-record.ts";
 
 const ADDRESS = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
 
+test("classifies only permanent revoke failures as terminal capability outcomes", () => {
+  for (const error of [
+    new TradeRecordApiRequestError("INVALID_CAPABILITY", "invalid", 401),
+    new TradeRecordApiRequestError("INVALID_CAPABILITY", "invalid", 403),
+    new TradeRecordApiRequestError("RECORD_NOT_FOUND", "missing", 404),
+    new TradeRecordApiRequestError("RECORD_REVOKED", "revoked", 409),
+  ]) {
+    assert.equal(isTerminalTradeRecordRevocationError(error), true);
+  }
+  for (const error of [
+    new TradeRecordApiRequestError("REQUEST_TIMEOUT", "timeout", 0),
+    new TradeRecordApiRequestError("HTTP_ERROR", "conflict", 409),
+    new TradeRecordApiRequestError("STORAGE_UNAVAILABLE", "unavailable", 503),
+    new TradeRecordNetworkError(new TypeError("offline")),
+    new Error("malformed response"),
+  ]) {
+    assert.equal(isTerminalTradeRecordRevocationError(error), false);
+  }
+});
+
 class MemoryKv {
   values = new Map();
   puts = [];
+  deletes = [];
 
   async get(key) {
     return this.values.get(key) ?? null;
@@ -38,6 +61,11 @@ class MemoryKv {
   async put(key, value, options) {
     this.values.set(key, value);
     this.puts.push({ key, value, options });
+  }
+
+  async delete(key) {
+    this.values.delete(key);
+    this.deletes.push(key);
   }
 }
 
@@ -136,6 +164,33 @@ function createRequest(draft, path = "/api/trade-record") {
   });
 }
 
+async function assertStorageCorruptResponse(response) {
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).code, "STORAGE_CORRUPT");
+}
+
+function assertStorageUnchanged(records, expectedValues) {
+  assert.deepEqual(records.values, expectedValues);
+  assert.deepEqual(records.puts, []);
+  assert.deepEqual(records.deletes, []);
+}
+
+async function finalizedManagedRecordFixture() {
+  const fixture = await signingEnvironment();
+  const create = createRequest(validDraft());
+  const capability = create.headers.get("Idempotency-Key");
+  const createdResponse = await fixture.handle(create);
+  assert.equal(createdResponse.status, 201);
+  const created = canonicalizeTradeRecordApiSuccess(await createdResponse.json());
+  const recordUrl = `https://records.example/api/trade-record/${created.id}`;
+  const finalized = await fixture.handle(new Request(`${recordUrl}/finalize`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${capability}` },
+  }));
+  assert.equal(finalized.status, 200);
+  return { ...fixture, capability, created, recordUrl };
+}
+
 test("pins the v1 retention policy and canonical signed representation", () => {
   const policy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1);
   assert.equal(TRADE_RECORD_SCHEMA, TRADE_RECORD_SCHEMA_V1);
@@ -231,6 +286,41 @@ test("creates privately, finalizes, fetches, and independently verifies a signed
   const fetched = canonicalizeTradeRecordApiSuccess(await getResponse.json());
   assert.deepEqual(fetched.record, created.record);
   assert.equal(fetched.signature, created.signature);
+});
+
+test("fails a create closed without writes when its non-null management tombstone is corrupt", async () => {
+  const { handle, records } = await signingEnvironment();
+  const request = createRequest(validDraft());
+  const capability = request.headers.get("Idempotency-Key");
+  const tokenHash = await sha256Base64Url(capability);
+  records.values.set(managementKey(tokenHash), "not-json");
+  const expectedValues = new Map(records.values);
+
+  await assertStorageCorruptResponse(await handle(request));
+  assertStorageUnchanged(records, expectedValues);
+});
+
+test("fails GET, finalize, and revoke closed without writes when a management tombstone is corrupt", async (t) => {
+  for (const operation of ["GET", "finalize", "revoke"]) {
+    await t.test(operation, async () => {
+      const { capability, created, handle, recordUrl, records } = await finalizedManagedRecordFixture();
+      const tokenHash = await sha256Base64Url(capability);
+      records.values.set(managementKey(tokenHash), "not-json");
+      records.puts.length = 0;
+      records.deletes.length = 0;
+      const expectedValues = new Map(records.values);
+      const request = operation === "GET"
+        ? new Request(recordUrl)
+        : new Request(operation === "finalize" ? `${recordUrl}/finalize` : recordUrl, {
+          method: operation === "finalize" ? "POST" : "DELETE",
+          headers: { Authorization: `Bearer ${capability}` },
+        });
+
+      await assertStorageCorruptResponse(await handle(request));
+      assert.equal(created.id, tokenHash.slice(0, 16));
+      assertStorageUnchanged(records, expectedValues);
+    });
+  }
 });
 
 test("refuses to finalize a pending record whose Lightning invoice has under 120 seconds left", async () => {
@@ -581,6 +671,44 @@ test("fails closed on Upbit 429 and aborts the in-flight verification at its dea
   }
 });
 
+test("aborts a stalled Upbit response body at the same verification deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const timedOut = await signingEnvironment();
+  let observedSignal;
+  let markBodyReadStarted;
+  const bodyReadStarted = new Promise((resolve) => {
+    markBodyReadStarted = resolve;
+  });
+
+  try {
+    const pendingResponse = timedOut.handle(createRequest(validDraft()), undefined, {
+      fetcher: async (_input, init) => {
+        observedSignal = init?.signal;
+        return new Response(new ReadableStream({
+          pull() {
+            markBodyReadStarted();
+            return new Promise(() => {});
+          },
+          cancel() {
+            return new Promise(() => {});
+          },
+        }), { headers: { "Content-Type": "application/json" } });
+      },
+    });
+
+    await bodyReadStarted;
+    assert.equal(observedSignal.aborted, false);
+    t.mock.timers.tick(4_000);
+    const timeoutResponse = await pendingResponse;
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(timeoutResponse.status, 503);
+    assert.equal((await timeoutResponse.json()).code, "MARKET_VERIFICATION_UNAVAILABLE");
+    assert.equal(timedOut.records.puts.length, 0);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
 test("rate-limits create calls by Cloudflare connecting IP before external work or KV writes", async () => {
   const { handle, rateLimiter, records } = await signingEnvironment();
   rateLimiter.success = false;
@@ -611,6 +739,18 @@ test("retries a fresh-record 404 and lets AbortSignal stop propagation waiting",
     });
     assert.equal(retried.id, created.id);
     assert.equal(attempts, 2);
+
+    const wrongId = "BBBBBBBBBBBBBBBB";
+    globalThis.fetch = async () => Response.json({
+      ...created,
+      id: wrongId,
+      record: { ...created.record, id: wrongId },
+      verificationUrl: `https://records.example/verify/?id=${wrongId}`,
+    });
+    await assert.rejects(
+      fetchTradeRecord(created.id, { endpointBase: "https://records.example/api/trade-record" }),
+      /조회 응답을 확인하지 못했습니다/u,
+    );
 
     globalThis.fetch = async () => Response.json(
       { ok: false, code: "RECORD_NOT_FOUND", message: "not propagated" },

@@ -1,5 +1,7 @@
 export type BoundedBodyFailure = "invalid-content-length" | "invalid-json" | "invalid-media-type" | "invalid-utf8" | "too-large";
 
+const DEFAULT_BODY_READ_DEADLINE_MS = 15_000;
+
 export class BoundedBodyError extends Error {
   readonly failure: BoundedBodyFailure;
 
@@ -15,12 +17,59 @@ export function isJsonMediaType(value: string | null): boolean {
   return value.split(";", 1)[0].trim().toLowerCase() === "application/json";
 }
 
-export async function cancelBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
+export function cancelBody(body: ReadableStream<Uint8Array> | null): void {
   if (!body || body.locked) return;
   try {
-    await body.cancel("bounded body rejected");
+    void body.cancel("bounded body rejected").catch(() => {
+      // Preserve the validation failure when the producer cannot be cancelled.
+    });
   } catch {
-    // Preserve the validation failure when the producer cannot be cancelled.
+    // ReadableStream.cancel can also throw synchronously for a hostile stream.
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("bounded body read aborted", "AbortError");
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>, reason: string): void {
+  try {
+    void reader.cancel(reason).catch(() => {
+      // Cancellation is best effort and must not replace the body failure.
+    });
+  } catch {
+    // A hostile reader can throw synchronously while cancellation is requested.
+  }
+}
+
+async function readWithDeadline(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  deadlineAt: number,
+  signal?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal?.aborted) throw abortReason(signal);
+
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new DOMException("bounded body read deadline exceeded", "TimeoutError");
+
+  let handleAbort: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new DOMException("bounded body read deadline exceeded", "TimeoutError"));
+    }, remainingMs);
+    if (signal) {
+      handleAbort = () => reject(abortReason(signal));
+      signal.addEventListener("abort", handleAbort, { once: true });
+      if (signal.aborted) handleAbort();
+    }
+  });
+
+  try {
+    return await Promise.race([reader.read(), interrupted]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (signal && handleAbort) signal.removeEventListener("abort", handleAbort);
   }
 }
 
@@ -38,16 +87,17 @@ function declaredLength(headers: Headers): number | null {
 export async function readBoundedBytes(
   message: Pick<Request, "body" | "headers"> | Pick<Response, "body" | "headers">,
   maximumBytes: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   let declared: number | null;
   try {
     declared = declaredLength(message.headers);
   } catch (error) {
-    await cancelBody(message.body);
+    cancelBody(message.body);
     throw error;
   }
   if (declared !== null && declared > maximumBytes) {
-    await cancelBody(message.body);
+    cancelBody(message.body);
     throw new BoundedBodyError("too-large");
   }
   if (!message.body) return new Uint8Array();
@@ -55,23 +105,29 @@ export async function readBoundedBytes(
   const reader = message.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
+  const deadlineAt = Date.now() + DEFAULT_BODY_READ_DEADLINE_MS;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithDeadline(reader, deadlineAt, signal);
       if (done) break;
       received += value.byteLength;
       if (received > maximumBytes) {
-        try {
-          await reader.cancel("bounded body exceeded");
-        } catch {
-          // Preserve the size error when cancellation also fails.
-        }
+        cancelReader(reader, "bounded body exceeded");
         throw new BoundedBodyError("too-large");
       }
       chunks.push(value);
     }
+  } catch (error) {
+    if (!(error instanceof BoundedBodyError && error.failure === "too-large")) {
+      cancelReader(reader, "bounded body read failed");
+    }
+    throw error;
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // An aborted read may remain pending when a hostile producer ignores cancel.
+    }
   }
 
   const bytes = new Uint8Array(received);
@@ -86,12 +142,13 @@ export async function readBoundedBytes(
 export async function readBoundedJson(
   message: Pick<Request, "body" | "headers"> | Pick<Response, "body" | "headers">,
   maximumBytes: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   if (!isJsonMediaType(message.headers.get("content-type"))) {
-    await cancelBody(message.body);
+    cancelBody(message.body);
     throw new BoundedBodyError("invalid-media-type");
   }
-  const bytes = await readBoundedBytes(message, maximumBytes);
+  const bytes = await readBoundedBytes(message, maximumBytes, signal);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

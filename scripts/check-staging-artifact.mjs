@@ -3,6 +3,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { verifyStagingAccountIdentity } from "./check-staging-account.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const expectedTopLevelKeys = Object.freeze([
@@ -168,6 +169,7 @@ async function requireAuthorizedLocalBootstrap(expectedCommitSha, expectedAppVer
   if (isolatedFiles.length !== 0) {
     throw new Error("bootstrap worktree에 격리해야 하는 사용자 보고서 또는 환경 파일이 있습니다.");
   }
+  await verifyStagingAccountIdentity();
 }
 
 async function main() {

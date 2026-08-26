@@ -29,8 +29,11 @@ import { runWithAbortTimeout } from "../lib/operation-timeout.mjs";
 import {
   createPendingTradeRecord,
   createTradeRecordRevokeToken,
+  fetchTradeRecord,
   finalizeTradeRecord,
+  isTerminalTradeRecordRevocationError,
   revokeTradeRecord,
+  TradeRecordApiRequestError,
 } from "../lib/trade-record-client";
 import { deriveAppliedPriceKrw } from "../lib/trade-record";
 import {
@@ -40,9 +43,20 @@ import {
   createPreparedTradeShare,
   createShareAttempt,
   isTradeShareTransitionSafe,
+  LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY,
+  loadPersistedManagedTradeRecords,
+  MANAGED_TRADE_RECORD_STORAGE_PREFIX,
+  managedTradeRecordCleanupAt,
   matchingShareAttempt,
+  parseManagedTradeRecordStorageKey,
+  parsePersistedManagedTradeRecord,
+  parsePersistedManagedTradeRecords,
+  persistManagedTradeRecord,
+  pruneExpiredManagedTradeRecords,
   recordShareDelivery,
   removeManagedTradeRecord,
+  removePersistedManagedTradeRecord,
+  serializeManagedTradeRecords,
   tradeRecordPaymentExpiresAt,
   toManagedTradeRecord,
   upsertManagedTradeRecord,
@@ -81,6 +95,24 @@ const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 const MARKET_REQUEST_TIMEOUT_MS = 12_000;
 const TRADE_RECORD_CREATE_TIMEOUT_MS = 15_000;
+const FINALIZATION_RECONCILE_RETRY_MS = 5 * 60_000;
+const FINALIZATION_RECONCILE_MAX_CONCURRENCY = 4;
+const FINALIZATION_RECONCILE_START_INTERVAL_MS = 600;
+const MANAGED_RECORD_EXPIRY_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Asia/Seoul",
+});
+
+function formatManagedRecordExpiry(expiresAt: string): string {
+  return MANAGED_RECORD_EXPIRY_FORMATTER.format(new Date(expiresAt));
+}
+
+function managedTradeRecordDisplayDeadline(record: ManagedTradeRecord): string {
+  return record.lifecycle === "finalizing"
+    ? new Date(managedTradeRecordCleanupAt(record)).toISOString()
+    : record.expiresAt;
+}
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -369,6 +401,161 @@ function LiveMarketTime({
   );
 }
 
+type ReconciliationPermit = () => void;
+type ReconciliationScheduler = Readonly<{
+  acquire: (signal: AbortSignal) => Promise<ReconciliationPermit>;
+}>;
+
+function createReconciliationScheduler(): ReconciliationScheduler {
+  type Waiter = {
+    signal: AbortSignal;
+    resolve: (release: ReconciliationPermit) => void;
+    reject: (reason: unknown) => void;
+    onAbort: () => void;
+  };
+
+  const queue = new Set<Waiter>();
+  let active = 0;
+  let lastStartedAt = 0;
+  let startTimer: number | null = null;
+
+  const pump = () => {
+    if (startTimer !== null || active >= FINALIZATION_RECONCILE_MAX_CONCURRENCY) return;
+    const waiter = queue.values().next().value as Waiter | undefined;
+    if (!waiter) return;
+    if (waiter.signal.aborted) {
+      waiter.onAbort();
+      return;
+    }
+    const delay = Math.max(
+      0,
+      lastStartedAt + FINALIZATION_RECONCILE_START_INTERVAL_MS - Date.now(),
+    );
+    if (delay > 0) {
+      startTimer = window.setTimeout(() => {
+        startTimer = null;
+        pump();
+      }, delay);
+      return;
+    }
+
+    queue.delete(waiter);
+    waiter.signal.removeEventListener("abort", waiter.onAbort);
+    active += 1;
+    lastStartedAt = Date.now();
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      active -= 1;
+      pump();
+    });
+    pump();
+  };
+
+  return Object.freeze({
+    acquire(signal) {
+      if (signal.aborted) {
+        return Promise.reject(signal.reason ?? new DOMException("Reconciliation aborted.", "AbortError"));
+      }
+      return new Promise<ReconciliationPermit>((resolve, reject) => {
+        const waiter = {} as Waiter;
+        waiter.signal = signal;
+        waiter.resolve = resolve;
+        waiter.reject = reject;
+        waiter.onAbort = () => {
+          if (!queue.delete(waiter)) return;
+          signal.removeEventListener("abort", waiter.onAbort);
+          reject(signal.reason ?? new DOMException("Reconciliation aborted.", "AbortError"));
+          pump();
+        };
+        queue.add(waiter);
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+        pump();
+      });
+    },
+  });
+}
+
+function FinalizingTradeRecordReconciler({
+  record,
+  acquirePermit,
+  readStorageGeneration,
+  onFinalized,
+  onInvalidCapability,
+  onMissing,
+}: {
+  record: ManagedTradeRecord;
+  acquirePermit: (signal: AbortSignal) => Promise<ReconciliationPermit>;
+  readStorageGeneration: () => number;
+  onFinalized: (record: ManagedTradeRecord, storageGeneration: number) => void;
+  onInvalidCapability: (record: ManagedTradeRecord) => void;
+  onMissing: (record: ManagedTradeRecord) => boolean;
+}) {
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const storageGeneration = readStorageGeneration();
+    let retryTimer: number | null = null;
+    const scheduleRetry = () => {
+      const remainingRecoveryMs = managedTradeRecordCleanupAt(record) - Date.now();
+      if (remainingRecoveryMs <= 0) return;
+      retryTimer = window.setTimeout(
+        () => setRevision((current) => current + 1),
+        Math.min(FINALIZATION_RECONCILE_RETRY_MS, remainingRecoveryMs),
+      );
+    };
+
+    void (async () => {
+      let releasePermit: ReconciliationPermit | null = null;
+      try {
+        releasePermit = await acquirePermit(controller.signal);
+        const signed = record.persistence === "browser"
+          ? await finalizeTradeRecord(record.id, record.revokeToken, {
+              signal: controller.signal,
+              timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+            })
+          : await fetchTradeRecord(record.id, {
+              signal: controller.signal,
+              timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+            });
+        if (controller.signal.aborted) return;
+        onFinalized(
+          toManagedTradeRecord(signed, record.revokeToken, "finalized"),
+          storageGeneration,
+        );
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        const invalidCapability = reason instanceof TradeRecordApiRequestError
+          && (reason.status === 401 || reason.status === 403);
+        if (invalidCapability) {
+          onInvalidCapability(record);
+          return;
+        }
+        const confirmedMissing = reason instanceof TradeRecordApiRequestError
+          && reason.status === 404;
+        if (confirmedMissing
+          && (record.persistence === "browser"
+            || managedTradeRecordCleanupAt(record) <= Date.now())) {
+          if (!onMissing(record)) scheduleRetry();
+        } else {
+          scheduleRetry();
+        }
+      } finally {
+        releasePermit?.();
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [acquirePermit, onFinalized, onInvalidCapability, onMissing, readStorageGeneration, record, revision]);
+
+  return null;
+}
+
 function formatFeeRate(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
@@ -408,6 +595,7 @@ export function P2PTradeTool() {
   const [shareStatus, setShareStatus] = useState("");
   const [preparedTradeShare, setPreparedTradeShare] = useState<PreparedTradeShare | null>(null);
   const [managedTradeRecords, setManagedTradeRecords] = useState<ManagedTradeRecord[]>([]);
+  const [managedTradeRecordsHydrated, setManagedTradeRecordsHydrated] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [confirmedLargeTradeKey, setConfirmedLargeTradeKey] = useState("");
   const [draftStatus, setDraftStatus] = useState("");
@@ -428,6 +616,380 @@ export function P2PTradeTool() {
   const currentShareAttemptKeyRef = useRef("");
   const sharePreparationAllowedRef = useRef(false);
   const autoRevokingRecordIdRef = useRef("");
+  const removedManagedRecordIdsRef = useRef(new Set<string>());
+  const suppressedManagedRecordIdsRef = useRef(new Set<string>());
+  const knownManagedRecordIdsRef = useRef(new Set<string>());
+  const knownManagedRecordsRef = useRef(new Map<string, ManagedTradeRecord>());
+  const managedStorageGenerationRef = useRef(0);
+  const managedTradeRecordsRef = useRef<ManagedTradeRecord[]>([]);
+  const reconciliationScheduler = useMemo(() => createReconciliationScheduler(), []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      try {
+        const restored = loadPersistedManagedTradeRecords(
+          window.localStorage,
+          window.location.origin,
+        );
+        const accepted: ManagedTradeRecord[] = [];
+        const conflictedIds = new Set<string>();
+        let capabilityConflict = false;
+        for (const record of restored) {
+          knownManagedRecordIdsRef.current.add(record.id);
+          const known = knownManagedRecordsRef.current.get(record.id);
+          if (known && known.revokeToken !== record.revokeToken) {
+            capabilityConflict = true;
+            conflictedIds.add(record.id);
+            suppressedManagedRecordIdsRef.current.add(record.id);
+            knownManagedRecordsRef.current.set(
+              record.id,
+              Object.freeze({ ...known, persistence: "memory-only" as const }),
+            );
+            try {
+              removePersistedManagedTradeRecord(window.localStorage, record.id);
+            } catch {
+              // The in-memory tombstone still prevents this tab from accepting the conflict.
+            }
+            continue;
+          }
+          const preferred = known ? upsertManagedTradeRecord([known], record)[0] : record;
+          knownManagedRecordsRef.current.set(record.id, preferred);
+          accepted.push(preferred);
+        }
+        if (capabilityConflict) {
+          setShareStatus("오류: 같은 기록에 서로 다른 철회 권한이 저장되어 기존 권한만 이 화면의 메모리에 보존했습니다. 이 화면을 닫기 전에 철회하십시오.");
+        }
+        setManagedTradeRecords((current) => accepted.reduce(
+          (records, record) => upsertManagedTradeRecord(records, record),
+          current.map((record) => (
+            conflictedIds.has(record.id)
+              ? Object.freeze({ ...record, persistence: "memory-only" as const })
+              : record
+          )),
+        ));
+      } catch {
+        // The record flow remains usable when site storage is unavailable.
+      } finally {
+        setManagedTradeRecordsHydrated(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (!managedTradeRecordsHydrated || managedTradeRecords.length === 0) return;
+    const now = Date.now();
+    const expiryTimes = managedTradeRecords
+      .map((record) => managedTradeRecordCleanupAt(record))
+      .filter(Number.isFinite);
+    const nextExpiry = expiryTimes.length === 0 ? now : Math.min(...expiryTimes);
+    const delay = Math.max(0, Math.min(nextExpiry - now, 24 * 60 * 60 * 1_000));
+    const timer = window.setTimeout(() => {
+      const removalTime = Date.now();
+      let browserRemovalFailed = false;
+      for (const record of managedTradeRecords) {
+        if (managedTradeRecordCleanupAt(record) > removalTime) continue;
+        removedManagedRecordIdsRef.current.add(record.id);
+        suppressedManagedRecordIdsRef.current.delete(record.id);
+        knownManagedRecordsRef.current.delete(record.id);
+        try {
+          removePersistedManagedTradeRecord(window.localStorage, record.id);
+        } catch {
+          browserRemovalFailed = true;
+        }
+      }
+      if (browserRemovalFailed) {
+        setShareStatus("오류: 만료된 거래 기록의 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오.");
+      }
+      setManagedTradeRecords((current) => pruneExpiredManagedTradeRecords(current, removalTime));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [managedTradeRecords, managedTradeRecordsHydrated]);
+
+  const finalizingManagedTradeRecords = useMemo(
+    () => managedTradeRecords.filter((record) => record.lifecycle === "finalizing"),
+    [managedTradeRecords],
+  );
+
+  const readManagedStorageGeneration = useCallback(
+    () => managedStorageGenerationRef.current,
+    [],
+  );
+
+  const handleFinalizingRecordFinalized = useCallback((
+    finalizedRecord: ManagedTradeRecord,
+    reconciliationStorageGeneration: number,
+  ) => {
+    if (removedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+      knownManagedRecordsRef.current.delete(finalizedRecord.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, finalizedRecord.id));
+      return;
+    }
+    knownManagedRecordIdsRef.current.add(finalizedRecord.id);
+    if (reconciliationStorageGeneration !== managedStorageGenerationRef.current
+      || suppressedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, finalizedRecord));
+      setShareStatus("오류: 공개 확정 상태를 확인했지만 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면을 닫기 전에 철회하십시오.");
+      knownManagedRecordsRef.current.set(finalizedRecord.id, finalizedRecord);
+      return;
+    }
+    let remembered = finalizedRecord;
+    try {
+      remembered = persistManagedTradeRecord(
+        window.localStorage,
+        finalizedRecord,
+        window.location.origin,
+      );
+    } catch {
+      setShareStatus("오류: 공개 확정 상태를 확인했지만 철회 권한의 브라우저 저장 상태를 갱신하지 못했습니다. 이 화면을 닫기 전에 철회하십시오.");
+    }
+    knownManagedRecordsRef.current.set(finalizedRecord.id, remembered);
+    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, remembered));
+  }, []);
+
+  const handleFinalizingRecordMissing = useCallback((record: ManagedTradeRecord) => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+      return true;
+    } catch {
+      setShareStatus("오류: 공개 확정할 수 없는 준비 기록의 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오.");
+      return false;
+    }
+  }, []);
+
+  const handleFinalizingRecordInvalidCapability = useCallback((record: ManagedTradeRecord) => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    let browserRemovalFailed = false;
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+    } catch {
+      browserRemovalFailed = true;
+    }
+    setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+    setShareStatus(browserRemovalFailed
+      ? "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오."
+      : "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 제거했습니다.");
+  }, []);
+
+  useEffect(() => {
+    managedTradeRecordsRef.current = managedTradeRecords;
+  }, [managedTradeRecords]);
+
+  useEffect(() => {
+    const keepKnownRecordInMemory = (recordId: string) => {
+      const known = knownManagedRecordsRef.current.get(recordId);
+      if (!known || known.persistence === "memory-only") return;
+      knownManagedRecordsRef.current.set(
+        recordId,
+        Object.freeze({ ...known, persistence: "memory-only" as const }),
+      );
+    };
+    const handleStorage = (event: StorageEvent) => {
+      let storage: Storage;
+      try {
+        storage = window.localStorage;
+      } catch {
+        return;
+      }
+      if (event.storageArea && event.storageArea !== storage) return;
+      if (event.key === null) {
+        managedStorageGenerationRef.current += 1;
+        const recordIds = new Set(knownManagedRecordIdsRef.current);
+        for (const record of managedTradeRecordsRef.current) recordIds.add(record.id);
+        let browserRemovalFailed = false;
+        for (const recordId of recordIds) {
+          knownManagedRecordIdsRef.current.add(recordId);
+          suppressedManagedRecordIdsRef.current.add(recordId);
+          keepKnownRecordInMemory(recordId);
+          try {
+            removePersistedManagedTradeRecord(storage, recordId);
+          } catch {
+            browserRemovalFailed = true;
+          }
+        }
+        if (browserRemovalFailed) {
+          setShareStatus("오류: 삭제 직후 다시 기록된 철회 권한을 정리하지 못했습니다. 이 사이트의 탭을 모두 닫은 뒤 브라우저 사이트 데이터를 직접 삭제하십시오.");
+        }
+        setManagedTradeRecords((current) => current.map((record) => (
+          Object.freeze({ ...record, persistence: "memory-only" as const })
+        )));
+        return;
+      }
+      if (event.key === LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY) {
+        if (event.newValue === null) {
+          setManagedTradeRecords((current) => current.map((record) => {
+            if (record.lifecycle !== "finalized") return record;
+            try {
+              if (storage.getItem(`${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${record.id}`) !== null) {
+                return record;
+              }
+            } catch {
+              // Treat an unreadable scoped value as unavailable in this tab.
+            }
+            keepKnownRecordInMemory(record.id);
+            return Object.freeze({ ...record, persistence: "memory-only" as const });
+          }));
+          return;
+        }
+        const restored = parsePersistedManagedTradeRecords(
+          event.newValue,
+          window.location.origin,
+        );
+        if (restored.length === 0) return;
+        const migrated: ManagedTradeRecord[] = [];
+        const residualLegacyRecords: ManagedTradeRecord[] = [];
+        for (const record of restored) {
+          if (removedManagedRecordIdsRef.current.has(record.id)
+            || suppressedManagedRecordIdsRef.current.has(record.id)) {
+            continue;
+          }
+          const known = knownManagedRecordsRef.current.get(record.id);
+          if (known && known.revokeToken !== record.revokeToken) {
+            migrated.push(Object.freeze({ ...known, persistence: "memory-only" as const }));
+            residualLegacyRecords.push(record);
+            continue;
+          }
+          try {
+            const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${record.id}`;
+            const existing = parsePersistedManagedTradeRecord(
+              storage.getItem(key),
+              window.location.origin,
+            );
+            if (existing?.id === record.id && existing.revokeToken !== record.revokeToken) {
+              migrated.push(existing);
+              residualLegacyRecords.push(record);
+              continue;
+            }
+            const preferred = existing?.id === record.id
+              ? upsertManagedTradeRecord([existing], record)[0]
+              : record;
+            migrated.push(existing && preferred === existing
+              ? existing
+              : persistManagedTradeRecord(storage, preferred, window.location.origin));
+          } catch {
+            // Keep the valid capability in memory when migration storage is unavailable.
+            migrated.push(record);
+            residualLegacyRecords.push(record);
+          }
+        }
+        try {
+          if (storage.getItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY) === event.newValue) {
+            if (residualLegacyRecords.length === 0) {
+              storage.removeItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY);
+            } else {
+              const residual = serializeManagedTradeRecords(residualLegacyRecords);
+              if (residual !== event.newValue) {
+                storage.setItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY, residual);
+              }
+            }
+          }
+        } catch {
+          setShareStatus("오류: 삭제 뒤 다시 기록된 이전 형식의 철회 권한을 정리하지 못했습니다. 이 사이트의 탭을 모두 닫은 뒤 브라우저 사이트 데이터를 직접 삭제하십시오.");
+        }
+        for (const record of migrated) {
+          knownManagedRecordIdsRef.current.add(record.id);
+          const known = knownManagedRecordsRef.current.get(record.id);
+          knownManagedRecordsRef.current.set(
+            record.id,
+            known ? upsertManagedTradeRecord([known], record)[0] : record,
+          );
+        }
+        setManagedTradeRecords((current) => migrated.reduce(
+          (records, record) => upsertManagedTradeRecord(records, record),
+          [...current],
+        ));
+        return;
+      }
+      if (!event.key?.startsWith(MANAGED_TRADE_RECORD_STORAGE_PREFIX)) return;
+      const recordId = parseManagedTradeRecordStorageKey(event.key);
+      if (!recordId) return;
+      if (event.newValue === null) {
+        if (suppressedManagedRecordIdsRef.current.has(recordId)) {
+          keepKnownRecordInMemory(recordId);
+          setManagedTradeRecords((current) => current.map((record) => (
+            record.id === recordId
+              ? Object.freeze({ ...record, persistence: "memory-only" as const })
+              : record
+          )));
+          return;
+        }
+        removedManagedRecordIdsRef.current.add(recordId);
+        knownManagedRecordsRef.current.delete(recordId);
+        try {
+          if (storage.getItem(event.key) !== null) storage.removeItem(event.key);
+        } catch {
+          // The in-memory tombstone still prevents this tab from recreating the capability.
+        }
+        setManagedTradeRecords((current) => current.filter((record) => record.id !== recordId));
+        return;
+      }
+      if (removedManagedRecordIdsRef.current.has(recordId)
+        || suppressedManagedRecordIdsRef.current.has(recordId)) {
+        try {
+          storage.removeItem(event.key);
+        } catch {
+          // Keep the in-memory tombstone even when browser storage is unavailable.
+        }
+        return;
+      }
+      const restored = parsePersistedManagedTradeRecord(
+        event.newValue,
+        window.location.origin,
+      );
+      if (!restored || restored.id !== recordId) {
+        keepKnownRecordInMemory(recordId);
+        setManagedTradeRecords((current) => current.map((record) => (
+          record.id === recordId
+            ? Object.freeze({ ...record, persistence: "memory-only" as const })
+            : record
+        )));
+        return;
+      }
+      const known = knownManagedRecordsRef.current.get(recordId);
+      if (known && known.revokeToken !== restored.revokeToken) {
+        const preserved = Object.freeze({ ...known, persistence: "memory-only" as const });
+        suppressedManagedRecordIdsRef.current.add(recordId);
+        knownManagedRecordsRef.current.set(recordId, preserved);
+        try {
+          storage.removeItem(event.key);
+        } catch {
+          // The in-memory tombstone still prevents this tab from accepting the conflict.
+        }
+        setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preserved));
+        setShareStatus("오류: 같은 기록에 서로 다른 철회 권한이 감지되어 기존 권한만 이 화면의 메모리에 보존했습니다. 이 화면을 닫기 전에 철회하십시오.");
+        return;
+      }
+      knownManagedRecordIdsRef.current.add(recordId);
+      const preferred = known ? upsertManagedTradeRecord([known], restored)[0] : restored;
+      let reconciled = preferred;
+      if (known && preferred !== restored) {
+        try {
+          reconciled = persistManagedTradeRecord(
+            storage,
+            preferred,
+            window.location.origin,
+          );
+        } catch {
+          reconciled = Object.freeze({ ...preferred, persistence: "memory-only" as const });
+          try {
+            if (storage.getItem(event.key) === event.newValue) storage.removeItem(event.key);
+          } catch {
+            // Keep the stronger lifecycle in memory when the stale browser value cannot be repaired.
+          }
+        }
+      }
+      knownManagedRecordsRef.current.set(recordId, reconciled);
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, reconciled));
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const replaceDraftFields = useCallback((fields: TradeDraftFields) => {
     setTradeRole(fields.tradeRole);
@@ -1038,31 +1600,95 @@ export function P2PTradeTool() {
     sharePreparationAllowedRef.current = shareImageAllowed;
   }, [shareImageAllowed]);
 
-  function releasePreparedReference() {
+  const releasePreparedReference = useCallback(() => {
     if (preparedTradeShareRef.current || paymentLockRef.current || isSharingRef.current) return;
     const pendingSnapshot = pendingMarketSnapshotRef.current;
     if (!pendingSnapshot) return;
     pendingMarketSnapshotRef.current = null;
     applyMarketSnapshot(pendingSnapshot, true);
-  }
+  }, [applyMarketSnapshot]);
 
-  function rememberManagedRecord(record: ManagedTradeRecord) {
-    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, record));
-  }
+  const rememberManagedRecord = useCallback((
+    record: ManagedTradeRecord,
+    expectedStorageGeneration = managedStorageGenerationRef.current,
+  ): boolean => {
+    if (removedManagedRecordIdsRef.current.has(record.id)) {
+      knownManagedRecordsRef.current.delete(record.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+      return false;
+    }
+    knownManagedRecordIdsRef.current.add(record.id);
+    const known = knownManagedRecordsRef.current.get(record.id);
+    if (known && known.revokeToken !== record.revokeToken) {
+      const preserved = Object.freeze({ ...known, persistence: "memory-only" as const });
+      suppressedManagedRecordIdsRef.current.add(record.id);
+      knownManagedRecordsRef.current.set(record.id, preserved);
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preserved));
+      return false;
+    }
+    let remembered = record;
+    let persisted = false;
+    if (expectedStorageGeneration === managedStorageGenerationRef.current
+      && !suppressedManagedRecordIdsRef.current.has(record.id)) {
+      try {
+        remembered = persistManagedTradeRecord(
+          window.localStorage,
+          record,
+          window.location.origin,
+        );
+        persisted = true;
+      } catch {
+        // Keep the capability in memory and surface the storage failure to the caller.
+      }
+    }
+    const preferred = known ? upsertManagedTradeRecord([known], remembered)[0] : remembered;
+    knownManagedRecordsRef.current.set(record.id, preferred);
+    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preferred));
+    return persisted;
+  }, []);
 
-  async function revokeKnownRecord(record: ManagedTradeRecord, successMessage: string) {
+  const forgetManagedRecord = useCallback((record: ManagedTradeRecord): boolean => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    let browserRemovalFailed = false;
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+    } catch {
+      browserRemovalFailed = true;
+    }
+    setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+    if (preparedTradeShareRef.current?.signed.id === record.id) {
+      preparedTradeShareRef.current = null;
+      setPreparedTradeShare(null);
+    }
+    if (shareAttemptCacheRef.current?.signed?.id === record.id) shareAttemptCacheRef.current = null;
+    return browserRemovalFailed;
+  }, []);
+
+  const revokeKnownRecord = useCallback(async (record: ManagedTradeRecord, successMessage: string) => {
+    const storageGeneration = managedStorageGenerationRef.current;
     try {
       await revokeTradeRecord(record.id, record.revokeToken, { timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS });
-      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
-      if (preparedTradeShareRef.current?.signed.id === record.id) {
-        preparedTradeShareRef.current = null;
-        setPreparedTradeShare(null);
-      }
-      if (shareAttemptCacheRef.current?.signed?.id === record.id) shareAttemptCacheRef.current = null;
-      setShareStatus(successMessage);
+      const browserRemovalFailed = forgetManagedRecord(record);
+      setShareStatus(browserRemovalFailed
+        ? `${successMessage} 다만 만료 전 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다.`
+        : successMessage);
       return true;
     } catch (reason) {
-      rememberManagedRecord(record);
+      if (isTerminalTradeRecordRevocationError(reason)) {
+        const browserRemovalFailed = forgetManagedRecord(record);
+        const alreadyAbsent = reason instanceof TradeRecordApiRequestError
+          && (reason.status === 404 || reason.code === "RECORD_REVOKED");
+        const terminalMessage = alreadyAbsent
+          ? "거래 기록이 이미 없거나 철회되어 브라우저의 관리 권한을 정리했습니다."
+          : "오류: 거래 기록 관리 권한이 더 이상 유효하지 않아 브라우저에서 제거했습니다. 공개 기록이 남아 있다면 이 권한으로는 철회할 수 없습니다.";
+        setShareStatus(browserRemovalFailed
+          ? `${terminalMessage} 다만 만료 전 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다.`
+          : terminalMessage);
+        return true;
+      }
+      rememberManagedRecord(record, storageGeneration);
       setShareStatus(reason instanceof Error
         ? `오류: 거래 기록을 철회하지 못했습니다. ${reason.message}`
         : "오류: 거래 기록을 철회하지 못했습니다. 다시 시도해 주세요.");
@@ -1070,7 +1696,7 @@ export function P2PTradeTool() {
     } finally {
       releasePreparedReference();
     }
-  }
+  }, [forgetManagedRecord, releasePreparedReference, rememberManagedRecord]);
 
   async function prepareTradeShare() {
     if (!shareImageAllowed || !quote || !tradeRecordDraft || !shareAttemptKey || referenceTime === null || isSharing) return;
@@ -1174,6 +1800,7 @@ export function P2PTradeTool() {
     setShareStatus("");
     let activePrepared = prepared;
     let stage: "sharing" | "finalizing" = prepared.deliveryOutcome ? "finalizing" : "sharing";
+    let finalizationStorageGeneration: number | null = null;
     try {
       const sharingStillSafe = isTradeShareTransitionSafe({
         currentAttemptKey: currentShareAttemptKeyRef.current,
@@ -1238,12 +1865,41 @@ export function P2PTradeTool() {
         return;
       }
 
+      if (activePrepared.signed.lifecycle !== "finalized") {
+        const pendingCapabilityPersisted = rememberManagedRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken, "finalizing"),
+        );
+        if (!pendingCapabilityPersisted) {
+          setShareStatus("오류: 카드가 전달되었지만 철회 권한을 이 브라우저에 저장하지 못해 공개 확정을 시작하지 않았습니다. 사이트 저장을 허용한 뒤 같은 버튼으로 재시도하거나 준비 기록을 철회하십시오.");
+          return;
+        }
+      }
+      finalizationStorageGeneration = managedStorageGenerationRef.current;
+
       const finalized = activePrepared.signed.lifecycle === "finalized"
         ? activePrepared.signed
         : await finalizeTradeRecord(activePrepared.signed.id, activePrepared.revokeToken, {
             timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
           });
       const finalizedRecord = toManagedTradeRecord(finalized, activePrepared.revokeToken, "finalized");
+      if (finalizationStorageGeneration !== managedStorageGenerationRef.current
+        || suppressedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+        setManagedTradeRecords((current) => upsertManagedTradeRecord(current, finalizedRecord));
+        preparedTradeShareRef.current = null;
+        setPreparedTradeShare(null);
+        shareAttemptCacheRef.current = null;
+        setShareStatus("오류: 상세 기록은 공개 확정했지만 처리 중 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면을 닫기 전에 철회하십시오.");
+        return;
+      }
+      if (removedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+        knownManagedRecordsRef.current.delete(finalizedRecord.id);
+        setManagedTradeRecords((current) => removeManagedTradeRecord(current, finalizedRecord.id));
+        preparedTradeShareRef.current = null;
+        setPreparedTradeShare(null);
+        shareAttemptCacheRef.current = null;
+        setShareStatus("오류: 공개 확정 처리 중 다른 탭에서 이 기록의 관리 권한이 삭제되어 다시 저장하지 않았습니다. 전달한 상세 링크의 상태를 확인하십시오.");
+        return;
+      }
       const finalizationRemainsSafe = isTradeShareTransitionSafe({
         currentAttemptKey: currentShareAttemptKeyRef.current,
         candidateAttemptKey: activePrepared.key,
@@ -1257,11 +1913,13 @@ export function P2PTradeTool() {
         return;
       }
 
-      rememberManagedRecord(finalizedRecord);
+      const capabilityPersisted = rememberManagedRecord(finalizedRecord);
       preparedTradeShareRef.current = null;
       setPreparedTradeShare(null);
       shareAttemptCacheRef.current = null;
-      if (activePrepared.deliveryOutcome === "shared") {
+      if (!capabilityPersisted) {
+        setShareStatus("오류: 상세 기록은 공개 확정했지만 철회 권한을 이 브라우저에 저장하지 못했습니다. 이 화면을 닫지 말고 아래 철회 버튼을 사용하십시오.");
+      } else if (activePrepared.deliveryOutcome === "shared") {
         setShareStatus("거래 기록 카드 공유 후 상세 기록을 공개 확정했습니다. 아래에서 공개 기록을 철회할 수 있습니다.");
       } else if (activePrepared.deliveryOutcome === "downloaded") {
         setShareStatus(activePrepared.verificationUrlDelivery === "copied"
@@ -1284,7 +1942,40 @@ export function P2PTradeTool() {
             : "오류: 카드를 공유하지 못했고 준비 기록도 자동 폐기하지 못했습니다. 아래 철회 버튼으로 다시 시도해 주세요.");
         }
       } else {
-        rememberManagedRecord(toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken));
+        const uncertainRecord = toManagedTradeRecord(
+          activePrepared.signed,
+          activePrepared.revokeToken,
+          "finalizing",
+        );
+        if (finalizationStorageGeneration !== null
+          && (finalizationStorageGeneration !== managedStorageGenerationRef.current
+            || suppressedManagedRecordIdsRef.current.has(activePrepared.signed.id))
+          && !(reason instanceof TradeRecordApiRequestError && reason.code === "RECORD_REVOKED")) {
+          setManagedTradeRecords((current) => upsertManagedTradeRecord(current, uncertainRecord));
+          setShareStatus("오류: 카드 전달 뒤 공개 확정 결과를 확인하지 못했고 처리 중 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면에서 철회하거나 상세 링크 상태를 확인하십시오.");
+          return;
+        }
+        if (removedManagedRecordIdsRef.current.has(activePrepared.signed.id)
+          || (reason instanceof TradeRecordApiRequestError && reason.code === "RECORD_REVOKED")) {
+          removedManagedRecordIdsRef.current.add(activePrepared.signed.id);
+          suppressedManagedRecordIdsRef.current.delete(activePrepared.signed.id);
+          knownManagedRecordsRef.current.delete(activePrepared.signed.id);
+          try {
+            removePersistedManagedTradeRecord(window.localStorage, activePrepared.signed.id);
+          } catch {
+            // The local tombstone still prevents the revoked capability from being recreated.
+          }
+          setManagedTradeRecords((current) => removeManagedTradeRecord(current, activePrepared.signed.id));
+          preparedTradeShareRef.current = null;
+          setPreparedTradeShare(null);
+          shareAttemptCacheRef.current = null;
+          setShareStatus("공개 확정 처리 중 다른 탭에서 기록이 철회되었습니다. 전달된 카드의 상세 링크는 열리지 않습니다.");
+          return;
+        }
+        rememberManagedRecord(
+          uncertainRecord,
+          finalizationStorageGeneration ?? managedStorageGenerationRef.current,
+        );
         setShareStatus(reason instanceof Error
           ? `오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. ${reason.message} 같은 버튼으로 확정을 재시도하거나 준비 기록을 철회하십시오.`
           : "오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. 같은 버튼으로 재시도하거나 준비 기록을 철회하십시오.");
@@ -1317,10 +2008,21 @@ export function P2PTradeTool() {
 
   async function revokeManagedTradeRecord(record: ManagedTradeRecord) {
     if (isSharing) return;
+    const lifecycleLabel = record.lifecycle === "finalized"
+      ? "공개 기록"
+      : record.lifecycle === "finalizing"
+        ? "확정 상태를 확인 중인 기록"
+        : "준비 기록";
+    if (!window.confirm(`${lifecycleLabel}을 철회하시겠습니까?\n식별자: ${record.id}\n이 작업은 되돌릴 수 없습니다.`)) return;
     isSharingRef.current = true;
     setIsSharing(true);
     try {
-      await revokeKnownRecord(record, "공개 거래 기록을 철회했습니다. 기존 상세 링크는 더 이상 열리지 않습니다.");
+      await revokeKnownRecord(
+        record,
+        record.lifecycle === "finalized"
+          ? "공개 거래 기록을 철회했습니다. 기존 상세 링크는 더 이상 열리지 않습니다."
+          : "공개 확정 전 기록을 철회했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
+      );
     } finally {
       isSharingRef.current = false;
       setIsSharing(false);
@@ -1345,21 +2047,10 @@ export function P2PTradeTool() {
     void (async () => {
       setIsSharing(true);
       try {
-        await revokeTradeRecord(prepared.signed.id, prepared.revokeToken, {
-          timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
-        });
-        setManagedTradeRecords((current) => removeManagedTradeRecord(current, prepared.signed.id));
-        if (preparedTradeShareRef.current?.signed.id === prepared.signed.id) {
-          preparedTradeShareRef.current = null;
-          setPreparedTradeShare(null);
-        }
-        if (shareAttemptCacheRef.current?.signed?.id === prepared.signed.id) shareAttemptCacheRef.current = null;
-        setShareStatus("거래 조건 또는 시세가 바뀌어 비공개 준비 기록을 자동으로 폐기했습니다.");
-      } catch (reason) {
-        rememberManagedRecord(toManagedTradeRecord(prepared.signed, prepared.revokeToken));
-        setShareStatus(reason instanceof Error
-          ? `오류: 준비 기록을 자동 폐기하지 못했습니다. ${reason.message}`
-          : "오류: 준비 기록을 자동 폐기하지 못했습니다. 아래 철회 버튼으로 다시 시도해 주세요.");
+        await revokeKnownRecord(
+          toManagedTradeRecord(prepared.signed, prepared.revokeToken),
+          "거래 조건 또는 시세가 바뀌어 비공개 준비 기록을 자동으로 폐기했습니다.",
+        );
       } finally {
         isSharingRef.current = false;
         setIsSharing(false);
@@ -1372,7 +2063,7 @@ export function P2PTradeTool() {
         }
       }
     })();
-  }, [applyMarketSnapshot, preparedShareIsCurrent, preparedTradeShare, shareImageAllowed]);
+  }, [applyMarketSnapshot, preparedShareIsCurrent, preparedTradeShare, revokeKnownRecord, shareImageAllowed]);
 
   function changeBitcoinDisplayUnit(nextUnit: BitcoinDisplayUnit) {
     if (nextUnit === bitcoinDisplayUnit) return;
@@ -1461,6 +2152,19 @@ export function P2PTradeTool() {
       aria-labelledby="tool-title"
       aria-busy={!draftHydrated}
     >
+      {managedTradeRecordsHydrated && !isSharing
+        ? finalizingManagedTradeRecords.map((record) => (
+            <FinalizingTradeRecordReconciler
+              key={record.id}
+              record={record}
+              acquirePermit={reconciliationScheduler.acquire}
+              readStorageGeneration={readManagedStorageGeneration}
+              onFinalized={handleFinalizingRecordFinalized}
+              onInvalidCapability={handleFinalizingRecordInvalidCapability}
+              onMissing={handleFinalizingRecordMissing}
+            />
+          ))
+        : null}
       <article className="capture-card" data-capture-card>
         <header className="tool-heading">
           <div className="brand-line">
@@ -1792,7 +2496,9 @@ export function P2PTradeTool() {
               <ul>
                 <li>거래 역할·금액·시세·프리미엄과 선택한 자금 출처·결제정보가 거래 기록 서버에 저장됩니다.</li>
                 <li>공유 완료 후 상세 링크를 가진 사람은 로그인 없이 해당 기록을 최대 180일간 열 수 있습니다.</li>
-                <li>철회 권한은 이 화면에만 보관됩니다. 화면을 닫으면 공개 기록을 직접 철회할 수 없으므로 필요한 철회를 먼저 완료하십시오.</li>
+                <li>카드 전달 뒤에는 공개 확정 전에 철회 권한을 먼저 브라우저에 저장합니다. 확정 응답을 받지 못하면 저장이 확인된 항목만 공개 확정을 다시 시도하고, 메모리 전용 항목은 공개 상태만 확인합니다. 공개 기록의 철회 권한은 만료 시까지 기록별로 보관하며, 사전 저장에 실패하면 공개 확정을 시작하지 않습니다.</li>
+                <li>준비·공유 실패 뒤 자동 철회까지 실패한 기록의 철회 권한은 재시도를 위해 최대 15분간 저장될 수 있습니다.</li>
+                <li>브라우저 데이터를 지우거나 다른 기기를 쓰면 다음 접속에서 철회 권한은 복구되지 않습니다. 이미 열린 탭에는 닫을 때까지 메모리 사본이 남을 수 있으며, 공유 기기 사용자는 저장되었거나 열린 탭에 남은 기록을 철회할 수 있습니다.</li>
                 <li>서명은 기록이 바뀌지 않았다는 점만 확인하며 상대방의 신원, 입금, BTC 수령 또는 거래 완료를 증명하지 않습니다.</li>
               </ul>
               <a href="/privacy/">개인정보 처리 안내 보기</a>
@@ -1842,18 +2548,46 @@ export function P2PTradeTool() {
               {managedTradeRecords.length > 0 ? (
                 <section className="managed-trade-records" aria-label="이 화면에서 만든 거래 기록 관리">
                   <strong>거래 기록 관리</strong>
-                  <p>철회 권한은 이 화면을 닫기 전까지만 유지됩니다.</p>
+                  <p>공개 기록은 만료 시까지 관리합니다. 확정 요청의 결과를 받지 못한 기록은 브라우저에 보관하고 서버의 공개 상태를 다시 확인합니다.</p>
+                  {managedTradeRecords.some((record) => (
+                    record.lifecycle === "finalized" && record.persistence === "memory-only"
+                  )) ? (
+                    <p className="is-error" role="alert">저장하지 못한 공개 기록의 철회 권한이 있습니다. 이 화면을 닫기 전에 철회하십시오.</p>
+                  ) : null}
+                  {managedTradeRecords.some((record) => (
+                    record.lifecycle !== "finalized" && record.persistence === "memory-only"
+                  )) ? (
+                    <p className="is-error" role="alert">저장하지 못한 준비 기록의 철회 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 철회하십시오.</p>
+                  ) : null}
                   <ul>
                     {managedTradeRecords.map((record) => (
                       <li key={record.id}>
-                        <span>{record.lifecycle === "finalized" ? "공개 기록" : "준비 기록"}</span>
+                        <span>
+                          <strong>{record.lifecycle === "finalized"
+                            ? "공개 기록"
+                            : record.lifecycle === "finalizing"
+                              ? "확정 상태 확인 필요"
+                              : "준비 기록"}</strong>
+                          <small>
+                            식별자 <code>{record.id}</code> · <time dateTime={managedTradeRecordDisplayDeadline(record)}>
+                              {formatManagedRecordExpiry(managedTradeRecordDisplayDeadline(record))} {record.lifecycle === "finalizing" ? "확인 기한" : "만료"}
+                            </time>
+                          </small>
+                        </span>
                         {record.lifecycle === "finalized" ? (
                           <>
                             <a href={record.verificationUrl} target="_blank" rel="noreferrer">열기</a>
                             <button type="button" onClick={() => void copyVerificationUrl(record.verificationUrl)} disabled={isSharing}>복사</button>
                           </>
                         ) : null}
-                        <button type="button" onClick={() => void revokeManagedTradeRecord(record)} disabled={isSharing}>철회</button>
+                        <button
+                          type="button"
+                          onClick={() => void revokeManagedTradeRecord(record)}
+                          disabled={isSharing}
+                          aria-label={`${record.lifecycle === "finalized" ? "공개" : "확정 전"} 기록 ${record.id} 철회`}
+                        >
+                          철회
+                        </button>
                       </li>
                     ))}
                   </ul>

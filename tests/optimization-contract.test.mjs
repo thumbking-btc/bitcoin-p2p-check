@@ -95,7 +95,7 @@ test("caches premium work without request-scoped module globals", async () => {
   assert.match(marketWorker, /PREMIUM_RETRY_BACKOFF_SECONDS\s*=\s*30/);
   assert.doesNotMatch(marketWorker, /let\s+pendingPremiumFetch/);
   assert.doesNotMatch(marketWorker, /let\s+pendingSnapshot/);
-  assert.match(marketWorker, /readBoundedJson\(response, MAX_UPSTREAM_JSON_BYTES\)/);
+  assert.match(marketWorker, /readBoundedJson\(\s*response,\s*MAX_UPSTREAM_JSON_BYTES,\s*controller\.signal\s*\)/);
   assert.match(marketWorker, /fresh-premium/);
   assert.match(marketWorker, /premium-backoff/);
   assert.match(marketWorker, /resolvePremium/);

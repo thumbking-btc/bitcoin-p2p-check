@@ -13,6 +13,8 @@ const MAX_TIMEOUT_MS = 60_000;
 const MAX_HTML_BYTES = 512 * 1_024;
 const MAX_TEXT_ASSET_BYTES = 2 * 1_024 * 1_024;
 const MAX_REFERENCED_ASSETS = 128;
+const WORKER_NAME_PATTERN = /^(?=.{1,63}$)[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export const SMOKE_ENDPOINTS = Object.freeze([
   Object.freeze({ path: "/api/version", status: 200, mediaType: "application/json", cache: "no-store", validate: "version" }),
@@ -36,6 +38,7 @@ export function smokeUsage() {
     "선택 사항: --timeout-ms <10..60000> 또는 SMOKE_TIMEOUT_MS 환경 변수를 사용하십시오.",
     "환경 고정: --expected-environment <production|staging|preview> 또는 EXPECTED_DEPLOYMENT_ENV를 사용하십시오.",
     "버전 고정: --expected-worker-version-id <id> 또는 EXPECTED_WORKER_VERSION_ID를 사용하십시오.",
+    "후보 고정: --worker-version-override-name <Worker>와 --worker-version-override-id <UUID>를 함께 사용하십시오.",
   ].join("\n");
 }
 
@@ -50,6 +53,8 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
   let timeoutArgument;
   let expectedEnvironmentArgument;
   let expectedWorkerVersionIdArgument;
+  let workerVersionOverrideNameArgument;
+  let workerVersionOverrideIdArgument;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -90,6 +95,24 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
       expectedWorkerVersionIdArgument = argument.slice("--expected-worker-version-id=".length);
       continue;
     }
+    if (argument === "--worker-version-override-name") {
+      workerVersionOverrideNameArgument = requireArgument(argv, index, argument);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--worker-version-override-name=")) {
+      workerVersionOverrideNameArgument = argument.slice("--worker-version-override-name=".length);
+      continue;
+    }
+    if (argument === "--worker-version-override-id") {
+      workerVersionOverrideIdArgument = requireArgument(argv, index, argument);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--worker-version-override-id=")) {
+      workerVersionOverrideIdArgument = argument.slice("--worker-version-override-id=".length);
+      continue;
+    }
     if (argument.startsWith("-")) throw new Error(`알 수 없는 옵션입니다: ${argument}`);
     if (baseUrlArgument) throw new Error("BASE_URL은 한 번만 입력하십시오.");
     baseUrlArgument = argument;
@@ -115,6 +138,16 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
   if (rawExpectedEnvironment && expectedDeploymentEnvironment === "unknown") {
     throw new Error("expected environment는 production, staging 또는 preview여야 합니다.");
   }
+  const workerVersionOverrideName = workerVersionOverrideNameArgument
+    ?? environment.SMOKE_WORKER_VERSION_OVERRIDE_NAME?.trim();
+  const workerVersionOverrideId = workerVersionOverrideIdArgument
+    ?? environment.SMOKE_WORKER_VERSION_OVERRIDE_ID?.trim();
+  if (Boolean(workerVersionOverrideName) !== Boolean(workerVersionOverrideId)) {
+    throw new Error("Worker version override 이름과 ID를 함께 지정해야 합니다.");
+  }
+  if (workerVersionOverrideName || workerVersionOverrideId) {
+    createVersionOverrideHeader(workerVersionOverrideName, workerVersionOverrideId);
+  }
   return {
     help: false,
     baseUrl: normalizeBaseUrl(rawBaseUrl),
@@ -123,7 +156,18 @@ export function parseSmokeOptions(argv = process.argv.slice(2), environment = pr
     ...(expectedWorkerTag ? { expectedWorkerTag } : {}),
     ...(expectedWorkerVersionId ? { expectedWorkerVersionId } : {}),
     ...(expectedDeploymentEnvironment ? { expectedDeploymentEnvironment } : {}),
+    ...(workerVersionOverrideName ? { workerVersionOverrideName, workerVersionOverrideId } : {}),
   };
+}
+
+export function createVersionOverrideHeader(workerName, versionId) {
+  if (typeof workerName !== "string" || !WORKER_NAME_PATTERN.test(workerName)) {
+    throw new Error("version override Worker 이름 형식이 올바르지 않습니다.");
+  }
+  if (typeof versionId !== "string" || !VERSION_ID_PATTERN.test(versionId)) {
+    throw new Error("version override Worker version ID 형식이 올바르지 않습니다.");
+  }
+  return `${workerName}="${versionId}"`;
 }
 
 export function normalizeBaseUrl(value) {
@@ -265,16 +309,41 @@ export function validateVersionPayload(value, expectations = {}) {
   return value;
 }
 
-async function readSmallText(response, maximumBytes) {
+export async function readSmallText(response, maximumBytes) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
+    throw new TypeError("maximumBytes는 0 이상의 안전한 정수여야 합니다.");
+  }
+
   const contentLength = response.headers.get("content-length");
-  if (contentLength !== null && Number(contentLength) > maximumBytes) {
+  const declaredLength = contentLength !== null && /^\d+$/u.test(contentLength.trim())
+    ? Number(contentLength)
+    : null;
+  if (declaredLength !== null && declaredLength > maximumBytes) {
+    if (response.body) cancelWithoutWaiting(() => response.body.cancel("smoke response exceeds byte limit"));
     throw new Error(`응답이 ${maximumBytes} bytes를 초과합니다.`);
   }
-  const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > maximumBytes) {
-    throw new Error(`응답이 ${maximumBytes} bytes를 초과합니다.`);
+
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let byteLength = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > maximumBytes) {
+        cancelWithoutWaiting(() => reader.cancel("smoke response exceeds byte limit"));
+        throw new Error(`응답이 ${maximumBytes} bytes를 초과합니다.`);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
   }
-  return text;
 }
 
 function cancelWithoutWaiting(cancel) {
@@ -526,7 +595,7 @@ export function validateReferencedAssetResponse(asset, response) {
   return { contentType, cacheControl };
 }
 
-async function checkReferencedAsset(asset, timeoutMs, fetcher) {
+async function checkReferencedAsset(asset, timeoutMs, fetcher, versionOverrideHeader) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
@@ -540,6 +609,9 @@ async function checkReferencedAsset(asset, timeoutMs, fetcher) {
               : asset.mediaType === "manifest" ? "application/manifest+json"
                 : asset.mediaType === "html" ? "text/html"
                   : "font/*",
+        ...(versionOverrideHeader
+          ? { "Cloudflare-Workers-Version-Overrides": versionOverrideHeader }
+          : {}),
       },
       redirect: "manual",
       credentials: "omit",
@@ -565,7 +637,7 @@ async function checkReferencedAsset(asset, timeoutMs, fetcher) {
   }
 }
 
-async function checkEndpoint(baseUrl, endpoint, timeoutMs, fetcher, expectations) {
+async function checkEndpoint(baseUrl, endpoint, timeoutMs, fetcher, expectations, versionOverrideHeader) {
   const url = new URL(endpoint.path, `${baseUrl}/`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -574,7 +646,12 @@ async function checkEndpoint(baseUrl, endpoint, timeoutMs, fetcher, expectations
   try {
     response = await fetcher(url, {
       method: "GET",
-      headers: { Accept: endpoint.mediaType },
+      headers: {
+        Accept: endpoint.mediaType,
+        ...(versionOverrideHeader
+          ? { "Cloudflare-Workers-Version-Overrides": versionOverrideHeader }
+          : {}),
+      },
       redirect: "manual",
       credentials: "omit",
       signal: controller.signal,
@@ -636,6 +713,20 @@ function endpointGraphMediaType(endpoint) {
   return null;
 }
 
+function deploymentIdentity(value) {
+  return JSON.stringify({
+    appVersion: value.appVersion,
+    deploymentEnvironment: value.deploymentEnvironment,
+    workerVersion: value.workerVersion === null
+      ? null
+      : {
+          id: value.workerVersion.id,
+          tag: value.workerVersion.tag,
+          timestamp: value.workerVersion.timestamp,
+        },
+  });
+}
+
 export async function runDeploymentSmoke({
   baseUrl,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -645,8 +736,13 @@ export async function runDeploymentSmoke({
   expectedWorkerTag,
   expectedWorkerVersionId,
   expectedDeploymentEnvironment,
+  workerVersionOverrideName,
+  workerVersionOverrideId,
 } = {}) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const versionOverrideHeader = workerVersionOverrideName || workerVersionOverrideId
+    ? createVersionOverrideHeader(workerVersionOverrideName, workerVersionOverrideId)
+    : undefined;
   const results = [];
   let expectations = {
     expectedAppVersion,
@@ -656,9 +752,17 @@ export async function runDeploymentSmoke({
   };
   const validatedEndpointAssets = new Map();
   const queuedAssets = new Map();
+  let initialVersionValue;
 
   for (const endpoint of SMOKE_ENDPOINTS) {
-    const result = await checkEndpoint(normalizedBaseUrl, endpoint, timeoutMs, fetcher, expectations);
+    const result = await checkEndpoint(
+      normalizedBaseUrl,
+      endpoint,
+      timeoutMs,
+      fetcher,
+      expectations,
+      versionOverrideHeader,
+    );
     results.push({ endpoint, ...result });
     log(`[PASS] GET ${endpoint.path} -> ${endpoint.status}; ${result.contentType}; Cache-Control: ${result.cacheControl}`);
     const endpointMediaType = endpointGraphMediaType(endpoint);
@@ -670,6 +774,7 @@ export async function runDeploymentSmoke({
         expectedDeploymentEnvironment: result.value.deploymentEnvironment,
       };
     }
+    if (result.value) initialVersionValue = result.value;
 
     for (const asset of result.referencedAssets ?? []) addReferencedAsset(queuedAssets, asset);
   }
@@ -686,7 +791,7 @@ export async function runDeploymentSmoke({
     });
     const batchResults = await Promise.all(batch.map(async (asset) => ({
       asset,
-      headers: await checkReferencedAsset(asset, timeoutMs, fetcher),
+      headers: await checkReferencedAsset(asset, timeoutMs, fetcher, versionOverrideHeader),
     })));
     for (const { asset, headers } of batchResults) {
       const { body, ...responseHeaders } = headers;
@@ -709,6 +814,25 @@ export async function runDeploymentSmoke({
       }
     }
   }
+
+  const versionEndpoint = SMOKE_ENDPOINTS.find((endpoint) => endpoint.validate === "version");
+  if (!versionEndpoint || !initialVersionValue) {
+    throw new Error("초기 /api/version 검증 결과를 확인하지 못했습니다.");
+  }
+  const finalVersionResult = await checkEndpoint(
+    normalizedBaseUrl,
+    versionEndpoint,
+    timeoutMs,
+    fetcher,
+    expectations,
+    versionOverrideHeader,
+  );
+  if (!finalVersionResult.value
+    || deploymentIdentity(finalVersionResult.value) !== deploymentIdentity(initialVersionValue)) {
+    throw new Error("스모크 실행 중 배포 version이 변경되었습니다.");
+  }
+  results.push({ endpoint: versionEndpoint, recheck: true, ...finalVersionResult });
+  log(`[PASS] RECHECK GET ${versionEndpoint.path} -> ${versionEndpoint.status}; deployment version unchanged`);
 
   log(`읽기 전용 배포 스모크를 통과했습니다: ${normalizedBaseUrl}`);
   return results;

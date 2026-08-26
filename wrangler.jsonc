@@ -19,14 +19,6 @@
       "id": "3ff4212d619a4355a0bc3d3d1cdbebe2"
     }
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "TRADE_RECORD_STATE",
-        "class_name": "TradeRecordState"
-      }
-    ]
-  },
   "exports": {
     "TradeRecordState": {
       "type": "durable-object",

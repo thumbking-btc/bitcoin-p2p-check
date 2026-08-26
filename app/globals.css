@@ -154,9 +154,13 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .managed-trade-records { display: grid; gap: 5px; margin-top: 6px; padding: 8px; border: 1px solid var(--line); background: #f7f3ea; font-size: 11px; }
 .managed-trade-records > strong { color: var(--ink-soft); font-size: 12px; }
 .managed-trade-records > p { margin: 0; color: var(--muted); line-height: 1.4; }
+.managed-trade-records > p.is-error { color: var(--red); font-weight: 720; }
 .managed-trade-records ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .managed-trade-records li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.managed-trade-records li > span { margin-right: auto; font-weight: 760; }
+.managed-trade-records li > span { display: grid; min-width: min(100%, 220px); margin-right: auto; gap: 2px; }
+.managed-trade-records li > span > strong { font-weight: 760; }
+.managed-trade-records li > span > small { color: var(--muted); font-size: 10px; font-weight: 620; line-height: 1.35; overflow-wrap: anywhere; }
+.managed-trade-records code { color: var(--ink-soft); font: inherit; font-weight: 720; }
 .managed-trade-records a { color: var(--ink); font-weight: 720; text-decoration: underline; }
 .managed-trade-records button { min-height: 28px; padding: 3px 7px; border: 1px solid var(--control-line); border-radius: 0; background: #fff; color: var(--ink); cursor: pointer; font: 720 11px/1.2 var(--sans); }
 .managed-trade-records button:disabled { color: var(--muted); cursor: wait; }

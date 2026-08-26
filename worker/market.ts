@@ -109,7 +109,10 @@ async function fetchJson(url: string, timeoutMs: number): Promise<SourceResult<u
       await cancelBody(response.body);
       return { ok: false, failure: "http" };
     }
-    return { ok: true, value: await readBoundedJson(response, MAX_UPSTREAM_JSON_BYTES) };
+    return {
+      ok: true,
+      value: await readBoundedJson(response, MAX_UPSTREAM_JSON_BYTES, controller.signal),
+    };
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       return { ok: false, failure: "timeout" };

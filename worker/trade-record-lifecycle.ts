@@ -99,22 +99,28 @@ export function authorizationToken(request: Request): string {
 }
 
 export function parseManagementIndex(value: string | null): ManagementIndex | null {
-  if (value === null || new TextEncoder().encode(value).byteLength > 512) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (
-      !isRecord(parsed)
-      || !hasExactKeys(parsed, ["version", "id", "state"])
-      || parsed.version !== 1
-      || !isTradeRecordId(parsed.id)
-      || parsed.state !== "revoked"
-    ) {
-      return null;
-    }
-    return { version: 1, id: parsed.id, state: "revoked" };
-  } catch {
-    return null;
+  if (value === null) return null;
+  if (new TextEncoder().encode(value).byteLength > 512) {
+    fail("STORAGE_CORRUPT", "저장된 거래 기록 관리 인덱스를 확인하지 못했습니다.", 500);
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    fail("STORAGE_CORRUPT", "저장된 거래 기록 관리 인덱스를 확인하지 못했습니다.", 500);
+  }
+
+  if (
+    !isRecord(parsed)
+    || !hasExactKeys(parsed, ["version", "id", "state"])
+    || parsed.version !== 1
+    || !isTradeRecordId(parsed.id)
+    || parsed.state !== "revoked"
+  ) {
+    fail("STORAGE_CORRUPT", "저장된 거래 기록 관리 인덱스를 확인하지 못했습니다.", 500);
+  }
+  return { version: 1, id: parsed.id, state: "revoked" };
 }
 
 export function parseStoredRecord(value: string): ParsedStoredRecord {

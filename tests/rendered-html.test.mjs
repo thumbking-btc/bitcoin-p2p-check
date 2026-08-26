@@ -1240,12 +1240,12 @@ test("exports static pages and routes market and signed-record APIs through the 
   assert.match(wrangler, /"run_worker_first":\s*true/);
   assert.match(wrangler, /"binding":\s*"TRADE_RECORDS"/);
   const manifest = JSON.parse(packageJson);
-  assert.match(manifest.scripts["deploy:production"], /wrangler deploy \.verified-worker\/index\.js --no-bundle --upload-source-maps --strict --no-autoconfig --config wrangler\.jsonc/);
+  assert.match(manifest.scripts["deploy:production"], /process\.exit\(1\)/);
   assert.match(manifest.scripts.deploy, /process\.exit\(1\)/);
   assert.equal(manifest.version, appVersion);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.match(worker, /isTradeRecordApiPath\(url\.pathname\)/);
-  assert.match(worker, /handleTradeRecordRequest\(request, environment\)/);
+  assert.match(worker, /handleTradeRecordRequest\(request, environment, \{[\s\S]*stateNamespace: context\.exports\.TradeRecordState,[\s\S]*\}\)/);
   assert.match(worker, /return staticAssetResponse\(request, environment\)/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
   assert.doesNotMatch(headers, /Content-Security-Policy:/);

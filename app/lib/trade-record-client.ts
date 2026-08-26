@@ -194,6 +194,14 @@ export class TradeRecordNetworkError extends Error {
   }
 }
 
+export function isTerminalTradeRecordRevocationError(error: unknown): boolean {
+  return error instanceof TradeRecordApiRequestError
+    && (error.status === 401
+      || error.status === 403
+      || error.status === 404
+      || error.code === "RECORD_REVOKED");
+}
+
 export function isRetryableTradeRecordFetchError(error: unknown): boolean {
   return error instanceof TradeRecordNetworkError
     || (error instanceof TradeRecordApiRequestError
@@ -346,7 +354,11 @@ export async function fetchTradeRecord(
         }
         throw error;
       }
-      if (response.ok) return canonicalizeTradeRecordApiSuccess(value);
+      if (response.ok) {
+        const result = canonicalizeTradeRecordApiSuccess(value);
+        if (result.id !== id) throw new Error("거래 기록 조회 응답을 확인하지 못했습니다.");
+        return result;
+      }
 
       const retryDelay = options.retryNotFound && response.status === 404
         ? KV_PROPAGATION_RETRY_DELAYS_MS[attempt]

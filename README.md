@@ -85,7 +85,7 @@ local secret은 `.dev.vars` 또는 `.env` 계열에만 두고 commit하지 마�
 
 ## 배포
 
-Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 합니다. production 배포의 유일한 정상 경로는 `.github/workflows/verify.yml`입니다. 최신 `main` SHA에서 `verify`가 성공하고 GitHub `production` environment의 required reviewer가 승인한 뒤에만, 같은 run이 보존한 `verified-dist-<SHA>`와 `verified-worker-<SHA>`를 다시 빌드하지 않고 `wrangler.jsonc`로 `bitcoin-p2p-check` Worker에 배포합니다. 두 산출물에는 provenance를, Worker bundle에는 CycloneDX SBOM attestation을 연결합니다.
+Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 합니다. 현재 `.github/workflows/verify.yml`의 production job은 의도적으로 실패합니다. 새 Durable Object `exports`를 기존 production Worker에 적용하는 별도 compatibility bootstrap과, declarative exports 제약을 따르는 승인형 atomic 배포 workflow가 아직 없기 때문입니다. 따라서 최신 `main`의 검증·attestation 산출물이 있어도 production 배포 승인을 진행하면 안 됩니다. 필요한 선행 절차와 차단 해제 조건은 [프로덕션 운영 런북](./docs/production-operations.md)에 기록되어 있습니다.
 
 `wrangler.jsonc`는 거래 기록별 SQLite Durable Object를 강한 일관성의 기본 저장소로 사용하고, 기존 기록의 lazy migration과 제한적인 구버전 호환을 위해 production KV에 순서 보장형 비동기 mirror를 유지하며 필수 `TRADE_RECORD_SIGNING_KEY`를 사용합니다. 이 mirror는 create/finalize 성공과 동기화된 rollback 안전망이 아니며, revoke만 구버전 재노출을 막기 위해 KV 반영을 확인합니다. production preview URL은 꺼져 있습니다.
 
@@ -93,7 +93,7 @@ Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 �
 
 `wrangler.preview.jsonc`도 별도 Worker 이름과 별도 rate-limit namespace를 사용하며 production 저장소와 signing secret을 선언하지 않습니다. 명시적 preview가 필요한 운영자만 `npm run deploy:preview`를 사용하십시오. 어떤 Worker도 Cloudflare Git branch build에 연결하지 마십시오.
 
-저장소 설정과 Cloudflare 대시보드 상태는 코드만으로 강제하거나 확인할 수 없습니다. `main` 보호, required status check, environment reviewer, Cloudflare Build 연결 해제, secret, 경보와 backup은 [프로덕션 운영 런북](./docs/production-operations.md)의 수동 체크리스트에 따라 확인하고 증적을 남기십시오. 개발자 PC의 `npm run deploy`, `npm run deploy:production` 또는 직접 `wrangler deploy`는 production 승인 gate를 우회하므로 정상 운영에 사용하지 마십시오.
+저장소 설정과 Cloudflare 대시보드 상태는 코드만으로 강제하거나 확인할 수 없습니다. `main` 보호, required status check, environment reviewer, Cloudflare Build 연결 해제, secret, 경보와 backup은 [프로덕션 운영 런북](./docs/production-operations.md)의 수동 체크리스트에 따라 확인하고 증적을 남기십시오. 개발자 PC의 `npm run deploy`, `npm run deploy:production`, `npm run upload:production:candidate` 또는 직접 `wrangler deploy`는 차단을 우회하므로 사용하지 마십시오.
 
 배포 직후에는 거래 기록을 만들지 않는 읽기 전용 smoke를 실행합니다.
 

@@ -223,6 +223,12 @@ test("wires calculator hardening states into the client component", async () => 
   assert.ok(deliveryBlock.indexOf("await shareImageFile") < deliveryBlock.indexOf("await finalizeTradeRecord"));
   assert.match(deliveryBlock, /outcome === "cancelled"[\s\S]*?revokeKnownRecord\(/);
   assert.match(deliveryBlock, /const finalizationStillSafe[\s\S]*?finalizeTradeRecord\([\s\S]*?const finalizationRemainsSafe/);
+  assert.ok(
+    deliveryBlock.indexOf("const pendingCapabilityPersisted") < deliveryBlock.indexOf("await finalizeTradeRecord"),
+    "the pending revoke capability must be persisted before the server finalization request",
+  );
+  assert.match(deliveryBlock, /toManagedTradeRecord\(activePrepared\.signed, activePrepared\.revokeToken, "finalizing"\)/);
+  assert.match(deliveryBlock, /if \(!pendingCapabilityPersisted\)[\s\S]*?공개 확정을 시작하지 않았습니다[\s\S]*?return;/);
   assert.match(deliveryBlock, /stage === "sharing"[\s\S]*?toManagedTradeRecord\(activePrepared\.signed, activePrepared\.revokeToken\)/);
   assert.match(shareSession, /signed\.lifecycle \?\? "pending"/);
   assert.match(deliveryBlock, /카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다/);
@@ -240,7 +246,34 @@ test("wires calculator hardening states into the client component", async () => 
   assert.match(component, /id="tiny-trade-warning" role="status"/);
   assert.match(component, /거래 역할·금액·시세·프리미엄과 선택한 자금 출처·결제정보가 거래 기록 서버에 저장됩니다/);
   assert.match(component, /상세 링크를 가진 사람은 로그인 없이 해당 기록을 최대 180일간 열 수 있습니다/);
-  assert.match(component, /철회 권한은 이 화면에만 보관됩니다/);
+  assert.match(component, /공개 확정 전에 철회 권한을 먼저 브라우저에 저장/);
+  assert.match(component, /loadPersistedManagedTradeRecords/);
+  assert.match(component, /persistManagedTradeRecord/);
+  assert.match(component, /MANAGED_TRADE_RECORD_STORAGE_PREFIX/);
+  assert.match(component, /const capabilityPersisted = rememberManagedRecord\(finalizedRecord\);[\s\S]*?if \(!capabilityPersisted\)/);
+  assert.match(component, /parseManagedTradeRecordStorageKey\(event\.key\)/);
+  assert.match(component, /record\.persistence === "browser"[\s\S]*?finalizeTradeRecord\(record\.id, record\.revokeToken[\s\S]*?: await fetchTradeRecord\(record\.id/);
+  const reconciliationBlock = component.slice(
+    component.indexOf("const handleFinalizingRecordFinalized"),
+    component.indexOf("const handleFinalizingRecordMissing"),
+  );
+  assert.ok(
+    reconciliationBlock.indexOf("removedManagedRecordIdsRef.current.has")
+      < reconciliationBlock.indexOf("reconciliationStorageGeneration !== managedStorageGenerationRef.current"),
+    "a removal tombstone must win over a late reconciliation completion",
+  );
+  assert.match(component, /event\.key === null[\s\S]*?knownManagedRecordIdsRef[\s\S]*?removePersistedManagedTradeRecord\(storage, recordId\)/);
+  assert.match(component, /event\.key === null[\s\S]*?keepKnownRecordInMemory\(recordId\)/);
+  assert.match(component, /removedManagedRecordIdsRef\.current\.add\(record\.id\);[\s\S]*?knownManagedRecordsRef\.current\.delete\(record\.id\)/);
+  assert.match(component, /managedTradeRecordCleanupAt\(record\)[\s\S]*?pruneExpiredManagedTradeRecords/);
+  assert.match(shareSession, /managedTradeRecordPendingExpiresAt\(record\) \?\? record\.expiresAt/);
+  assert.match(component, /confirmedMissing[\s\S]*?record\.persistence === "browser"[\s\S]*?managedTradeRecordCleanupAt\(record\) <= Date\.now\(\)/);
+  assert.match(component, /managedTradeRecordDisplayDeadline\(record\)[\s\S]*?확인 기한/);
+  assert.doesNotMatch(component, /managedTradeRecordPendingExpiresAt\(record\)[\s\S]*?Date\.now\(\)/);
+  assert.match(component, /removedManagedRecordIdsRef[\s\S]*?storage\.removeItem\(event\.key\)/);
+  assert.match(component, /window\.confirm\([\s\S]*?되돌릴 수 없습니다/);
+  assert.doesNotMatch(component, /setItem\(MANAGED_TRADE_RECORD_STORAGE_KEY/);
+  assert.match(styles, /\.managed-trade-records > p\.is-error \{[^}]*color: var\(--red\)/);
   assert.match(component, /href="\/privacy\/"/);
   assert.match(styles, /\.premium-stepper \{[^}]*width: 88px;[^}]*grid-template-columns: repeat\(2, 44px\)/);
   assert.match(styles, /\.premium-stepper button \{[^}]*min-width: 44px;[^}]*min-height: 44px/);

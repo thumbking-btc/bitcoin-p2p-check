@@ -186,11 +186,30 @@ jobs:
           git fetch --no-tags origin staging
           test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
 
+      - name: Capture the exact staging baseline before upload
+        id: staging-baseline
+        run: node scripts/check-staging-deployment.mjs capture
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify staging remote secret allowlist before upload
+        run: |
+          npm run secrets:check:staging
+          node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-baseline.outputs.version_id }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Upload the isolated staging candidate without promoting it
         id: staging-upload
         shell: bash
         run: |
           APP_VERSION="$(node -p "require('./package.json').version")"
+          git fetch --no-tags origin staging
+          test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
+          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-baseline.outputs.version_id }}" "${{ steps.staging-baseline.outputs.deployment_id }}"
+          node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-baseline.outputs.version_id }}"
           npm run upload:staging:candidate -- --tag "${{ github.sha }}" --message "GitHub Actions ${{ github.run_id }} · staging v${APP_VERSION} · ${{ github.sha }}"
           EXPECTED_WORKER_NAME="bitcoin-p2p-check-staging" node scripts/record-staging-upload.mjs "$WRANGLER_OUTPUT_FILE_PATH"
         env:
@@ -198,6 +217,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           STAGING_DEPLOY_APPROVED: "true"
           WRANGLER_OUTPUT_FILE_PATH: .wrangler/staging-version-upload.jsonl
+
+      - name: Verify the exact staging candidate configuration
+        run: |
+          node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-upload.outputs.version_id }}"
+          node scripts/check-staging-version.mjs "${{ steps.staging-upload.outputs.version_id }}" "${{ github.sha }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify the exact staging candidate before promotion
         shell: bash
@@ -208,9 +235,22 @@ jobs:
       - name: Promote only the verified staging version
         shell: bash
         run: |
+          node scripts/check-staging-version.mjs "${{ steps.staging-upload.outputs.version_id }}" "${{ github.sha }}"
           git fetch --no-tags origin staging
           test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
-          npx wrangler versions deploy "${{ steps.staging-upload.outputs.version_id }}@100%" --yes --config wrangler.staging.jsonc
+          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-baseline.outputs.version_id }}" "${{ steps.staging-baseline.outputs.deployment_id }}"
+          npx wrangler versions deploy "${{ steps.staging-upload.outputs.version_id }}@100%" --yes --config wrangler.staging.jsonc --name bitcoin-p2p-check-staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify the exact staging deployment after promotion
+        id: staging-promoted
+        run: |
+          node scripts/check-staging-deployment.mjs capture-exact "${{ steps.staging-upload.outputs.version_id }}"
+          npm run secrets:check:staging
+          node scripts/check-worker-version-secrets.mjs staging "${{ steps.staging-upload.outputs.version_id }}"
+          node scripts/check-staging-version.mjs "${{ steps.staging-upload.outputs.version_id }}" "${{ github.sha }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -220,6 +260,16 @@ jobs:
         run: |
           APP_VERSION="$(node -p "require('./package.json').version")"
           EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_DEPLOYMENT_ENV="staging" EXPECTED_WORKER_TAG="${{ github.sha }}" EXPECTED_WORKER_VERSION_ID="${{ steps.staging-upload.outputs.version_id }}" node scripts/smoke-deployment.mjs https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev
+
+      - name: Detect a staging deployment or branch advance after smoke
+        shell: bash
+        run: |
+          git fetch --no-tags origin staging
+          test "$(git rev-parse origin/staging)" = "${{ github.sha }}"
+          node scripts/check-staging-deployment.mjs assert-single "${{ steps.staging-upload.outputs.version_id }}" "${{ steps.staging-promoted.outputs.deployment_id }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-production:
     needs: [verify, attest-production]
@@ -234,48 +284,8 @@ jobs:
       group: production-deployment
       cancel-in-progress: false
     steps:
-      - name: Check out the verified revision
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
-
-      - name: Use Node.js 22.19.0
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22.19.0
-          cache: npm
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Restore the exact verified static artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: verified-dist-${{ github.sha }}
-          path: dist/client
-
-      - name: Restore the exact verified Worker bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: verified-worker-${{ github.sha }}
-          path: .verified-worker
-
-      - name: Refuse to supersede a newer main revision
+      - name: Refuse production deployment until the Durable Object export bootstrap is approved
         shell: bash
         run: |
-          git fetch --no-tags origin main
-          test "$(git rev-parse origin/main)" = "${{ github.sha }}"
-
-      - name: Deploy the explicit production configuration
-        shell: bash
-        run: |
-          APP_VERSION="$(node -p "require('./package.json').version")"
-          npm run deploy:production -- --tag "${{ github.sha }}" --message "GitHub Actions ${{ github.run_id }} · v${APP_VERSION} · ${{ github.sha }}"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          RELEASE_DEPLOY_APPROVED: "true"
-
-      - name: Verify the deployed release without creating records
-        shell: bash
-        run: |
-          APP_VERSION="$(node -p "require('./package.json').version")"
-          EXPECTED_APP_VERSION="$APP_VERSION" EXPECTED_WORKER_TAG="${{ github.sha }}" node scripts/smoke-deployment.mjs https://bitcoin-p2p-check.thumbking-btc.workers.dev
+          echo "::error title=Production deployment blocked::The reviewed compatibility export bootstrap and an atomic production deployment path do not exist yet. Do not use versions upload or a gradual deployment with Durable Object exports."
+          exit 1

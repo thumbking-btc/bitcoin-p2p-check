@@ -9,7 +9,6 @@ const expectedTopLevelKeys = Object.freeze([
   "assets",
   "compatibility_date",
   "compatibility_flags",
-  "durable_objects",
   "exports",
   "kv_namespaces",
   "main",
@@ -79,11 +78,6 @@ export function validateProductionConfig(config) {
     config.kv_namespaces,
     [{ binding: "TRADE_RECORDS", id: "3ff4212d619a4355a0bc3d3d1cdbebe2" }],
     "프로덕션 KV binding이 승인된 namespace와 다릅니다.",
-  );
-  requireExact(
-    config.durable_objects,
-    { bindings: [{ name: "TRADE_RECORD_STATE", class_name: "TradeRecordState" }] },
-    "프로덕션 Durable Object binding이 승인된 구성과 다릅니다.",
   );
   requireExact(
     config.exports,
