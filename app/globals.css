@@ -23,7 +23,7 @@ button, input, select, textarea { font: inherit; }
 button, summary, label { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
-.deployment-notice { position: sticky; top: 0; z-index: 1000; display: flex; width: 100%; max-width: 100%; min-width: 0; overflow-x: clip; align-items: center; justify-content: center; gap: 10px; padding: max(8px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px)); border-bottom: 2px solid #6b3300; background: #fff0d9; color: #402000; box-shadow: 0 2px 0 rgba(17, 24, 32, .18); font-size: 12px; line-height: 1.35; }
+.deployment-notice { position: sticky; top: 0; z-index: 1000; display: flex; min-width: 0; align-items: center; justify-content: center; gap: 10px; padding: max(8px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px)); border-bottom: 2px solid #6b3300; background: #fff0d9; color: #402000; box-shadow: 0 2px 0 rgba(17, 24, 32, .18); font-size: 12px; line-height: 1.35; }
 .deployment-notice[hidden] { display: none; }
 .deployment-notice strong { flex: 0 0 auto; padding: 3px 7px; background: #6b3300; color: #fff; font: 850 11px/1.2 var(--mono); letter-spacing: .08em; }
 .deployment-notice span { min-width: 0; font-weight: 720; overflow-wrap: anywhere; }
@@ -507,11 +507,11 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 @media (max-width: 380px) {
   .site-main { width: min(100% - 20px, 880px); }
   .privacy-page { width: min(100% - 20px, 880px); }
-  .tool-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .tool-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
   .brand-line { gap: 4px; }
   .brand-mark { width: 21px; height: 21px; font-size: 14px; }
   .tool-heading h1 { font-size: 18px; }
-  .refresh-button { width: 100%; min-height: 44px; justify-self: stretch; padding-inline: 4px; font-size: 11px; }
+  .refresh-button { min-height: 44px; justify-self: end; padding-inline: 4px; font-size: 11px; }
   .role-fieldset legend { gap: 5px; }
   .role-fieldset legend small { font-size: 10px; }
   .trade-form { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 8px; }
@@ -530,9 +530,9 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
   .recruitment-actions { grid-template-columns: 1fr; }
   .market-cell { padding-inline: 8px; }
   .result-row { grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); }
-  .capture-meta { gap: 3px 4px; }
-  .capture-meta > span { gap: 3px; white-space: nowrap; }
-  .capture-meta-disclaimer { justify-self: stretch; }
+  .capture-meta { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .capture-meta > span { grid-column: 1; gap: 3px; white-space: normal; }
+  .capture-meta-disclaimer { justify-self: start; text-align: left; }
   .network-fees > header { gap: 4px; padding-inline: 7px; }
   .network-fees h2 { font-size: 10.5px; }
   .network-fees > header p { font-size: 10px; }
