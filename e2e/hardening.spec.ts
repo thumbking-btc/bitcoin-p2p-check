@@ -259,8 +259,24 @@ test("320px layout reflows without horizontal scrolling and receives enforced CS
   await expect(page.getByRole("heading", { name: "비트코인 P2P 계산기" })).toBeVisible();
   await expect(page.locator(".trade-result dl")).toBeVisible();
 
-  const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-  expect(horizontalOverflow).toBeLessThanOrEqual(1);
+  const overflowDiagnostic = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - window.innerWidth,
+    elements: [...document.querySelectorAll<HTMLElement>("body *")]
+      .map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          tag: element.tagName,
+          id: element.id,
+          className: typeof element.className === "string" ? element.className : "",
+          left: Math.round(bounds.left),
+          right: Math.round(bounds.right),
+          width: Math.round(bounds.width),
+        };
+      })
+      .filter(({ left, right }) => left < -1 || right > window.innerWidth + 1)
+      .slice(0, 20),
+  }));
+  expect(overflowDiagnostic.overflow, JSON.stringify(overflowDiagnostic.elements)).toBeLessThanOrEqual(1);
 
   for (const buttonName of ["판매자 프리미엄 0.1% 올리기", "판매자 프리미엄 0.1% 내리기"]) {
     const box = await page.getByRole("button", { name: buttonName }).boundingBox();
