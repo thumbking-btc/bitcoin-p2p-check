@@ -4,7 +4,7 @@ const previewPort = 8_787;
 const previewUrl = `http://127.0.0.1:${previewPort}`;
 const productionPort = 8_788;
 const productionUrl = `http://127.0.0.1:${productionPort}`;
-const pwaTestTag = /@(pwa|production-pwa)\b/u;
+const environmentTestTag = /@(pwa|production-pwa|production-only)\b/u;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -41,8 +41,13 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      grepInvert: pwaTestTag,
+      grepInvert: environmentTestTag,
       use: { ...devices["Desktop Chrome"], baseURL: previewUrl, serviceWorkers: "block" },
+    },
+    {
+      name: "chromium-production",
+      grep: /@production-only\b/u,
+      use: { ...devices["Desktop Chrome"], baseURL: productionUrl, serviceWorkers: "block" },
     },
     {
       name: "chromium-pwa",

@@ -17,6 +17,7 @@ import {
 import {
   inferDeploymentEnvironment,
   normalizeDeploymentEnvironment,
+  normalizeOptionalDeploymentEnvironment,
 } from "../lib/deployment-environment.mjs";
 import { createVerifiedTextQr } from "../lib/verified-qr.mjs";
 import styles from "./verify.module.css";
@@ -25,6 +26,34 @@ type ViewState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string; retryable: boolean }>
   | Readonly<{ status: "checked"; result: TradeRecordVerificationResult }>;
+
+type VersionPayload = Readonly<{
+  deploymentEnvironment?: unknown;
+}>;
+
+async function resolveVerificationDeployment(signal: AbortSignal) {
+  const annotatedEnvironment = normalizeOptionalDeploymentEnvironment(
+    document.documentElement.getAttribute("data-deployment-environment"),
+  );
+  if (annotatedEnvironment !== null) return annotatedEnvironment;
+
+  try {
+    const response = await fetch("/api/version", {
+      cache: "no-store",
+      credentials: "omit",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (response.ok) {
+      const payload = await response.json() as VersionPayload;
+      return normalizeDeploymentEnvironment(payload.deploymentEnvironment);
+    }
+  } catch (error) {
+    if (signal.aborted) throw error;
+  }
+
+  return inferDeploymentEnvironment(window.location.hostname);
+}
 
 function formatKrw(value: number | string): string {
   const integer = typeof value === "string" ? BigInt(value) : BigInt(Math.round(value));
@@ -234,12 +263,7 @@ export function TradeRecordVerifier() {
       }
       try {
         const response = await fetchTradeRecord(id, { retryNotFound: true, signal: controller.signal });
-        const annotatedEnvironment = normalizeDeploymentEnvironment(
-          document.documentElement.getAttribute("data-deployment-environment"),
-        );
-        const deploymentEnvironment = annotatedEnvironment === "unknown"
-          ? inferDeploymentEnvironment(window.location.hostname)
-          : annotatedEnvironment;
+        const deploymentEnvironment = await resolveVerificationDeployment(controller.signal);
         const result = await verifyTradeRecordSignature(response, {
           publicKeys: tradeRecordPublicKeysForDeployment(deploymentEnvironment),
         });

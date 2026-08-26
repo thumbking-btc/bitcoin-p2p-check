@@ -23,7 +23,7 @@ button, input, select, textarea { font: inherit; }
 button, summary, label { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
-.deployment-notice { position: sticky; top: 0; z-index: 1000; display: flex; min-width: 0; align-items: center; justify-content: center; gap: 10px; padding: max(8px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px)); border-bottom: 2px solid #6b3300; background: #fff0d9; color: #402000; box-shadow: 0 2px 0 rgba(17, 24, 32, .18); font-size: 12px; line-height: 1.35; }
+.deployment-notice { position: sticky; top: 0; z-index: 1000; display: flex; width: 100%; max-width: 100%; min-width: 0; overflow-x: clip; align-items: center; justify-content: center; gap: 10px; padding: max(8px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px)); border-bottom: 2px solid #6b3300; background: #fff0d9; color: #402000; box-shadow: 0 2px 0 rgba(17, 24, 32, .18); font-size: 12px; line-height: 1.35; }
 .deployment-notice[hidden] { display: none; }
 .deployment-notice strong { flex: 0 0 auto; padding: 3px 7px; background: #6b3300; color: #fff; font: 850 11px/1.2 var(--mono); letter-spacing: .08em; }
 .deployment-notice span { min-width: 0; font-weight: 720; overflow-wrap: anywhere; }

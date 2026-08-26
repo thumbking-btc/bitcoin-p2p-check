@@ -1179,7 +1179,7 @@ test("a fresh WebSocket tick clears a failed silent-refresh sharing error", asyn
   await expect(page.getByText("104,000,000원", { exact: false }).first()).toBeVisible();
 });
 
-test("an open verification page disables an invoice exactly when it expires", async ({ page }) => {
+test("@production-only an open verification page disables an invoice exactly when it expires", async ({ page }) => {
   await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await page.addInitScript(() => {
@@ -1205,6 +1205,21 @@ test("an open verification page disables an invoice exactly when it expires", as
   await expect(page.getByText("이 인보이스는 만료되었습니다.")).toBeVisible();
   await expect(page.getByRole("button", { name: "인보이스 복사" })).toHaveCount(0);
   await expect(page.getByText("결제 QR 보기")).toHaveCount(0);
+});
+
+test("preview refuses a production-signed trade record", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(SubtleCrypto.prototype, "verify", {
+      configurable: true,
+      value: async () => true,
+    });
+  });
+  await page.route(`**/api/trade-record/${RECORD_ID}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(signedLightningRecord()) });
+  });
+
+  await page.goto(`/verify/?id=${RECORD_ID}`);
+  await expect(page.getByText("이 기록에 사용된 공개키를 현재 앱에서 확인할 수 없습니다.")).toBeVisible();
 });
 
 test("@pwa preview removes an existing service worker and its application caches", async ({ page, context }) => {
