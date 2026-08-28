@@ -200,8 +200,7 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .record-payment-state.is-ready strong { color: var(--green); }
 .share-disclosure { display: grid; gap: 6px; margin: 10px; padding: 10px; border: 1px solid var(--orange-dark); background: #fff8ed; color: var(--ink-soft); }
 .share-disclosure > strong { font-size: 13px; }
-.share-disclosure ul { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
-.share-disclosure li { font-size: 11px; line-height: 1.45; }
+.share-disclosure p { margin: 0; font-size: 11px; line-height: 1.45; }
 .share-disclosure a { justify-self: start; color: var(--orange-dark); font-size: 12px; font-weight: 760; text-decoration: underline; text-underline-offset: 2px; }
 .share-tools-body > .output-picker { margin: 0 10px; }
 .share-tools-body .tool-actions { padding-inline: 10px; }

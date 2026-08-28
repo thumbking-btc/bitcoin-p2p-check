@@ -575,7 +575,7 @@ test("hydrates a local draft once and lets an imported share link win", async ()
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
   assert.match(component, /shareImageAllowed = Boolean\(quote\)[\s\S]*?&& draftHydrated/);
-  assert.match(component, /공유 완료 후 상세 링크를 가진 사람은 로그인 없이 해당 기록을 최대 180일간 열 수 있습니다/);
+  assert.match(component, /공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
   assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
@@ -608,7 +608,7 @@ test("renders a focused, capture-ready P2P calculator", async () => {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
   assert.match(html, /거래 기록 카드에만 포함됩니다/);
-  assert.match(html, /공유 완료 후 상세 링크를 가진 사람은 로그인 없이 해당 기록을 최대 180일간 열 수 있습니다/);
+  assert.match(html, /공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
   assert.match(html, /거래 기록 카드 준비/);
   assert.match(html, /입력한 거래 조건을 한 장의 카드로 만듭니다/);
   assert.match(html, /결제정보 미포함/);
