@@ -27,8 +27,7 @@ export default function PrivacyPage() {
           <section aria-labelledby="local-data-title">
             <h2 id="local-data-title">이 브라우저에 저장되는 정보</h2>
             <ul>
-              <li>금액·프리미엄 등 계산 초안은 최대 12시간 저장됩니다. 자금 출처와 모집글 메모는 초안에 저장하지 않습니다.</li>
-              <li><strong>저장된 초안 삭제</strong>를 누르면 초안이 삭제되고 현재 화면의 입력이 초기화됩니다.</li>
+              <li>금액·프리미엄 등 계산 초안은 최대 12시간 저장된 뒤 자동으로 사라집니다. 자금 출처와 모집글 메모는 저장하지 않습니다.</li>
               <li>공개 링크를 관리하는 정보도 저장됩니다. 브라우저 사이트 데이터를 지워도 서버의 공개 링크는 그대로 남습니다.</li>
             </ul>
           </section>
@@ -37,8 +36,8 @@ export default function PrivacyPage() {
             <h2 id="delete-order-title">나중에 삭제하는 방법</h2>
             <ol>
               <li>공개 기록이 있으면 먼저 <strong>공개 링크 비활성화</strong>를 누릅니다.</li>
-              <li><strong>저장된 초안 삭제</strong>를 누릅니다.</li>
-              <li>이 사이트를 연 탭을 모두 닫고, 필요하면 브라우저의 사이트 데이터를 삭제합니다.</li>
+              <li>이 사이트를 연 탭을 모두 닫습니다.</li>
+              <li>브라우저 설정에서 이 사이트의 데이터를 삭제합니다.</li>
             </ol>
             <p>사이트 데이터를 먼저 지우면 공개 링크를 나중에 비활성화할 수 없습니다. 이 경우 링크는 만료될 때까지 남습니다.</p>
           </section>

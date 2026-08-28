@@ -211,6 +211,7 @@ test("explains local deletion and public-link deactivation without conflating th
   assert.match(privacy, /공개 기록이 있으면 먼저 <strong>공개 링크 비활성화<\/strong>/);
   assert.match(privacy, /사이트 데이터를 먼저 지우면 공개 링크를 나중에 비활성화할 수 없습니다/);
   assert.match(privacy, /비활성화되었다는 표시만 최대 180일간 남습니다/);
+  assert.doesNotMatch(privacy, /저장된 초안 삭제/);
   assert.doesNotMatch(privacy, /사이트 데이터를 삭제하면 제거됩니다\. 같은 사이트를 연 다른 탭에는 삭제·변경 사실이 동기화됩니다/);
   assert.doesNotMatch(privacy, /철회 권한|공개 기록 철회/);
 
