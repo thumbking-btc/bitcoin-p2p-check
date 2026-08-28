@@ -286,6 +286,7 @@ test("320px layout reflows without horizontal scrolling and receives enforced CS
 });
 
 test("record-scoped revoke capabilities survive reload and merge independent storage events", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
   await installFakeMarket(page);
   await page.goto("/");
   const firstId = "AAAAAAAAAAAAAAAB";
@@ -317,6 +318,27 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
   await expect(page.getByText("거래 기록 관리", { exact: true })).toBeVisible();
   await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
+  const disclosure = page.getByRole("complementary", { name: "거래 기록 저장과 공개 안내" });
+  await expect(disclosure.locator("p")).toHaveText("공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다.");
+  await expect(disclosure.locator("li")).toHaveCount(0);
+
+  const openLink = page.getByRole("link", { name: "링크 열기" });
+  const copyButton = page.getByRole("button", { name: "링크 복사" });
+  const disableButton = page.getByRole("button", { name: `공개 기록 ${firstId} 링크 비활성화` });
+  await expect(openLink).toBeVisible();
+  await expect(copyButton).toBeVisible();
+  await expect(disableButton).toBeVisible();
+  const [openBox, copyBox, disableBox] = await Promise.all([
+    openLink.boundingBox(),
+    copyButton.boundingBox(),
+    disableButton.boundingBox(),
+  ]);
+  expect(openBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(copyBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(disableBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(Math.abs((openBox?.y ?? 0) - (copyBox?.y ?? 0))).toBeLessThan(1);
+  expect(disableBox?.y ?? 0).toBeGreaterThan((openBox?.y ?? 0) + (openBox?.height ?? 0) - 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   const tokenAfterLegacyCollision = await page.evaluate((value) => {
     const scopedKey = `${value.prefix}${value.id}`;
@@ -490,7 +512,7 @@ test("a conflicting record-scoped token cannot replace the capability already he
   await expect(page.getByText(/서로 다른 철회 권한이 감지/u)).toBeVisible();
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
+  await page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` }).click();
   await expect.poll(() => authorization).toBe(`Bearer ${originalToken}`);
 });
 
@@ -538,17 +560,17 @@ test("permanent revoke failures discard unusable browser capabilities", async ({
   await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(2);
 
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: `공개 기록 ${invalidId} 철회` }).click();
+  await page.getByRole("button", { name: `공개 기록 ${invalidId} 링크 비활성화` }).click();
   await expect(page.getByText(/관리 권한이 더 이상 유효하지 않아/u)).toBeVisible();
   await expect.poll(() => page.evaluate(
     (key) => window.localStorage.getItem(key),
     `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${invalidId}`,
   )).toBeNull();
-  await expect(page.getByRole("button", { name: `공개 기록 ${invalidId} 철회` })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: `공개 기록 ${invalidId} 링크 비활성화` })).toHaveCount(0);
 
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: `공개 기록 ${missingId} 철회` }).click();
-  await expect(page.getByText(/이미 없거나 철회되어/u)).toBeVisible();
+  await page.getByRole("button", { name: `공개 기록 ${missingId} 링크 비활성화` }).click();
+  await expect(page.getByText(/이미 없거나 사용할 수 없어/u)).toBeVisible();
   await expect.poll(() => page.evaluate(
     (key) => window.localStorage.getItem(key),
     `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${missingId}`,
@@ -582,11 +604,11 @@ test("a non-contract edge 403 preserves the only revoke capability", async ({ pa
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
+  await page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` }).click();
 
-  await expect(page.getByText(/거래 기록을 철회하지 못했습니다/u)).toBeVisible();
+  await expect(page.getByText(/공개 링크를 비활성화하지 못했습니다/u)).toBeVisible();
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).not.toBeNull();
-  await expect(page.getByRole("button", { name: `공개 기록 ${id} 철회` })).toBeVisible();
+  await expect(page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` })).toBeVisible();
 });
 
 test("a rapid cross-tab clear prevents a stale capability write from restoring browser persistence", async ({ context, page }) => {
@@ -683,8 +705,8 @@ test("a failed revoke after storage is cleared keeps the capability memory-only"
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: `공개 기록 ${id} 철회` }).click();
-  await expect(page.getByText(/거래 기록을 철회하지 못했습니다/u)).toBeVisible();
+  await page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` }).click();
+  await expect(page.getByText(/공개 링크를 비활성화하지 못했습니다/u)).toBeVisible();
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toBeVisible();
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
   expect(authorization).toBe(`Bearer ${revokeToken}`);

@@ -1670,6 +1670,9 @@ export function P2PTradeTool() {
 
   const revokeKnownRecord = useCallback(async (record: ManagedTradeRecord, successMessage: string) => {
     const storageGeneration = managedStorageGenerationRef.current;
+    const failureAction = record.lifecycle === "finalized"
+      ? "공개 링크를 비활성화"
+      : "준비 기록을 취소";
     try {
       await revokeTradeRecord(record.id, record.revokeToken, { timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS });
       const browserRemovalFailed = forgetManagedRecord(record);
@@ -1683,8 +1686,8 @@ export function P2PTradeTool() {
         const alreadyAbsent = reason instanceof TradeRecordApiRequestError
           && (reason.code === "RECORD_NOT_FOUND" || reason.code === "RECORD_REVOKED");
         const terminalMessage = alreadyAbsent
-          ? "거래 기록이 이미 없거나 철회되어 브라우저의 관리 권한을 정리했습니다."
-          : "오류: 거래 기록 관리 권한이 더 이상 유효하지 않아 브라우저에서 제거했습니다. 공개 기록이 남아 있다면 이 권한으로는 철회할 수 없습니다.";
+          ? "거래 기록이 이미 없거나 사용할 수 없어 브라우저의 관리 권한을 정리했습니다."
+          : "오류: 거래 기록 관리 권한이 더 이상 유효하지 않아 브라우저에서 제거했습니다. 공개 기록이 남아 있다면 이 권한으로는 링크를 비활성화할 수 없습니다.";
         setShareStatus(browserRemovalFailed
           ? `${terminalMessage} 다만 만료 전 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다.`
           : terminalMessage);
@@ -1692,8 +1695,8 @@ export function P2PTradeTool() {
       }
       rememberManagedRecord(record, storageGeneration);
       setShareStatus(reason instanceof Error
-        ? `오류: 거래 기록을 철회하지 못했습니다. ${reason.message}`
-        : "오류: 거래 기록을 철회하지 못했습니다. 다시 시도해 주세요.");
+        ? `오류: ${failureAction}하지 못했습니다. ${reason.message}`
+        : `오류: ${failureAction}하지 못했습니다. 다시 시도해 주세요.`);
       return false;
     } finally {
       releasePreparedReference();
@@ -1998,7 +2001,7 @@ export function P2PTradeTool() {
       await revokeKnownRecord(
         toManagedTradeRecord(prepared.signed, prepared.revokeToken),
         prepared.deliveryOutcome
-          ? "전달 후 공개 확정하지 못한 준비 기록을 철회했습니다. 카드의 상세 링크는 열리지 않습니다."
+          ? "전달 후 공개 확정하지 못한 준비 기록을 취소했습니다. 카드의 상세 링크는 열리지 않습니다."
           : "준비한 비공개 카드와 거래 기록을 폐기했습니다.",
       );
     } finally {
@@ -2010,20 +2013,18 @@ export function P2PTradeTool() {
 
   async function revokeManagedTradeRecord(record: ManagedTradeRecord) {
     if (isSharing) return;
-    const lifecycleLabel = record.lifecycle === "finalized"
-      ? "공개 기록"
-      : record.lifecycle === "finalizing"
-        ? "확정 상태를 확인 중인 기록"
-        : "준비 기록";
-    if (!window.confirm(`${lifecycleLabel}을 철회하시겠습니까?\n식별자: ${record.id}\n이 작업은 되돌릴 수 없습니다.`)) return;
+    const confirmationMessage = record.lifecycle === "finalized"
+      ? `공개 링크를 비활성화하시겠습니까?\n식별자: ${record.id}\n비활성화하면 이 링크로 기록을 열 수 없으며 되돌릴 수 없습니다.`
+      : `준비 기록을 취소하시겠습니까?\n식별자: ${record.id}\n이 작업은 되돌릴 수 없습니다.`;
+    if (!window.confirm(confirmationMessage)) return;
     isSharingRef.current = true;
     setIsSharing(true);
     try {
       await revokeKnownRecord(
         record,
         record.lifecycle === "finalized"
-          ? "공개 거래 기록을 철회했습니다. 기존 상세 링크는 더 이상 열리지 않습니다."
-          : "공개 확정 전 기록을 철회했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
+          ? "공개 링크를 비활성화했습니다. 기존 상세 링크로 기록을 열 수 없습니다."
+          : "준비 기록을 취소했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
       );
     } finally {
       isSharingRef.current = false;
@@ -2530,7 +2531,7 @@ export function P2PTradeTool() {
                   onClick={() => void cancelPreparedTrade()}
                   disabled={isSharing}
                 >
-                  {preparedTradeShare.deliveryOutcome ? "준비 기록 철회" : "준비 취소·기록 철회"}
+                  준비 기록 취소
                 </button>
               ) : null}
               <p
@@ -2543,16 +2544,16 @@ export function P2PTradeTool() {
               {managedTradeRecords.length > 0 ? (
                 <section className="managed-trade-records" aria-label="이 화면에서 만든 거래 기록 관리">
                   <strong>거래 기록 관리</strong>
-                  <p>공개 기록은 만료 시까지 관리합니다. 확정 요청의 결과를 받지 못한 기록은 브라우저에 보관하고 서버의 공개 상태를 다시 확인합니다.</p>
+                  <p>이 브라우저에서 만든 기록과 공개 링크를 관리합니다.</p>
                   {managedTradeRecords.some((record) => (
                     record.lifecycle === "finalized" && record.persistence === "memory-only"
                   )) ? (
-                    <p className="is-error" role="alert">저장하지 못한 공개 기록의 철회 권한이 있습니다. 이 화면을 닫기 전에 철회하십시오.</p>
+                    <p className="is-error" role="alert">저장하지 못한 공개 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 링크를 비활성화하십시오.</p>
                   ) : null}
                   {managedTradeRecords.some((record) => (
                     record.lifecycle !== "finalized" && record.persistence === "memory-only"
                   )) ? (
-                    <p className="is-error" role="alert">저장하지 못한 준비 기록의 철회 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 철회하십시오.</p>
+                    <p className="is-error" role="alert">저장하지 못한 준비 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 취소하십시오.</p>
                   ) : null}
                   <ul>
                     {managedTradeRecords.map((record) => (
@@ -2569,20 +2570,32 @@ export function P2PTradeTool() {
                             </time>
                           </small>
                         </span>
-                        {record.lifecycle === "finalized" ? (
-                          <>
-                            <a href={record.verificationUrl} target="_blank" rel="noreferrer">열기</a>
-                            <button type="button" onClick={() => void copyVerificationUrl(record.verificationUrl)} disabled={isSharing}>복사</button>
-                          </>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void revokeManagedTradeRecord(record)}
-                          disabled={isSharing}
-                          aria-label={`${record.lifecycle === "finalized" ? "공개" : "확정 전"} 기록 ${record.id} 철회`}
-                        >
-                          철회
-                        </button>
+                        <div className="managed-record-actions">
+                          {record.lifecycle === "finalized" ? (
+                            <>
+                              <a className="managed-record-action" href={record.verificationUrl} target="_blank" rel="noreferrer">링크 열기</a>
+                              <button
+                                className="managed-record-action"
+                                type="button"
+                                onClick={() => void copyVerificationUrl(record.verificationUrl)}
+                                disabled={isSharing}
+                              >
+                                링크 복사
+                              </button>
+                            </>
+                          ) : null}
+                          <button
+                            className="managed-record-action is-destructive"
+                            type="button"
+                            onClick={() => void revokeManagedTradeRecord(record)}
+                            disabled={isSharing}
+                            aria-label={record.lifecycle === "finalized"
+                              ? `공개 기록 ${record.id} 링크 비활성화`
+                              : `확정 전 기록 ${record.id} 취소`}
+                          >
+                            {record.lifecycle === "finalized" ? "공개 링크 비활성화" : "준비 기록 취소"}
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

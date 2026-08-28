@@ -246,6 +246,15 @@ test("wires calculator hardening states into the client component", async () => 
   assert.match(component, /id="tiny-trade-warning" role="status"/);
   assert.match(component, /공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
   assert.doesNotMatch(component, /공개 확정 전에 철회 권한을 먼저 브라우저에 저장/);
+  assert.match(component, /이 브라우저에서 만든 기록과 공개 링크를 관리합니다/);
+  assert.doesNotMatch(component, /공개 기록은 만료 시까지 관리합니다/);
+  assert.match(component, /링크 열기/);
+  assert.match(component, /링크 복사/);
+  assert.match(component, /공개 링크 비활성화/);
+  assert.doesNotMatch(component, />열기<|>복사<|>철회</);
+  assert.match(styles, /\.managed-record-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.managed-record-action\s*\{[^}]*min-height:\s*44px/);
+  assert.match(styles, /\.managed-record-action\.is-destructive\s*\{[^}]*grid-column:\s*1 \/ -1/);
   assert.match(component, /loadPersistedManagedTradeRecords/);
   assert.match(component, /persistManagedTradeRecord/);
   assert.match(component, /MANAGED_TRADE_RECORD_STORAGE_PREFIX/);
@@ -270,7 +279,7 @@ test("wires calculator hardening states into the client component", async () => 
   assert.match(component, /managedTradeRecordDisplayDeadline\(record\)[\s\S]*?확인 기한/);
   assert.doesNotMatch(component, /managedTradeRecordPendingExpiresAt\(record\)[\s\S]*?Date\.now\(\)/);
   assert.match(component, /removedManagedRecordIdsRef[\s\S]*?storage\.removeItem\(event\.key\)/);
-  assert.match(component, /window\.confirm\([\s\S]*?되돌릴 수 없습니다/);
+  assert.match(component, /const confirmationMessage[\s\S]*?되돌릴 수 없습니다[\s\S]*?window\.confirm\(confirmationMessage\)/);
   assert.doesNotMatch(component, /setItem\(MANAGED_TRADE_RECORD_STORAGE_KEY/);
   assert.match(styles, /\.managed-trade-records > p\.is-error \{[^}]*color: var\(--red\)/);
   assert.match(component, /href="\/privacy\/"/);
