@@ -203,6 +203,19 @@ test("drops funding sources while migrating version 3 browser drafts", () => {
   assert.equal(Object.hasOwn(JSON.parse(values.get(TRADE_DRAFT_STORAGE_KEY)), "fundingSource"), false);
 });
 
+test("explains local deletion and public-link deactivation without conflating them", async () => {
+  const privacy = await readFile(new URL("../app/privacy/page.tsx", import.meta.url), "utf8");
+
+  assert.match(privacy, /공개 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
+  assert.match(privacy, /일반적인 초안 변경과 이 버튼으로 한 삭제가 동기화됩니다/);
+  assert.match(privacy, /브라우저 사이트 데이터를 삭제하면 이 관리 정보는 사라지지만 서버의 공개 기록은 비활성화되지 않습니다/);
+  assert.match(privacy, /공개 기록이 있으면 먼저 거래 기록 관리에서 <strong>공개 링크 비활성화<\/strong>/);
+  assert.match(privacy, /비활성화하기 전에 관리 정보를 지우고 관련 탭까지 닫으면 나중에 관리 권한을 복구할 수 없습니다/);
+  assert.match(privacy, /같은 관리 정보의 재사용을 막기 위한 최소 상태값만 보관 기간 동안 남습니다/);
+  assert.doesNotMatch(privacy, /사이트 데이터를 삭제하면 제거됩니다\. 같은 사이트를 연 다른 탭에는 삭제·변경 사실이 동기화됩니다/);
+  assert.doesNotMatch(privacy, /철회 권한|공개 기록 철회/);
+});
+
 test("wires calculator hardening states into the client component", async () => {
   const [component, shareSession, styles] = await Promise.all([
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),

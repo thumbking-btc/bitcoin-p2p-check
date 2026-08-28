@@ -428,7 +428,8 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .privacy-content h2 { margin: 0 0 8px; font-size: clamp(20px, 4vw, 28px); }
 .privacy-content p, .privacy-content li { color: var(--muted); line-height: 1.7; }
 .privacy-content p { margin: 0; }
-.privacy-content ul { display: grid; gap: 7px; margin: 0; padding-left: 22px; }
+.privacy-content ul, .privacy-content ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; }
+.privacy-content ol + p { margin-top: 12px; }
 .privacy-content a { color: var(--orange-dark); font-weight: 780; text-underline-offset: 3px; }
 
 @media (min-width: 761px) {
