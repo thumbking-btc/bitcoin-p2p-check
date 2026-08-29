@@ -624,6 +624,7 @@ export function P2PTradeTool() {
   const knownManagedRecordsRef = useRef(new Map<string, ManagedTradeRecord>());
   const managedStorageGenerationRef = useRef(0);
   const managedTradeRecordsRef = useRef<ManagedTradeRecord[]>([]);
+  const managedTradeRecordsDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const reconciliationScheduler = useMemo(() => createReconciliationScheduler(), []);
 
   useEffect(() => {
@@ -712,6 +713,13 @@ export function P2PTradeTool() {
     () => managedTradeRecords.filter((record) => record.lifecycle === "finalizing"),
     [managedTradeRecords],
   );
+  const hasMemoryOnlyManagedRecords = managedTradeRecords.some((record) => record.persistence === "memory-only");
+
+  useEffect(() => {
+    if (hasMemoryOnlyManagedRecords && managedTradeRecordsDetailsRef.current) {
+      managedTradeRecordsDetailsRef.current.open = true;
+    }
+  }, [hasMemoryOnlyManagedRecords]);
 
   const readManagedStorageGeneration = useCallback(
     () => managedStorageGenerationRef.current,
@@ -2542,64 +2550,73 @@ export function P2PTradeTool() {
                 {shareStatus || (!isSharing ? "첫 단계에서는 15분짜리 비공개 준비 기록만 만듭니다." : "")}
               </p>
               {managedTradeRecords.length > 0 ? (
-                <section className="managed-trade-records" aria-label="이 화면에서 만든 거래 기록 관리">
-                  <strong>거래 기록 관리</strong>
-                  <p>이 브라우저에서 만든 기록과 공개 링크를 관리합니다.</p>
-                  {managedTradeRecords.some((record) => (
-                    record.lifecycle === "finalized" && record.persistence === "memory-only"
-                  )) ? (
-                    <p className="is-error" role="alert">저장하지 못한 공개 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 링크를 비활성화하십시오.</p>
-                  ) : null}
-                  {managedTradeRecords.some((record) => (
-                    record.lifecycle !== "finalized" && record.persistence === "memory-only"
-                  )) ? (
-                    <p className="is-error" role="alert">저장하지 못한 준비 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 취소하십시오.</p>
-                  ) : null}
-                  <ul>
-                    {managedTradeRecords.map((record) => (
-                      <li key={record.id}>
-                        <span>
-                          <strong>{record.lifecycle === "finalized"
-                            ? "공개 기록"
-                            : record.lifecycle === "finalizing"
-                              ? "확정 상태 확인 필요"
-                              : "준비 기록"}</strong>
-                          <small>
-                            식별자 <code>{record.id}</code> · <time dateTime={managedTradeRecordDisplayDeadline(record)}>
-                              {formatManagedRecordExpiry(managedTradeRecordDisplayDeadline(record))} {record.lifecycle === "finalizing" ? "확인 기한" : "만료"}
-                            </time>
-                          </small>
-                        </span>
-                        <div className="managed-record-actions">
-                          {record.lifecycle === "finalized" ? (
-                            <>
-                              <a className="managed-record-action" href={record.verificationUrl} target="_blank" rel="noreferrer">링크 열기</a>
-                              <button
-                                className="managed-record-action"
-                                type="button"
-                                onClick={() => void copyVerificationUrl(record.verificationUrl)}
-                                disabled={isSharing}
-                              >
-                                링크 복사
-                              </button>
-                            </>
-                          ) : null}
-                          <button
-                            className="managed-record-action is-destructive"
-                            type="button"
-                            onClick={() => void revokeManagedTradeRecord(record)}
-                            disabled={isSharing}
-                            aria-label={record.lifecycle === "finalized"
-                              ? `공개 기록 ${record.id} 링크 비활성화`
-                              : `확정 전 기록 ${record.id} 취소`}
-                          >
-                            {record.lifecycle === "finalized" ? "공개 링크 비활성화" : "준비 기록 취소"}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                <details
+                  ref={managedTradeRecordsDetailsRef}
+                  className="managed-trade-records"
+                >
+                  <summary>
+                    {managedTradeRecords.every((record) => record.lifecycle === "finalized")
+                      ? `공개 링크 ${managedTradeRecords.length}개 관리`
+                      : `거래 기록 ${managedTradeRecords.length}개 관리`}
+                  </summary>
+                  <div className="managed-trade-records-content">
+                    <p>이 브라우저에서 만든 기록과 공개 링크입니다.</p>
+                    {managedTradeRecords.some((record) => (
+                      record.lifecycle === "finalized" && record.persistence === "memory-only"
+                    )) ? (
+                      <p className="is-error" role="alert">저장하지 못한 공개 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 링크를 비활성화하십시오.</p>
+                    ) : null}
+                    {managedTradeRecords.some((record) => (
+                      record.lifecycle !== "finalized" && record.persistence === "memory-only"
+                    )) ? (
+                      <p className="is-error" role="alert">저장하지 못한 준비 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 취소하십시오.</p>
+                    ) : null}
+                    <ul>
+                      {managedTradeRecords.map((record) => (
+                        <li key={record.id}>
+                          <span>
+                            <strong>{record.lifecycle === "finalized"
+                              ? "공개 기록"
+                              : record.lifecycle === "finalizing"
+                                ? "확정 상태 확인 필요"
+                                : "준비 기록"}</strong>
+                            <small>
+                              식별자 <code>{record.id}</code> · <time dateTime={managedTradeRecordDisplayDeadline(record)}>
+                                {formatManagedRecordExpiry(managedTradeRecordDisplayDeadline(record))} {record.lifecycle === "finalizing" ? "확인 기한" : "만료"}
+                              </time>
+                            </small>
+                          </span>
+                          <div className="managed-record-actions">
+                            {record.lifecycle === "finalized" ? (
+                              <>
+                                <a className="managed-record-action" href={record.verificationUrl} target="_blank" rel="noreferrer">링크 열기</a>
+                                <button
+                                  className="managed-record-action"
+                                  type="button"
+                                  onClick={() => void copyVerificationUrl(record.verificationUrl)}
+                                  disabled={isSharing}
+                                >
+                                  링크 복사
+                                </button>
+                              </>
+                            ) : null}
+                            <button
+                              className="managed-record-action is-destructive"
+                              type="button"
+                              onClick={() => void revokeManagedTradeRecord(record)}
+                              disabled={isSharing}
+                              aria-label={record.lifecycle === "finalized"
+                                ? `공개 기록 ${record.id} 링크 비활성화`
+                                : `확정 전 기록 ${record.id} 취소`}
+                            >
+                              {record.lifecycle === "finalized" ? "공개 링크 비활성화" : "준비 기록 취소"}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
               ) : null}
             </div>
           </div>

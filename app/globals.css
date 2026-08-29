@@ -151,10 +151,14 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .share-status.is-error { color: var(--red); font-weight: 720; }
 .share-verification-actions { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px; }
 .share-verification-actions a { color: inherit; font-weight: 760; text-decoration: underline; }
-.managed-trade-records { display: grid; gap: 5px; margin-top: 6px; padding: 8px; border: 1px solid var(--line); background: #f7f3ea; font-size: 11px; }
-.managed-trade-records > strong { color: var(--ink-soft); font-size: 12px; }
-.managed-trade-records > p { margin: 0; color: var(--muted); line-height: 1.4; }
-.managed-trade-records > p.is-error { color: var(--red); font-weight: 720; }
+.managed-trade-records { margin-top: 6px; border: 1px solid var(--line); background: #f7f3ea; font-size: 11px; }
+.managed-trade-records > summary { position: relative; display: grid; min-height: 44px; grid-template-columns: minmax(0, 1fr) 10px; align-items: center; gap: 8px; padding: 8px 10px; color: var(--ink-soft); cursor: pointer; font-size: 12px; font-weight: 760; list-style: none; }
+.managed-trade-records > summary::-webkit-details-marker { display: none; }
+.managed-trade-records > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--orange-dark); border-bottom: 2px solid var(--orange-dark); transform: translateY(-2px) rotate(45deg); transition: transform .16s ease; }
+.managed-trade-records[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+.managed-trade-records-content { display: grid; gap: 5px; padding: 0 8px 8px; border-top: 1px solid var(--line); }
+.managed-trade-records-content > p { margin: 7px 0 0; color: var(--muted); line-height: 1.4; }
+.managed-trade-records-content > p.is-error { color: var(--red); font-weight: 720; }
 .managed-trade-records ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .managed-trade-records li { display: grid; gap: 8px; }
 .managed-trade-records li + li { padding-top: 8px; border-top: 1px solid var(--line); }

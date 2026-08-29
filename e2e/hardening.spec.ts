@@ -315,8 +315,12 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
   await page.reload();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
-  await expect(page.getByText("거래 기록 관리", { exact: true })).toBeVisible();
-  await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
+  const managedRecords = page.locator(".managed-trade-records");
+  await expect(managedRecords.getByText("공개 링크 1개 관리", { exact: true })).toBeVisible();
+  await expect(managedRecords).not.toHaveAttribute("open", "");
+  await expect(page.getByText("공개 기록", { exact: true })).not.toBeVisible();
+  await managedRecords.locator("summary").click();
+  await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
   const disclosure = page.getByRole("complementary", { name: "거래 기록 저장과 공개 안내" });
   await expect(disclosure.locator("p")).toHaveText("공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다.");
@@ -456,6 +460,7 @@ test("a forward browser-clock jump across apparent expiry does not delete a capa
   await page.clock.runFor(1);
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.locator(".managed-trade-records > summary").click();
   await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
 
   await page.clock.fastForward(61_000);
@@ -511,6 +516,7 @@ test("a conflicting record-scoped token cannot replace the capability already he
 
   await expect(page.getByText(/서로 다른 철회 권한이 감지/u)).toBeVisible();
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
+  await page.locator(".managed-trade-records > summary").click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` }).click();
   await expect.poll(() => authorization).toBe(`Bearer ${originalToken}`);
@@ -558,6 +564,7 @@ test("permanent revoke failures discard unusable browser capabilities", async ({
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
   await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(2);
+  await page.locator(".managed-trade-records > summary").click();
 
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `공개 기록 ${invalidId} 링크 비활성화` }).click();
@@ -603,6 +610,7 @@ test("a non-contract edge 403 preserves the only revoke capability", async ({ pa
   await page.goto("/");
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.locator(".managed-trade-records > summary").click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `공개 기록 ${id} 링크 비활성화` }).click();
 
@@ -692,6 +700,7 @@ test("a failed revoke after storage is cleared keeps the capability memory-only"
   await page.goto("/");
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.locator(".managed-trade-records > summary").click();
   await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
   await page.evaluate(() => {
     window.localStorage.clear();
@@ -818,6 +827,7 @@ test("a non-contract finalization 403 keeps the capability for retry", async ({ 
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
   await expect.poll(() => finalizeRequests).toBe(1);
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).not.toBeNull();
+  await page.locator(".managed-trade-records > summary").click();
   await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toBeVisible();
 
   await page.clock.fastForward(5 * 60_000 + 1_000);
@@ -943,6 +953,7 @@ test("clearing browser storage during reconciliation keeps a confirmed capabilit
   await page.clock.runFor(1);
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.locator(".managed-trade-records > summary").click();
   await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toBeVisible();
   await expect.poll(() => finalizeRequests).toBe(1);
   await page.evaluate(() => {
