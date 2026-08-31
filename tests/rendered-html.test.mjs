@@ -669,7 +669,9 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /const marketRefreshIntervalMs = getMarketRefreshInterval\(\)/);
   assert.match(component, /const getRefreshDelay = \(\) => getMarketRefreshDelay\([\s\S]*lastMarketRefreshAtRef\.current,[\s\S]*marketRefreshIntervalMs/);
   assert.match(component, /const refreshImmediately = \(\) =>/);
-  assert.ok((component.match(/lastMarketRefreshAtRef\.current = 0;/g) ?? []).length >= 2);
+  assert.match(component, /lastMarketRefreshAtRef\.current = 0;/);
+  assert.match(component, /const handleVisibilityChange = \(\) => \{[\s\S]*refreshImmediately\(\);/);
+  assert.match(component, /const handleOnline = \(\) => refreshImmediately\(\);/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
