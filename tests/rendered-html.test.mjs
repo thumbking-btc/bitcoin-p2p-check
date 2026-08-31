@@ -671,6 +671,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /premiumCheckedAt/);
   assert.match(component, /feeCheckedAt/);
   assert.doesNotMatch(component, /market-reference-refresh-note/);
+  assert.doesNotMatch(component, /업비트 데이터랩 · 시장 참고값/);
   assert.match(component, /\.finally\(\(\) => \{[\s\S]*lastMarketRefreshAtRef\.current = Date\.now\(\);/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
