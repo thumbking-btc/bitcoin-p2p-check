@@ -1103,7 +1103,6 @@ export function P2PTradeTool() {
           <div className="market-cell">
             <span>업비트 프리미엄</span>
             <strong>{formatPercent(effectiveKoreaPremium)}</strong>
-            <small>업비트 데이터랩 · 시장 참고값</small>
             <small>{premiumStatus}</small>
           </div>
         </div>
