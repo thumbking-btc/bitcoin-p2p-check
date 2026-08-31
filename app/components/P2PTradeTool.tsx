@@ -101,6 +101,7 @@ type MarketSnapshot = {
   priceKrw: number | null;
   priceObservedAt: string | null;
   koreaPremium: number | null;
+  premiumCheckedAt?: string | null;
   feeRates?: {
     nextBlock: number;
     halfHour: number;
@@ -861,13 +862,21 @@ export function P2PTradeTool() {
   const effectiveKoreaPremium = marketState === "ready" && !stalePrice && market?.status === "current"
     ? market?.koreaPremium ?? null
     : null;
+  const premiumState = market?.sourceStatus?.premium ?? "unavailable";
+  const premiumStatus = marketState === "loading"
+    ? market ? "갱신 중" : "조회 중"
+    : premiumState === "current"
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
+      : premiumState === "stale"
+        ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.premium ?? 0) / 60))}분 전`
+        : "조회 불가";
   const feeRates = market?.feeRates ?? null;
   const feeState = market?.sourceStatus?.fees ?? "unavailable";
   const feeVisualState = marketState === "loading" ? "loading" : feeState;
   const feeStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : feeState === "current"
-      ? `최근 확인 · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
       : feeState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
         : "조회 불가";
@@ -1095,11 +1104,9 @@ export function P2PTradeTool() {
             <span>업비트 프리미엄</span>
             <strong>{formatPercent(effectiveKoreaPremium)}</strong>
             <small>업비트 데이터랩 · 시장 참고값</small>
+            <small>{premiumStatus}</small>
           </div>
         </div>
-        <p className="market-reference-refresh-note">
-          실시간 가격 연결 중 프리미엄·온체인 수수료는 약 5분마다 자동 갱신
-        </p>
         {stalePrice ? (
           <p className="stale-warning" role="status">
             {marketState === "error"
