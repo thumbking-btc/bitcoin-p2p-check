@@ -667,8 +667,10 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
   assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
   assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
-  assert.match(component, /실시간 가격 연결 중 프리미엄·온체인 수수료는 약 5분마다 자동 갱신/);
-  assert.match(component, /className="market-reference-refresh-note"/);
+  assert.equal((component.match(/약 5분마다 자동 갱신 ·/g) ?? []).length, 2);
+  assert.match(component, /premiumCheckedAt/);
+  assert.match(component, /feeCheckedAt/);
+  assert.doesNotMatch(component, /market-reference-refresh-note/);
   assert.match(component, /\.finally\(\(\) => \{[\s\S]*lastMarketRefreshAtRef\.current = Date\.now\(\);/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
