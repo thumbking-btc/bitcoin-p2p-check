@@ -11,10 +11,12 @@ import {
 } from "../app/lib/trade-share-copy.mjs";
 import { buildTradeFragment, parseTradeFragment } from "../app/lib/trade-link.mjs";
 import {
+  getLivePriceReconnectDelay,
   getMarketRefreshDelay,
   getMarketRefreshInterval,
-  MARKET_REFRESH_FALLBACK_MS,
-  MARKET_REFRESH_WITH_LIVE_PRICE_MS,
+  LIVE_PRICE_RECONNECT_DELAYS_MS,
+  MARKET_PRICE_FALLBACK_INTERVAL_MS,
+  MARKET_REFERENCE_REFRESH_INTERVAL_MS,
 } from "../app/lib/market-refresh.mjs";
 import {
   buildTradeRecruitmentPost,
@@ -445,17 +447,23 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
-test("uses the tested fallback and live market refresh intervals", () => {
-  assert.equal(MARKET_REFRESH_FALLBACK_MS, 16_000);
-  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);
-  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);
-  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);
-  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 16_000);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 115_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 116_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);
+test("uses five-minute reference refreshes, one-minute price fallback, and bounded reconnect backoff", () => {
+  assert.equal(MARKET_REFERENCE_REFRESH_INTERVAL_MS, 300_000);
+  assert.equal(MARKET_PRICE_FALLBACK_INTERVAL_MS, 60_000);
+  assert.equal(getMarketRefreshInterval(true), MARKET_REFERENCE_REFRESH_INTERVAL_MS);
+  assert.equal(getMarketRefreshInterval(false), MARKET_PRICE_FALLBACK_INTERVAL_MS);
+  assert.deepEqual([...LIVE_PRICE_RECONNECT_DELAYS_MS], [15_000, 30_000, 60_000]);
+  assert.equal(getLivePriceReconnectDelay(Number.NaN), 15_000);
+  assert.equal(getLivePriceReconnectDelay(-1), 15_000);
+  assert.equal(getLivePriceReconnectDelay(0), 15_000);
+  assert.equal(getLivePriceReconnectDelay(1), 30_000);
+  assert.equal(getLivePriceReconnectDelay(2), 60_000);
+  assert.equal(getLivePriceReconnectDelay(20), 60_000);
+  assert.equal(getMarketRefreshDelay(0, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 100_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 100_000), 300_000);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 399_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 400_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_PRICE_FALLBACK_INTERVAL_MS, 160_000), 0);
 });
 
 test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
@@ -659,14 +667,25 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
   assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
   assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
-  assert.match(component, /약 1분마다 자동 갱신 ·/);
+  assert.match(component, /실시간 가격 연결 중 프리미엄·온체인 수수료는 약 5분마다 자동 갱신/);
+  assert.match(component, /className="market-reference-refresh-note"/);
+  assert.match(component, /\.finally\(\(\) => \{[\s\S]*lastMarketRefreshAtRef\.current = Date\.now\(\);/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
   assert.match(component, /const marketRefreshIntervalMs = getMarketRefreshInterval\(livePriceActive\)/);
   assert.match(component, /const getRefreshDelay = \(\) => getMarketRefreshDelay\([\s\S]*lastMarketRefreshAtRef\.current,[\s\S]*marketRefreshIntervalMs/);
+  assert.match(component, /const refreshImmediately = \(\) =>/);
+  assert.match(component, /lastMarketRefreshAtRef\.current = 0;/);
+  assert.match(component, /const handleVisibilityChange = \(\) => \{[\s\S]*refreshImmediately\(\);/);
+  assert.match(component, /const handleOnline = \(\) => refreshImmediately\(\);/);
   assert.match(component, /document\.visibilityState !== "visible"/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(component, /const delay = getLivePriceReconnectDelay\(reconnectAttempt\);/);
+  assert.match(component, /reconnectAttempt \+= 1;/);
+  assert.match(component, /lastLiveMessageAt = lastRenderedAt;[\s\S]*reconnectAttempt = 0;[\s\S]*scheduleStaleCheck\(\);/);
+  assert.match(component, /const checkStale = \(\) =>/);
+  assert.doesNotMatch(component, /LIVE_PRICE_RECONNECT_DELAY_MS|12_000/);
   assert.match(component, /if \(activeRefresh\) \{[\s\S]*return activeRefresh\.promise/);
   assert.match(component, /marketRequestRef\.current === refresh/);
   assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
