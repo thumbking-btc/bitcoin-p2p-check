@@ -25,6 +25,21 @@ function sameList(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function difference(left, right) {
+  const rightSet = new Set(right);
+  return left.filter((value) => !rightSet.has(value));
+}
+
+function describeAssetMismatch(expectedAssets, deployedAssets) {
+  const expectedOnly = difference(expectedAssets, deployedAssets);
+  const deployedOnly = difference(deployedAssets, expectedAssets);
+  return [
+    `현재 fingerprinted asset 집합이 검증한 빌드와 다릅니다. 예상 ${expectedAssets.length}개, 실제 ${deployedAssets.length}개`,
+    `검증 빌드에만 있음: ${expectedOnly.length > 0 ? expectedOnly.join(", ") : "없음"}`,
+    `Cloudflare 프리뷰에만 있음: ${deployedOnly.length > 0 ? deployedOnly.join(", ") : "없음"}`,
+  ].join(" | ");
+}
+
 async function fetchWithTimeout(url, init = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -58,7 +73,7 @@ async function waitForMatchingPreview(baseUrl, expectedAssets, waitMs) {
         const html = await response.text();
         const deployedAssets = fingerprintedAssets(html, `${baseUrl}/`);
         if (sameList(deployedAssets, expectedAssets)) return html;
-        lastReason = `현재 fingerprinted asset 집합이 검증한 빌드와 다릅니다. 예상 ${expectedAssets.length}개, 실제 ${deployedAssets.length}개`;
+        lastReason = describeAssetMismatch(expectedAssets, deployedAssets);
       }
     } catch (error) {
       lastReason = error instanceof Error ? error.message : String(error);
