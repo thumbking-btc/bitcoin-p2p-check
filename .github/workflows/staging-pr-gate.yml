@@ -40,6 +40,15 @@ jobs:
       - name: Verify the repaired candidate
         run: npm run verify
 
+      - name: Print Playwright failure contexts
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d test-results ]; then
+            find test-results -name error-context.md -print -exec cat {} \;
+          fi
+
       - name: Verify the built static asset graph
         run: node scripts/check-static-assets.mjs
 
