@@ -64,7 +64,6 @@ export default function Home() {
       </main>
       <footer className="site-footer">
         <SiteRouteNav current="calculator" />
-        <p>입금 내역과 온체인 전송 상태를 각각 확인하세요.</p>
       </footer>
     </>
   );

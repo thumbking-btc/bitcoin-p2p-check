@@ -353,7 +353,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
           copyTarget: amountIncluded ? request.uri : request.address,
           address: request.address,
         });
-        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소만 거래 기록 카드에 포함합니다.");
+        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소를 결제정보로 준비했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
       }
@@ -369,7 +369,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         const next = makeLightningInvoiceResult(invoice, expectedSats, false);
         setNowSeconds(Math.floor(Date.now() / 1_000));
         setResult(next);
-        setFeedback("인보이스의 메인넷·금액·서명·만료시간을 확인했습니다.");
+        setFeedback("인보이스의 금액·서명·만료 여부를 확인했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "라이트닝 인보이스를 확인하지 못했습니다.");
       }
@@ -433,7 +433,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   }
 
   const buildLabel = lightningMode === "address"
-      ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제 직전 인보이스 만들기"
+      ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제용 인보이스 만들기"
       : "인보이스 확인";
 
   function includeLightningAddress() {
@@ -444,7 +444,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     }
     try {
       setResult(makeLightningAddressResult(lightningSource, expectedSats));
-      setFeedback("라이트닝 주소를 거래 기록 카드에 포함합니다.");
+      setFeedback("라이트닝 주소를 결제정보로 준비했습니다.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "라이트닝 주소를 확인하지 못했습니다.");
     }
@@ -453,12 +453,12 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
       <div className={styles.header}>
-        <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 정보" : "구매자가 제공한 BTC 받을 정보"} <span>(선택 사항)</span></h3>
+        <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 곳" : "구매자가 제공한 BTC 받을 곳"} <span>(선택 사항)</span></h3>
       </div>
       <p className={styles.intro}>{ownerRole === "buyer"
-        ? "내가 받을 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."
-        : "구매자가 확인해 준 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."}</p>
-      <p className={styles.amountNote}>현재 거래에서 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
+        ? "받을 주소나 인보이스를 거래 기록에 함께 넣을 수 있습니다."
+        : "구매자가 확인해 준 주소나 인보이스를 거래 기록에 함께 넣을 수 있습니다."}</p>
+      <p className={styles.amountNote}>현재 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
 
       <fieldset className={styles.railPicker} disabled={busy}>
         <legend>BTC 전송 방식</legend>
@@ -468,7 +468,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         </label>
         <label>
           <input aria-label="라이트닝" type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} />
-          <span><strong>라이트닝</strong><small>주소·LNURL 또는 인보이스</small></span>
+          <span><strong>라이트닝</strong><small>주소 또는 인보이스</small></span>
         </label>
       </fieldset>
 
@@ -479,26 +479,26 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
-          <small>주소만 포함하거나, 현재 거래 금액을 넣은 BIP21 결제 QR을 만들 수 있습니다.</small>
+          <small>금액 포함 QR을 만들면 받을 주소와 현재 거래 금액을 한 번에 확인할 수 있습니다.</small>
         </div>
       ) : (
         <>
           <div className={styles.modeRow}>
             <p>{lightningMode === "address"
-              ? "주소만 포함하거나, 실제 결제에 사용할 고정금액 인보이스를 만들 수 있습니다."
-              : "지갑에서 직접 만든 인보이스를 거래 금액과 대조합니다."}</p>
+              ? "라이트닝 주소를 입력하면 현재 거래 금액의 결제 인보이스를 만들 수 있습니다."
+              : "지갑에서 만든 인보이스가 현재 거래 금액과 맞는지 확인합니다."}</p>
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
             </button>
           </div>
           {lightningMode === "address" ? (
             <div className={styles.field}>
-              <label htmlFor="receive-lightning">라이트닝 주소 / LNURL-pay</label>
+              <label htmlFor="receive-lightning">라이트닝 주소</label>
               <div className={styles.inputRow}>
-                <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
+                <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com" />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
-                  <small>주소만 포함하면 만료 없이 주소를 공유합니다. 인보이스 만들기는 현재 거래 금액의 새 BOLT11을 요청합니다.</small>
+              <small>주소만 저장할 수도 있습니다. 결제용 인보이스는 현재 금액으로 새로 만듭니다.</small>
             </div>
           ) : (
             <div className={styles.field}>
@@ -507,44 +507,48 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
                 <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} maxLength={MAX_BOLT11_LENGTH} onChange={(event) => { clear(); setInvoice(event.target.value.slice(0, MAX_BOLT11_LENGTH)); }} placeholder="lnbc... 또는 lightning:lnbc..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("invoice")}>붙여넣기</button>
               </div>
-              <small>메인넷·서명·만료시간과 현재 거래의 받을 sats가 정확히 같은지 확인합니다.</small>
+              <small>현재 거래 금액과 일치하고 만료되지 않은 인보이스인지 확인합니다.</small>
             </div>
           )}
         </>
       )}
 
-          <div className={styles.actions}>
-            {rail === "onchain" ? (
-              <>
-                <button className={styles.secondary} type="button" disabled={busy} onClick={() => void build(false)}>주소만 포함</button>
-                <button className={styles.primary} type="button" disabled={busy} onClick={() => void build(true)}>금액 포함 QR 만들기</button>
-              </>
-            ) : rail === "lightning" && lightningMode === "address" ? (
-              <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
-            ) : null}
-            {rail !== "onchain" ? <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button> : null}
-            <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
-          </div>
+      <div className={styles.actions}>
+        {rail === "onchain" ? (
+          <>
+            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build(true)}>금액 포함 QR 만들기</button>
+            <button className={styles.secondary} type="button" disabled={busy} onClick={() => void build(false)}>주소만 포함</button>
+          </>
+        ) : lightningMode === "address" ? (
+          <>
+            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+            <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
+          </>
+        ) : (
+          <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+        )}
+        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>결제정보 지우기</button>
+      </div>
 
       {error ? <p className={`${styles.status} ${styles.error}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
 
       {result ? (
         <div className={styles.result}>
           <div className={styles.resultInfo}>
-                <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
+            <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
-            <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
-                <dl>
-                  <div className={styles.resultState}><dt>상태</dt><dd>{lifecycleState.status === "ready" ? "카드에 포함됨" : lifecycleState.status === "expiring" ? "곧 만료 · 포함 중지" : lifecycleState.status === "expired" ? "만료 · 포함 중지" : "조건 변경 · 포함 중지"}</dd></div>
+            <p className={styles.lockNote}>이 결제정보의 금액을 지키기 위해 계산 기준을 고정했습니다. 새 시세로 다시 계산하려면 결제정보를 지우십시오.</p>
+            <dl>
+              <div className={styles.resultState}><dt>상태</dt><dd>{lifecycleState.status === "ready" ? "사용 가능" : lifecycleState.status === "expiring" ? "곧 만료 · 사용 중지" : lifecycleState.status === "expired" ? "만료 · 사용 중지" : "조건 변경 · 사용 중지"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
             {resultStale ? <p className={styles.stale} role="alert">거래 조건이 바뀌었습니다. 현재 금액으로 다시 만들어야 공유할 수 있습니다.</p> : null}
-            {lifecycleState.status === "expiring" ? <p className={styles.stale} role="alert">인보이스가 2분 안에 만료됩니다. 현재 인보이스는 거래 기록에 포함되지 않습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
-            {lifecycleState.status === "expired" ? <p className={styles.stale} role="alert">인보이스가 만료되어 거래 기록에 포함되지 않습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
-                <details className={styles.resultDetails}>
-                  <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
+            {lifecycleState.status === "expiring" ? <p className={styles.stale} role="alert">인보이스가 2분 안에 만료되어 사용을 중지했습니다. 새 인보이스를 만드십시오.</p> : null}
+            {lifecycleState.status === "expired" ? <p className={styles.stale} role="alert">인보이스가 만료되어 사용을 중지했습니다. 새 인보이스를 만드십시오.</p> : null}
+            <details className={styles.resultDetails}>
+              <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
               <div className={styles.resultTarget}>
-                    <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
+                <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
                 <code>{result.copyTarget}</code>
               </div>
             </details>

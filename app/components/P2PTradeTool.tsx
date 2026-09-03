@@ -17,7 +17,11 @@ import {
   TRADE_DRAFT_STORAGE_KEY,
   writeTradeDraft,
 } from "../lib/trade-draft.mjs";
-import { getMarketRefreshDelay, getMarketRefreshInterval } from "../lib/market-refresh.mjs";
+import {
+  getLivePriceReconnectDelay,
+  getMarketRefreshDelay,
+  getMarketRefreshInterval,
+} from "../lib/market-refresh.mjs";
 import {
   isLiveStreamStalled,
   LIVE_STREAM_STALL_TIMEOUT_MS,
@@ -90,7 +94,6 @@ type LivePrice = {
 
 const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
 const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
-const LIVE_PRICE_RECONNECT_DELAY_MS = 12_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
 const MARKET_REQUEST_TIMEOUT_MS = 12_000;
@@ -198,6 +201,7 @@ type MarketSnapshot = {
   priceKrw: number | null;
   priceObservedAt: string | null;
   koreaPremium: number | null;
+  premiumCheckedAt?: string | null;
   feeRates?: {
     nextBlock: number;
     halfHour: number;
@@ -784,7 +788,7 @@ export function P2PTradeTool() {
     setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
     setShareStatus(browserRemovalFailed
       ? "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오."
-      : "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 제거했습니다.");
+      : "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저에서 제거했습니다.");
   }, []);
 
   useEffect(() => {
@@ -1141,6 +1145,9 @@ export function P2PTradeTool() {
       timer = null;
     };
 
+    const browserCanRefresh = () =>
+      document.visibilityState === "visible" && navigator.onLine !== false;
+
     const getRefreshDelay = () => getMarketRefreshDelay(
       lastMarketRefreshAtRef.current,
       marketRefreshIntervalMs,
@@ -1148,13 +1155,13 @@ export function P2PTradeTool() {
 
     const schedule = () => {
       clearTimer();
-      if (disposed || document.visibilityState !== "visible") return;
+      if (disposed || !browserCanRefresh()) return;
       timer = window.setTimeout(() => void runWhenDue(), Math.max(1, getRefreshDelay()));
     };
 
     const runWhenDue = async () => {
       clearTimer();
-      if (disposed || document.visibilityState !== "visible") return;
+      if (disposed || !browserCanRefresh()) return;
       const delay = getRefreshDelay();
       if (delay > 0) {
         timer = window.setTimeout(() => void runWhenDue(), delay);
@@ -1166,17 +1173,34 @@ export function P2PTradeTool() {
       if (!disposed) schedule();
     };
 
-    const handleVisibilityChange = () => {
+    const refreshImmediately = () => {
       clearTimer();
-      if (document.visibilityState === "visible") void runWhenDue();
+      if (!browserCanRefresh()) return;
+      lastMarketRefreshAtRef.current = 0;
+      void runWhenDue();
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        clearTimer();
+        return;
+      }
+      refreshImmediately();
+    };
+
+    const handleOnline = () => refreshImmediately();
+    const handleOffline = () => clearTimer();
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    if (document.visibilityState === "visible") void runWhenDue();
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    if (browserCanRefresh()) void runWhenDue();
     return () => {
       disposed = true;
       clearTimer();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, [marketRefreshIntervalMs, refreshMarket]);
 
@@ -1184,6 +1208,7 @@ export function P2PTradeTool() {
     let disposed = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
     let renderTimer: number | null = null;
     let watchdogTimer: number | null = null;
     let lastMessageAt = 0;
@@ -1220,6 +1245,7 @@ export function P2PTradeTool() {
       clearRenderTimer();
       clearWatchdogTimer();
       queuedPrice = null;
+      reconnectAttempt = 0;
       lastMessageAt = 0;
       setStreamActive(false);
       const activeSocket = socket;
@@ -1233,7 +1259,10 @@ export function P2PTradeTool() {
       queuedPrice = null;
       if (!price || disposed || !browserIsActive()) return;
       lastRenderedAt = Date.now();
-      if (applyLivePrice(price)) setStreamActive(true);
+      if (applyLivePrice(price)) {
+        reconnectAttempt = 0;
+        setStreamActive(true);
+      }
     };
 
     const queuePrice = (price: LivePrice) => {
@@ -1253,7 +1282,9 @@ export function P2PTradeTool() {
     const scheduleReconnect = () => {
       clearReconnectTimer();
       if (disposed || !browserIsActive()) return;
-      reconnectTimer = window.setTimeout(connect, LIVE_PRICE_RECONNECT_DELAY_MS);
+      const delay = getLivePriceReconnectDelay(reconnectAttempt);
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(connect, delay);
     };
 
     const armWatchdog = (activeSocket: WebSocket) => {
@@ -1280,7 +1311,14 @@ export function P2PTradeTool() {
     const connect = () => {
       if (disposed || !browserIsActive() || socket) return;
       clearReconnectTimer();
-      const nextSocket = new WebSocket(UPBIT_TICKER_WEBSOCKET_URL);
+      let nextSocket: WebSocket;
+      try {
+        nextSocket = new WebSocket(UPBIT_TICKER_WEBSOCKET_URL);
+      } catch {
+        setStreamActive(false);
+        scheduleReconnect();
+        return;
+      }
       nextSocket.binaryType = "arraybuffer";
       socket = nextSocket;
 
@@ -1516,13 +1554,21 @@ export function P2PTradeTool() {
   const effectiveKoreaPremium = marketState === "ready" && !stalePrice && market?.status === "current"
     ? market?.koreaPremium ?? null
     : null;
+  const premiumState = market?.sourceStatus?.premium ?? "unavailable";
+  const premiumStatus = marketState === "loading"
+    ? market ? "갱신 중" : "조회 중"
+    : premiumState === "current"
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
+      : premiumState === "stale"
+        ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.premium ?? 0) / 60))}분 전`
+        : "조회 불가";
   const feeRates = market?.feeRates ?? null;
   const feeState = market?.sourceStatus?.fees ?? "unavailable";
   const feeVisualState = marketState === "loading" ? "loading" : feeState;
   const feeStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : feeState === "current"
-      ? `약 1분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
       : feeState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
         : "조회 불가";
@@ -2210,7 +2256,7 @@ export function P2PTradeTool() {
           <div className="market-cell">
             <span>업비트 프리미엄</span>
             <strong>{formatPercent(effectiveKoreaPremium)}</strong>
-            <small>업비트 데이터랩 · 시장 참고값</small>
+            <small>{premiumStatus}</small>
           </div>
         </div>
         {stalePrice ? (

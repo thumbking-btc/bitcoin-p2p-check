@@ -341,8 +341,8 @@ export function TradeRecordVerifier() {
       <RecordDetails record={state.result.record} />
 
       <aside className={styles.disclaimer}>
-        <strong>서명이 보증하지 않는 사항</strong>
-        <p>이 서명은 상대방의 신원, 원화 입금, BTC 수령 또는 거래 완료를 보증하지 않습니다. 주소·인보이스·금액을 상대방과 지갑에서 다시 확인하고, 원화 입금과 BTC 수령 내역도 각각 확인하십시오.</p>
+        <strong>확인 범위</strong>
+        <p>서명은 기록 무결성만 확인합니다. 신원·원화 입금·BTC 수령은 거래 당사자가 별도로 확인해야 합니다.</p>
       </aside>
 
       <PaymentDetails record={state.result.record} paymentExpiry={paymentExpiry} />
