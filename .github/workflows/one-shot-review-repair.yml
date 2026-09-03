@@ -15,15 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          fetch-depth: 2
+          fetch-depth: 3
       - name: Verify exact starting point
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "29a03a7dfe0dae91eddf23ee0429f79b8bbee346"
+          test "$(git rev-parse HEAD^)" = "97c7f39a3db3a32773b7990496d47e472a2cd08b"
+          test "$(git rev-parse HEAD^^)" = "29a03a7dfe0dae91eddf23ee0429f79b8bbee346"
       - name: Apply exact guarded replacements
-        shell: python
+        shell: bash
         run: |
+          set -euo pipefail
+          python - <<'PY'
           from pathlib import Path
 
           def replace_exact(path: str, old: str, new: str, expected: int = 1) -> None:
@@ -99,6 +102,7 @@ jobs:
   market.releaseFallback();
   await expect(recoveryStatus).toHaveCount(0);''',
           )
+          PY
       - name: Remove one-shot workflow and commit repair
         shell: bash
         run: |
