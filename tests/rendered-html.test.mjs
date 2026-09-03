@@ -457,7 +457,7 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
 
 test("uses the inherited fallback, reference refresh, and reconnect policy", () => {
   assert.equal(MARKET_REFRESH_FALLBACK_MS, 60_000);
-  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 5 * 60_000);
+  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 60_000);
   assert.deepEqual(LIVE_PRICE_RECONNECT_DELAYS_MS, [15_000, 30_000, 60_000]);
   assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);
   assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);
@@ -465,8 +465,8 @@ test("uses the inherited fallback, reference refresh, and reconnect policy", () 
   assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 60_000);
   assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 159_999), 1);
   assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 160_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 399_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 400_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 159_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 160_000), 0);
   assert.equal(getLivePriceReconnectDelay(0), 15_000);
   assert.equal(getLivePriceReconnectDelay(1), 30_000);
   assert.equal(getLivePriceReconnectDelay(2), 60_000);
@@ -679,7 +679,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
   assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
   assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
-  assert.match(component, /약 5분마다 자동 갱신 ·/);
+  assert.match(component, /약 1분마다 자동 갱신 ·/);
   assert.match(component, /premiumCheckedAt/);
   assert.match(component, /feeCheckedAt/);
   assert.doesNotMatch(component, /<small>업비트 데이터랩 · 시장 참고값<\/small>/);

@@ -788,7 +788,7 @@ test("a permanent finalization authorization failure removes the invalid capabil
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
   await expect.poll(() => finalizeRequests).toBe(1);
-  await expect(page.getByText(/유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 제거했습니다/u)).toBeVisible();
+  await expect(page.getByText(/유효하지 않은 거래 기록 관리 권한을 브라우저에서 제거했습니다/u)).toBeVisible();
   await expect.poll(() => page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key)).toBeNull();
   await expect(page.getByText("확정 상태 확인 필요", { exact: true })).toHaveCount(0);
 
@@ -1143,7 +1143,7 @@ test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice bounda
 
   const shareButton = page.locator("button.share-button");
   await expect(page.getByText(/2:01 남음/u)).toBeVisible();
-  await expect(page.getByText("카드에 포함됨", { exact: true })).toBeVisible();
+  await expect(page.getByText("결제정보 미포함", { exact: true })).toHaveCount(0);
   await expect(shareButton).toBeEnabled();
 
   await shareButton.click();
@@ -1158,13 +1158,13 @@ test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice bounda
 
   await page.clock.fastForward(1_000);
   await expect(page.getByText(/1:59 남음/u)).toBeVisible();
-  await expect(page.getByText("곧 만료 · 포함 중지", { exact: true })).toBeVisible();
+  await expect(page.getByText("곧 만료 · 사용 중지", { exact: true })).toBeVisible();
   await expect(page.getByText("결제정보를 다시 확인해야 합니다.", { exact: true })).toBeVisible();
   await expect(shareButton).toBeDisabled();
 
   await page.clock.fastForward(119_000);
   await expect(page.getByText(/· 만료됨/u)).toBeVisible();
-  await expect(page.getByText("만료 · 포함 중지", { exact: true })).toBeVisible();
+  await expect(page.getByText("만료 · 사용 중지", { exact: true })).toBeVisible();
   await expect(shareButton).toBeDisabled();
 });
 
@@ -1191,11 +1191,12 @@ test("a silent WebSocket watchdog failure blocks sharing until REST recovery", a
     window as Window & { __p2pWebSocketState?: { closeCount: number } }
   ).__p2pWebSocketState?.closeCount ?? 0)).toBeGreaterThanOrEqual(1);
   await expect.poll(market.requestCount).toBeGreaterThanOrEqual(2);
-  await expect(page.getByText("실시간 시세 수신이 중단되었습니다. 최신 시세를 다시 확인하고 있습니다.", { exact: true })).toBeVisible();
+  const recoveryStatus = page.getByRole("button", { name: "업비트 시세와 온체인 수수료율 조회 중" });
+  await expect(recoveryStatus).toBeVisible();
   await expect(shareButton).toBeDisabled();
 
   market.releaseFallback();
-  await expect(page.getByText("실시간 시세 수신이 중단되었습니다. 최신 시세를 다시 확인하고 있습니다.", { exact: true })).toHaveCount(0);
+  await expect(recoveryStatus).toHaveCount(0);
   await expect(shareButton).toBeEnabled();
 });
 

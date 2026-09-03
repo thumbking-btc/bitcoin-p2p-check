@@ -1558,7 +1558,7 @@ export function P2PTradeTool() {
   const premiumStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : premiumState === "current"
-      ? `약 5분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
+      ? `약 1분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
       : premiumState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.premium ?? 0) / 60))}분 전`
         : "조회 불가";
@@ -1568,7 +1568,7 @@ export function P2PTradeTool() {
   const feeStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : feeState === "current"
-      ? `약 5분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      ? `약 1분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
       : feeState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
         : "조회 불가";
