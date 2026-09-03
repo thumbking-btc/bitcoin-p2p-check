@@ -459,8 +459,12 @@ test("a forward browser-clock jump across apparent expiry does not delete a capa
   await page.goto("/");
   await page.clock.runFor(1);
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
-  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
-  await page.locator(".managed-trade-records > summary").click();
+  const tradeRecordCardMode = page.getByRole("radio", { name: /거래 기록 카드/u });
+  await page.locator('label[for="output-mode-trade-image"]').click();
+  await expect(tradeRecordCardMode).toBeChecked();
+  const managedRecordsSummary = page.locator(".managed-trade-records > summary");
+  await expect(managedRecordsSummary).toBeVisible();
+  await managedRecordsSummary.click();
   await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
 
   await page.clock.fastForward(61_000);
