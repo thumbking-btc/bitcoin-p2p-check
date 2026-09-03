@@ -35,28 +35,35 @@ jobs:
 
           path = Path('e2e/hardening.spec.ts')
           text = path.read_text()
-          old = '''  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
-          await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
-          await page.locator(".managed-trade-records > summary").click();
-          await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+          test_start_marker = 'test("a forward browser-clock jump across apparent expiry does not delete a capability"'
+          next_test_marker = '\ntest("a conflicting record-scoped token cannot replace the capability already held by an open tab"'
+          start = text.find(test_start_marker)
+          if start < 0:
+              raise SystemExit('target test start marker not found')
+          end = text.find(next_test_marker, start)
+          if end < 0:
+              raise SystemExit('target test end marker not found')
 
-          await page.clock.fastForward(61_000);
-          '''
-          new = '''  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
-          const tradeRecordCardMode = page.getByRole("radio", { name: /거래 기록 카드/u });
-          await page.locator('label[for="output-mode-trade-image"]').click();
-          await expect(tradeRecordCardMode).toBeChecked();
-          const managedRecordsSummary = page.locator(".managed-trade-records > summary");
-          await expect(managedRecordsSummary).toBeVisible();
-          await managedRecordsSummary.click();
-          await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
+          segment = text[start:end]
+          old_radio = '  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });'
+          old_summary = '  await page.locator(".managed-trade-records > summary").click();'
+          if segment.count(old_radio) != 1:
+              raise SystemExit(f'expected one forced radio interaction in target test, found {segment.count(old_radio)}')
+          if segment.count(old_summary) != 1:
+              raise SystemExit(f'expected one managed summary click in target test, found {segment.count(old_summary)}')
 
-          await page.clock.fastForward(61_000);
-          '''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f'expected exactly one target block, found {count}')
-          path.write_text(text.replace(old, new))
+          new_radio = '\n'.join([
+              '  const tradeRecordCardMode = page.getByRole("radio", { name: /거래 기록 카드/u });',
+              '  await page.locator(\'label[for="output-mode-trade-image"]\').click();',
+              '  await expect(tradeRecordCardMode).toBeChecked();',
+          ])
+          new_summary = '\n'.join([
+              '  const managedRecordsSummary = page.locator(".managed-trade-records > summary");',
+              '  await expect(managedRecordsSummary).toBeVisible();',
+              '  await managedRecordsSummary.click();',
+          ])
+          segment = segment.replace(old_radio, new_radio).replace(old_summary, new_summary)
+          path.write_text(text[:start] + segment + text[end:])
           PY
           git diff --check
           test "$(git diff --name-only | tr -d '\r')" = "e2e/hardening.spec.ts"
