@@ -45,6 +45,7 @@ jobs:
             'node_modules/electron-to-chromium',
             'node_modules/node-releases',
             'node_modules/update-browserslist-db',
+            'node_modules/fflate',
           ]);
 
           const beforeTop = { ...before, packages: undefined };
@@ -73,16 +74,27 @@ jobs:
             throw new Error('browserslist was not updated');
           }
 
-          const version = after.packages?.['node_modules/browserslist']?.version;
-          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
-          if (!match) throw new Error(`invalid browserslist version: ${String(version)}`);
-          const [, major, minor, patch] = match.map(Number);
-          if (major !== 4 || minor < 28 || (minor === 28 && patch < 7)) {
-            throw new Error(`browserslist remains vulnerable: ${version}`);
+          const browserslistVersion = after.packages?.['node_modules/browserslist']?.version;
+          const browserslistMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(browserslistVersion ?? '');
+          if (!browserslistMatch) throw new Error(`invalid browserslist version: ${String(browserslistVersion)}`);
+          const [, browserslistMajor, browserslistMinor, browserslistPatch] = browserslistMatch.map(Number);
+          if (browserslistMajor !== 4 || browserslistMinor < 28 || (browserslistMinor === 28 && browserslistPatch < 7)) {
+            throw new Error(`browserslist remains vulnerable: ${browserslistVersion}`);
+          }
+
+          if (changed.includes('node_modules/fflate')) {
+            const fflateVersion = after.packages?.['node_modules/fflate']?.version;
+            const fflateMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(fflateVersion ?? '');
+            if (!fflateMatch) throw new Error(`invalid fflate version: ${String(fflateVersion)}`);
+            const [, fflateMajor, fflateMinor, fflatePatch] = fflateMatch.map(Number);
+            if (fflateMajor !== 0 || fflateMinor !== 7 || fflatePatch < 5) {
+              throw new Error(`unexpected fflate compatibility change: ${fflateVersion}`);
+            }
           }
 
           console.log(`Allowed lockfile changes: ${changed.join(', ')}`);
-          console.log(`Patched browserslist version: ${version}`);
+          console.log(`Patched browserslist version: ${browserslistVersion}`);
+          console.log(`Patched fflate version: ${after.packages?.['node_modules/fflate']?.version ?? 'unchanged'}`);
           NODE
 
       - name: Validate lockfile installation and audit
