@@ -1,0 +1,99 @@
+name: Temporary Browserslist Lock Remediation
+
+on:
+  push:
+    branches:
+      - review/ux-safety-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  remediate-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the review branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: review/ux-safety-20260903
+          fetch-depth: 1
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Generate a constrained security-only lockfile update
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp package-lock.json "$RUNNER_TEMP/package-lock.before.json"
+          npm audit fix --package-lock-only --ignore-scripts
+          git diff --exit-code -- package.json
+          node <<'NODE'
+          import fs from 'node:fs';
+
+          const before = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/package-lock.before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const allowed = new Set([
+            'node_modules/browserslist',
+            'node_modules/baseline-browser-mapping',
+            'node_modules/caniuse-lite',
+            'node_modules/electron-to-chromium',
+            'node_modules/node-releases',
+            'node_modules/update-browserslist-db',
+          ]);
+
+          const beforeTop = { ...before, packages: undefined };
+          const afterTop = { ...after, packages: undefined };
+          if (JSON.stringify(beforeTop) !== JSON.stringify(afterTop)) {
+            throw new Error('package-lock top-level metadata changed unexpectedly');
+          }
+
+          const keys = new Set([
+            ...Object.keys(before.packages ?? {}),
+            ...Object.keys(after.packages ?? {}),
+          ]);
+          const changed = [...keys].filter((key) =>
+            JSON.stringify(before.packages?.[key]) !== JSON.stringify(after.packages?.[key])
+          );
+          const unexpected = changed.filter((key) => !allowed.has(key));
+          if (unexpected.length > 0) {
+            throw new Error(`unexpected lockfile package changes: ${unexpected.join(', ')}`);
+          }
+          if (!changed.includes('node_modules/browserslist')) {
+            throw new Error('browserslist was not updated');
+          }
+
+          const version = after.packages?.['node_modules/browserslist']?.version;
+          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
+          if (!match) throw new Error(`invalid browserslist version: ${String(version)}`);
+          const [, major, minor, patch] = match.map(Number);
+          if (major !== 4 || minor < 28 || (minor === 28 && patch < 7)) {
+            throw new Error(`browserslist remains vulnerable: ${version}`);
+          }
+
+          console.log(`Allowed lockfile changes: ${changed.join(', ')}`);
+          console.log(`Patched browserslist version: ${version}`);
+          NODE
+
+      - name: Validate lockfile installation and audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+
+      - name: Commit only the generated lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add package-lock.json
+          git diff --cached --exit-code && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(deps): patch browserslist security advisory'
+          git push origin HEAD:review/ux-safety-20260903
