@@ -5,9 +5,57 @@ import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NORMAL_GATE_COMMIT = "29a03a7dfe0dae91eddf23ee0429f79b8bbee346"
 EXPECTED_HEAD_REF = "review/ux-safety-20260903"
 EXPECTED_BASE_REF = "staging"
+EXPECTED_COMMIT_MESSAGE = "ci: fix guarded repair gate restore"
+NORMAL_GATE = '''name: Staging PR Gate
+
+on:
+  pull_request:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exact PR revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Use Node.js 22.19.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install the verified browser runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the complete release gate
+        run: npm run verify:ci
+
+      - name: Verify the built static asset graph
+        run: node scripts/check-static-assets.mjs
+
+      - name: Verify the matching Cloudflare branch preview
+        run: node scripts/check-branch-preview.mjs
+        env:
+          PREVIEW_BASE_URL: https://staging-bitcoin-p2p-check.thumbking-btc.workers.dev
+          PREVIEW_WAIT_MS: "300000"
+'''
 
 
 def fail(message: str) -> None:
@@ -32,7 +80,7 @@ def main() -> None:
         fail("Refusing repair outside the exact review branch.")
     if os.environ.get("GITHUB_BASE_REF") != EXPECTED_BASE_REF:
         fail("Refusing repair outside the staging pull request.")
-    if git_text("log", "-1", "--format=%s") != "ci: activate guarded review repair":
+    if git_text("log", "-1", "--format=%s") != EXPECTED_COMMIT_MESSAGE:
         fail("Unexpected repair commit; refusing to mutate the checkout.")
 
     replace_exact(
@@ -101,13 +149,8 @@ def main() -> None:
   await expect(recoveryStatus).toHaveCount(0);''',
     )
 
-    normal_gate = subprocess.check_output(
-        ["git", "show", f"{NORMAL_GATE_COMMIT}:.github/workflows/staging-pr-gate.yml"],
-        cwd=REPO,
-    )
-    (REPO / ".github/workflows/staging-pr-gate.yml").write_bytes(normal_gate)
+    (REPO / ".github/workflows/staging-pr-gate.yml").write_text(NORMAL_GATE, encoding="utf-8")
     Path(__file__).unlink()
-
     subprocess.run(["git", "diff", "--check"], cwd=REPO, check=True)
     print("Guarded review repair candidate prepared successfully.")
 
