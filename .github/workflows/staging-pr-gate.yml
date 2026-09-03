@@ -5,7 +5,7 @@ on:
     branches: [staging]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: staging-pr-gate-${{ github.event.pull_request.number }}
@@ -22,9 +22,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Prepare the guarded repair candidate
-        run: python scripts/repair-review-branch.py
-
       - name: Use Node.js 22.19.0
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -37,29 +34,14 @@ jobs:
       - name: Install the verified browser runtime
         run: npx playwright install --with-deps chromium
 
-      - name: Verify the repaired candidate
-        run: npm run verify
-
-      - name: Print Playwright failure contexts
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -d test-results ]; then
-            find test-results -name error-context.md -print -exec cat {} \;
-          fi
+      - name: Run the complete release gate
+        run: npm run verify:ci
 
       - name: Verify the built static asset graph
         run: node scripts/check-static-assets.mjs
 
-      - name: Commit only the verified product repair
-        shell: bash
-        run: |
-          set -euo pipefail
-          git restore --source=HEAD -- .github/workflows/staging-pr-gate.yml scripts/repair-review-branch.py
-          git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/lib/market-refresh.mjs app/components/P2PTradeTool.tsx tests/rendered-html.test.mjs e2e/hardening.spec.ts
-          git commit -m "fix: restore market refresh safety contract"
-          git push origin HEAD:review/ux-safety-20260903
+      - name: Verify the matching Cloudflare branch preview
+        run: node scripts/check-branch-preview.mjs
+        env:
+          PREVIEW_BASE_URL: https://staging-bitcoin-p2p-check.thumbking-btc.workers.dev
+          PREVIEW_WAIT_MS: "300000"
