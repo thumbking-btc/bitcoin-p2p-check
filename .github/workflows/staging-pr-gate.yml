@@ -52,13 +52,14 @@ jobs:
       - name: Verify the built static asset graph
         run: node scripts/check-static-assets.mjs
 
-      - name: Commit the verified repair and restore the normal gate
+      - name: Commit only the verified product repair
         shell: bash
         run: |
           set -euo pipefail
+          git restore --source=HEAD -- .github/workflows/staging-pr-gate.yml scripts/repair-review-branch.py
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add app/lib/market-refresh.mjs app/components/P2PTradeTool.tsx tests/rendered-html.test.mjs e2e/hardening.spec.ts
           git commit -m "fix: restore market refresh safety contract"
           git push origin HEAD:review/ux-safety-20260903
