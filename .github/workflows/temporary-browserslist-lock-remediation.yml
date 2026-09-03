@@ -62,6 +62,11 @@ jobs:
           );
           const unexpected = changed.filter((key) => !allowed.has(key));
           if (unexpected.length > 0) {
+            for (const key of unexpected) {
+              console.error(`Unexpected package: ${key}`);
+              console.error(`Before: ${JSON.stringify(before.packages?.[key] ?? null)}`);
+              console.error(`After: ${JSON.stringify(after.packages?.[key] ?? null)}`);
+            }
             throw new Error(`unexpected lockfile package changes: ${unexpected.join(', ')}`);
           }
           if (!changed.includes('node_modules/browserslist')) {
