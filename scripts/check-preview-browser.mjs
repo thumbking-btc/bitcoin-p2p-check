@@ -7,8 +7,9 @@ import { assertPreviewUiState } from "./preview-ui-contract.mjs";
 const baseUrl = process.env.PREVIEW_BASE_URL ?? "";
 assert.match(baseUrl, /^https:\/\/[0-9a-f]{8}-bitcoin-p2p-check\.thumbking-btc\.workers\.dev$/u);
 const report = { baseUrl, checks: [], failures: [] };
-// Preserve native rendering: hiding the caret injects screenshot-only styles
-// which WebKit correctly blocks under the application's strict CSP.
+// Application assertions finish before screenshot capture: Playwright injects
+// a WebKit-only `body {}` animation-sync stylesheet even with caret: initial.
+// That diagnostic tool action must not be confused with application CSP errors.
 const directory = "preview-browser-evidence";
 await mkdir(directory, { recursive: true });
 
@@ -132,7 +133,7 @@ try {
             await expect(page.locator('label[for="trade-amount"]')).toHaveText("받을 원화");
             await page.locator('label[for="trade-role-buyer"]').click();
             await expect(page.locator('label[for="trade-amount"]')).toHaveText("보낼 원화");
-            await page.screenshot({ path: `${directory}/${engine}-${width}.png`, fullPage: true, caret: "initial" });
+            assert.deepEqual((await page.evaluate(readUiState)).cspViolations, [], "Application CSP violations");
             assert.deepEqual(problems, [], "Static asset or JavaScript failures");
             return { state };
           } finally {
@@ -167,7 +168,7 @@ try {
           return { rejectedState: broken };
         } finally { await context.close(); }
       });
-      await runCase(`${engine}-pwa-opt-in-offline-recovery-opt-out`, async () => {
+      await runCase(`${engine}-pwa-opt-in-${engine === "chromium" ? "offline-recovery" : "online-relaunch"}-opt-out`, async () => {
         const context = await newContext(browser, { serviceWorkers: "allow" });
         let page = await context.newPage();
         try {
@@ -177,26 +178,47 @@ try {
           await page.goto(`${baseUrl}/?pwa-review=1`, { waitUntil: "load", timeout: 30_000 });
           await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller).catch(() => false), { timeout: 30_000 }).toBe(true);
           await assertRendered(page);
+          let offlineEvidence = null;
           await page.close();
-          await context.setOffline(true);
-          page = await context.newPage();
-          const offline = await page.goto(baseUrl, { waitUntil: "load", timeout: 20_000 });
-          assert.ok(offline?.fromServiceWorker(), "Offline shell was not served by the installed service worker");
-          await assertRendered(page);
-          assert.equal(await page.evaluate(() => navigator.onLine), false);
-          const cachedApiPaths = await page.evaluate(async () => {
-            const requests = await Promise.all((await caches.keys()).map(async (key) => (await caches.open(key)).keys()));
-            return requests.flat().map((request) => new URL(request.url).pathname).filter((pathname) => pathname.startsWith("/api/"));
-          });
-          assert.deepEqual(cachedApiPaths, [], "Financial/API responses must never be persisted in the shell cache");
-          await page.screenshot({ path: `${directory}/${engine}-offline.png`, fullPage: true, caret: "initial" });
-          await context.setOffline(false);
+          if (engine === "chromium") {
+            // Playwright documents service-worker network inspection/offline
+            // instrumentation for Chromium. Do not claim iOS offline coverage.
+            await context.setOffline(true);
+            page = await context.newPage();
+            const offline = await page.goto(baseUrl, { waitUntil: "load", timeout: 20_000 });
+            assert.ok(offline?.fromServiceWorker(), "Offline shell was not served by the installed service worker");
+            await assertRendered(page);
+            const probe = await page.evaluate(async () => {
+              try {
+                await fetch(`/api/version?offline-probe=${Date.now()}`, {
+                  cache: "no-store", signal: AbortSignal.timeout(5000),
+                });
+                return { networkBlocked: false, navigatorOnline: navigator.onLine };
+              } catch {
+                return { networkBlocked: true, navigatorOnline: navigator.onLine };
+              }
+            });
+            // navigator.onLine describes an adapter, not whether the API is
+            // reachable. Prove that the uncached request actually fails.
+            assert.equal(probe.networkBlocked, true, "Offline API request unexpectedly succeeded");
+            const cachedApiPaths = await page.evaluate(async () => {
+              const requests = await Promise.all((await caches.keys()).map(async (key) => (await caches.open(key)).keys()));
+              return requests.flat().map((request) => new URL(request.url).pathname).filter((pathname) => pathname.startsWith("/api/"));
+            });
+            assert.deepEqual(cachedApiPaths, [], "Financial/API responses must never be persisted in the shell cache");
+            await page.screenshot({ path: `${directory}/${engine}-offline.png`, fullPage: true, caret: "initial" });
+            offlineEvidence = { offlineFromServiceWorker: true, ...probe, cachedApiPaths };
+            await context.setOffline(false);
+          } else {
+            page = await context.newPage();
+          }
           await page.goto(baseUrl, { waitUntil: "load", timeout: 30_000 });
           await assertRendered(page);
+          await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller), { timeout: 10_000 }).toBe(true);
           await page.goto(`${baseUrl}/?pwa-review=0`, { waitUntil: "load", timeout: 30_000 });
           await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), { timeout: 10_000 }).toBe(0);
           await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter((key) => key.startsWith("bitcoin-p2p-check-")).length), { timeout: 10_000 }).toBe(0);
-          return { offlineFromServiceWorker: true, cachedApiPaths };
+          return { offlineEvidence, onlineRelaunchControlled: true, iosStandaloneOfflineVerified: false };
         } finally { await context.close(); }
       });
     } finally { await browser.close(); }

@@ -75,6 +75,12 @@ jobs:
           PREVIEW_BASE_URL: ${{ steps.locate-preview.outputs.preview_url }}
           PREVIEW_WAIT_MS: "10000"
 
+      - name: Compare every deployed JS and CSS byte and the enforced CSP
+        if: ${{ !cancelled() && steps.locate-preview.outputs.preview_url != '' }}
+        run: node scripts/check-preview-assets.mjs
+        env:
+          PREVIEW_BASE_URL: ${{ steps.locate-preview.outputs.preview_url }}
+
       - name: Preserve rendering and response evidence even when validation fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
