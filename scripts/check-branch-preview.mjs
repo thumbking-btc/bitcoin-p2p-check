@@ -116,14 +116,14 @@ async function fetchPullRequestComments(repository, pullRequestNumber, token) {
 }
 
 async function waitForExactCommitPreview(waitMs) {
-  const repository = process.env.GITHUB_REPOSITORY ?? "";
-  const expectedSha = process.env.GITHUB_SHA ?? "";
-  const pullRequestNumber = process.env.GITHUB_PR_NUMBER ?? "";
-  const token = process.env.GITHUB_TOKEN ?? "";
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail("GITHUB_REPOSITORY가 올바르지 않습니다.");
-  if (!/^[0-9a-f]{40}$/u.test(expectedSha)) fail("GITHUB_SHA가 올바르지 않습니다.");
-  if (!/^[1-9]\d*$/u.test(pullRequestNumber)) fail("GITHUB_PR_NUMBER가 올바르지 않습니다.");
-  if (!token) fail("Cloudflare 커밋 프리뷰를 찾으려면 읽기 전용 GITHUB_TOKEN이 필요합니다.");
+  const repository = process.env.PREVIEW_GITHUB_REPOSITORY ?? "";
+  const expectedSha = process.env.PREVIEW_COMMIT_SHA ?? "";
+  const pullRequestNumber = process.env.PREVIEW_PR_NUMBER ?? "";
+  const token = process.env.PREVIEW_GITHUB_TOKEN ?? "";
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail("PREVIEW_GITHUB_REPOSITORY가 올바르지 않습니다.");
+  if (!/^[0-9a-f]{40}$/u.test(expectedSha)) fail("PREVIEW_COMMIT_SHA가 올바르지 않습니다.");
+  if (!/^[1-9]\d*$/u.test(pullRequestNumber)) fail("PREVIEW_PR_NUMBER가 올바르지 않습니다.");
+  if (!token) fail("Cloudflare 커밋 프리뷰를 찾으려면 읽기 전용 PREVIEW_GITHUB_TOKEN이 필요합니다.");
 
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
