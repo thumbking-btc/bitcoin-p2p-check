@@ -7,6 +7,8 @@ import { assertPreviewUiState } from "./preview-ui-contract.mjs";
 const baseUrl = process.env.PREVIEW_BASE_URL ?? "";
 assert.match(baseUrl, /^https:\/\/[0-9a-f]{8}-bitcoin-p2p-check\.thumbking-btc\.workers\.dev$/u);
 const report = { baseUrl, checks: [], failures: [] };
+// Preserve native rendering: hiding the caret injects screenshot-only styles
+// which WebKit correctly blocks under the application's strict CSP.
 const directory = "preview-browser-evidence";
 await mkdir(directory, { recursive: true });
 
@@ -17,6 +19,7 @@ function readUiState() {
   };
   const notice = document.querySelector("#deployment-environment-notice");
   return {
+    cspViolations: window.__previewCspViolations ?? [],
     environment: document.documentElement.getAttribute("data-deployment-environment"),
     noticeVisible: !!notice && notice.getBoundingClientRect().height > 0 && !notice.hidden,
     theme: getComputedStyle(document.documentElement).getPropertyValue("--orange").trim(),
@@ -53,6 +56,15 @@ async function newContext(browser, options = {}) {
   await context.route("**/*", (route) => {
     if (!["GET", "HEAD"].includes(route.request().method())) return route.abort("blockedbyclient");
     return route.continue();
+  });
+  await context.addInitScript(() => {
+    window.__previewCspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      window.__previewCspViolations.push({
+        directive: event.effectiveDirective, blockedURI: event.blockedURI,
+        sourceFile: event.sourceFile, lineNumber: event.lineNumber, sample: event.sample,
+      });
+    });
   });
   return context;
 }
@@ -120,11 +132,13 @@ try {
             await expect(page.locator('label[for="trade-amount"]')).toHaveText("받을 원화");
             await page.locator('label[for="trade-role-buyer"]').click();
             await expect(page.locator('label[for="trade-amount"]')).toHaveText("보낼 원화");
-            await page.screenshot({ path: `${directory}/${engine}-${width}.png`, fullPage: true });
+            await page.screenshot({ path: `${directory}/${engine}-${width}.png`, fullPage: true, caret: "initial" });
             assert.deepEqual(problems, [], "Static asset or JavaScript failures");
             return { state };
           } finally {
-            await page.screenshot({ path: `${directory}/${engine}-${width}.png`, fullPage: true }).catch(() => {});
+            const finalState = await page.evaluate(readUiState).catch(() => null);
+            await writeFile(`${directory}/${engine}-${width}-state.json`, JSON.stringify(finalState, null, 2));
+            await page.screenshot({ path: `${directory}/${engine}-${width}.png`, fullPage: true, caret: "initial" }).catch(() => {});
             await context.close();
           }
         });
@@ -175,7 +189,7 @@ try {
             return requests.flat().map((request) => new URL(request.url).pathname).filter((pathname) => pathname.startsWith("/api/"));
           });
           assert.deepEqual(cachedApiPaths, [], "Financial/API responses must never be persisted in the shell cache");
-          await page.screenshot({ path: `${directory}/${engine}-offline.png`, fullPage: true });
+          await page.screenshot({ path: `${directory}/${engine}-offline.png`, fullPage: true, caret: "initial" });
           await context.setOffline(false);
           await page.goto(baseUrl, { waitUntil: "load", timeout: 30_000 });
           await assertRendered(page);

@@ -5,7 +5,7 @@ import { assertPreviewUiState } from "../scripts/preview-ui-contract.mjs";
 const working = {
   environment: "preview", noticeVisible: true, theme: "#f7931a", bodyMargin: "0px",
   stylesheets: 2, scrollWidth: 390, viewportWidth: 390, roleDisplay: "grid",
-  formDisplay: "grid", cardPadding: 14, hydrated: true,
+  formDisplay: "grid", cardPadding: 12, hydrated: true,
 };
 test("the rendering contract rejects browser-default HTML and missing JavaScript", () => {
   assert.doesNotThrow(() => assertPreviewUiState(working));

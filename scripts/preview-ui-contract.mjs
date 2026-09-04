@@ -13,7 +13,9 @@ export function assertPreviewUiState(state, { calculator = true, hydrated = true
   if (calculator) {
     assert.equal(state.roleDisplay, "grid", "Buy/sell layout stylesheet is missing");
     assert.equal(state.formDisplay, "grid", "Amount form stylesheet is missing");
-    assert.ok(state.cardPadding >= 14, "The trade card lost its layout padding");
+    // globals.css intentionally uses 12px below the existing 700px breakpoint.
+    const expectedPadding = state.viewportWidth <= 700 ? 12 : Math.min(22, Math.max(14, state.viewportWidth * 0.03));
+    assert.ok(Math.abs(state.cardPadding - expectedPadding) < 0.1, "The trade card lost its responsive layout padding");
     if (hydrated) assert.equal(state.hydrated, true, "Client JavaScript did not hydrate the calculator");
   }
 }
