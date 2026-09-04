@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Use Node.js 22.19.0
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -32,52 +33,64 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Install the verified browser runtime
-        run: npx playwright install --with-deps chromium
+      - name: Install both verified browser engines
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Run the complete release gate
+        id: release
         run: npm run verify:ci
 
       - name: Verify the built static asset graph
         run: node scripts/check-static-assets.mjs
 
-      - name: Verify the exact Cloudflare commit preview
-        run: node scripts/check-branch-preview.mjs
+      - name: Exercise the default Wrangler publication target without deploying
+        run: |
+          node scripts/prepare-preview-deploy.mjs --check
+          npx wrangler deploy --dry-run --outdir .wrangler/dry-run/default-preview
+
+      - name: Resolve the exact Cloudflare commit preview
+        id: locate-preview
+        run: node scripts/resolve-preview-url.mjs
         env:
           PREVIEW_GITHUB_REPOSITORY: ${{ github.repository }}
           PREVIEW_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
           PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_GITHUB_TOKEN: ${{ github.token }}
-          PREVIEW_WAIT_MS: "300000"
 
-  diagnose-reported-preview:
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    steps:
-      - name: Check out diagnostic code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Use locked Node version
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22.19.0
-          cache: npm
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Install both browser engines
-        run: npx playwright install --with-deps chromium webkit
-      - name: Inspect the reported immutable preview without changing it
-        run: node scripts/diagnose-preview-rendering.mjs
+      - name: Preserve actual deployed asset bytes for reproducibility diagnosis
+        run: node scripts/capture-preview-assets.mjs
         env:
-          DIAGNOSTIC_PREVIEW_URL: https://6e2c4466-bitcoin-p2p-check.thumbking-btc.workers.dev
-      - name: Preserve response and rendering evidence
+          PREVIEW_BASE_URL: ${{ steps.locate-preview.outputs.preview_url }}
+
+      - name: Verify deployed UI and PWA in Chromium and WebKit
+        if: ${{ !cancelled() && steps.locate-preview.outputs.preview_url != '' }}
+        run: node scripts/check-preview-browser.mjs
+        env:
+          PREVIEW_BASE_URL: ${{ steps.locate-preview.outputs.preview_url }}
+
+      - name: Require identical CI and Cloudflare asset fingerprints
+        if: ${{ !cancelled() && steps.locate-preview.outputs.preview_url != '' }}
+        run: node scripts/check-branch-preview.mjs
+        env:
+          PREVIEW_BASE_URL: ${{ steps.locate-preview.outputs.preview_url }}
+          PREVIEW_WAIT_MS: "10000"
+
+      - name: Preserve rendering and response evidence even when validation fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: reported-preview-diagnostics-${{ github.event.pull_request.head.sha }}
-          path: render-diagnostics/
-          if-no-files-found: error
+          name: preview-evidence-${{ github.event.pull_request.head.sha }}
+          path: |
+            preview-browser-evidence/
+            render-diagnostics/
+          if-no-files-found: warn
           retention-days: 30
+
+      - name: Preserve the inspected CI build for exact byte comparison
+        if: ${{ !cancelled() && steps.release.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inspected-client-${{ github.event.pull_request.head.sha }}
+          path: dist/client/
+          if-no-files-found: error
+          retention-days: 7

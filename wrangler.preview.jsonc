@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "bitcoin-p2p-check-preview",
-  "main": "./worker/index.ts",
+  "main": "./worker/preview-entry.ts",
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
