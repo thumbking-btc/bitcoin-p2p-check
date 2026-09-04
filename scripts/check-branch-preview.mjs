@@ -228,9 +228,9 @@ async function main() {
   const override = process.env.PREVIEW_BASE_URL?.trim();
   const baseUrl = override ? validatePreviewUrl(override) : await waitForExactCommitPreview(waitMs);
   console.log(`현재 커밋의 Cloudflare 프리뷰를 검증합니다: ${baseUrl}`);
+  await validateEnvironment(baseUrl);
   const deployedHtml = await waitForMatchingPreview(baseUrl, expectedAssets, waitMs);
   await validateDeployedAssets(baseUrl, deployedHtml);
-  await validateEnvironment(baseUrl);
   console.log(`Cloudflare 커밋 프리뷰 정적 무결성 검증 통과: ${baseUrl}`);
 }
 
