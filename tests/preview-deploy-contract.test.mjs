@@ -51,9 +51,9 @@ test("automatic release branches fail closed while ordinary local preview builds
   }
 });
 
-test("postbuild replaces the Vite redirect after generating enforced CSP", async () => {
+test("postbuild validates assets and CSP before replacing the Vite redirect", async () => {
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.match(manifest.scripts.postbuild, /generate-csp-headers\.mjs && node scripts\/prepare-preview-deploy\.mjs$/u);
+  assert.match(manifest.scripts.postbuild, /generate-csp-headers\.mjs && node scripts\/check-static-assets\.mjs && node scripts\/prepare-preview-deploy\.mjs$/u);
   const entry = await readFile(new URL("../worker/preview-entry.ts", import.meta.url), "utf8");
   assert.match(entry, /export \{ default \} from "\.\/index"/u);
   assert.doesNotMatch(entry, /export \*|export \{ TradeRecordState|vinext\/server/u);

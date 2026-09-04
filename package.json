@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
-    "postbuild": "node scripts/generate-csp-headers.mjs && node scripts/prepare-preview-deploy.mjs",
+    "postbuild": "node scripts/generate-csp-headers.mjs && node scripts/check-static-assets.mjs && node scripts/prepare-preview-deploy.mjs",
     "generate:og": "node scripts/generate-og-image.mjs",
     "start": "wrangler dev --config wrangler.jsonc",
     "start:staging": "wrangler dev --config wrangler.staging.jsonc",
