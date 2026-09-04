@@ -26,7 +26,14 @@ export function PwaRegistration() {
     } catch {
       pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, null);
     }
-    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, pwaReviewOptIn)) {
+    const serviceWorkerDisabledByDefault = shouldDisableServiceWorker(
+      window.location.hostname,
+      annotatedEnvironment,
+    );
+    const serviceWorkerDisabled = pwaReviewOptIn
+      ? shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, true)
+      : serviceWorkerDisabledByDefault;
+    if (serviceWorkerDisabled) {
       void navigator.serviceWorker.getRegistrations()
         .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
         .catch(() => {});
