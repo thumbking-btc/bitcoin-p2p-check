@@ -49,3 +49,35 @@ jobs:
           PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PREVIEW_WAIT_MS: "300000"
+
+  diagnose-reported-preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out diagnostic code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Use locked Node version
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install both browser engines
+        run: npx playwright install --with-deps chromium webkit
+      - name: Inspect the reported immutable preview without changing it
+        run: node scripts/diagnose-preview-rendering.mjs
+        env:
+          DIAGNOSTIC_PREVIEW_URL: https://6e2c4466-bitcoin-p2p-check.thumbking-btc.workers.dev
+      - name: Preserve response and rendering evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reported-preview-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: render-diagnostics/
+          if-no-files-found: error
+          retention-days: 30
