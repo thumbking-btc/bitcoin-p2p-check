@@ -48,15 +48,24 @@ export function inferDeploymentEnvironment(value) {
 }
 
 /**
+ * Preview PWA review is an explicit, origin-local exception used only for an
+ * exact Cloudflare commit preview. Staging remains disabled, and a preview
+ * host must also be annotated by the Worker as preview before registration is
+ * allowed.
+ *
  * @param {unknown} hostname
  * @param {unknown} annotatedEnvironment
+ * @param {unknown} pwaReviewOptIn
  */
-export function shouldDisableServiceWorker(hostname, annotatedEnvironment) {
+export function shouldDisableServiceWorker(hostname, annotatedEnvironment, pwaReviewOptIn = false) {
   const annotated = normalizeOptionalDeploymentEnvironment(annotatedEnvironment);
+  const environment = inferDeploymentEnvironment(hostname);
+  if (pwaReviewOptIn === true && annotated === "preview" && environment === "preview") {
+    return false;
+  }
   if (annotated !== null && annotated !== "production") {
     return true;
   }
-  const environment = inferDeploymentEnvironment(hostname);
   return environment === "staging" || environment === "preview";
 }
 
