@@ -7,6 +7,7 @@ import {
   INSTALL_INVITE_DISMISS_KEY,
   isInstallInviteSuppressed,
 } from "../lib/install-invite.mjs";
+import { resolvePwaReviewOptIn } from "../lib/pwa-review.mjs";
 
 type InstallMode = "guide" | "ios" | "android" | "ready" | "installed";
 
@@ -71,7 +72,13 @@ export function InstallCta({ showEntry = true }: { showEntry?: boolean }) {
 
   useEffect(() => {
     const annotatedEnvironment = document.documentElement.getAttribute("data-deployment-environment");
-    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment)) {
+    let pwaReviewOptIn = false;
+    try {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, window.localStorage);
+    } catch {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, null);
+    }
+    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, pwaReviewOptIn)) {
       const suppressionTimeout = window.setTimeout(() => setInstallSuppressed(true), 0);
       return () => window.clearTimeout(suppressionTimeout);
     }
