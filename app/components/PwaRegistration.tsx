@@ -26,10 +26,7 @@ export function PwaRegistration() {
     } catch {
       pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, null);
     }
-    const serviceWorkerDisabledByDefault = shouldDisableServiceWorker(
-      window.location.hostname,
-      annotatedEnvironment,
-    );
+    const serviceWorkerDisabledByDefault = shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment);
     const serviceWorkerDisabled = pwaReviewOptIn
       ? shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, true)
       : serviceWorkerDisabledByDefault;
