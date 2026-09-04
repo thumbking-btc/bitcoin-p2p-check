@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: staging-pr-gate-${{ github.event.pull_request.number }}
@@ -40,8 +41,11 @@ jobs:
       - name: Verify the built static asset graph
         run: node scripts/check-static-assets.mjs
 
-      - name: Verify the matching Cloudflare branch preview
+      - name: Verify the exact Cloudflare commit preview
         run: node scripts/check-branch-preview.mjs
         env:
-          PREVIEW_BASE_URL: https://staging-bitcoin-p2p-check.thumbking-btc.workers.dev
+          PREVIEW_GITHUB_REPOSITORY: ${{ github.repository }}
+          PREVIEW_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PREVIEW_WAIT_MS: "300000"
