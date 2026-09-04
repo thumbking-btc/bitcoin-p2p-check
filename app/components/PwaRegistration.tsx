@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { APP_VERSION } from "../lib/app-version";
 import { shouldDisableServiceWorker } from "../lib/deployment-environment.mjs";
+import { resolvePwaReviewOptIn } from "../lib/pwa-review.mjs";
 
 const CACHE_PREFIX = "bitcoin-p2p-check-";
 
@@ -19,7 +20,13 @@ export function PwaRegistration() {
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
 
     const annotatedEnvironment = document.documentElement.getAttribute("data-deployment-environment");
-    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment)) {
+    let pwaReviewOptIn = false;
+    try {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, window.localStorage);
+    } catch {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, null);
+    }
+    if (shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, pwaReviewOptIn)) {
       void navigator.serviceWorker.getRegistrations()
         .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
         .catch(() => {});
