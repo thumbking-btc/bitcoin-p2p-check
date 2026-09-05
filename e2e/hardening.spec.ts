@@ -1259,11 +1259,11 @@ test("@production-only a fresh WebSocket tick clears a failed silent-refresh sha
     scope.__emitP2PMarketPrice?.(price, Date.now());
   }, priceKrw);
   await emitCurrentPrice(100_000_000);
-  for (const price of [101_000_000, 102_000_000, 103_000_000]) {
+  for (let index = 1; index <= 15; index += 1) {
     await page.clock.runFor(19_000);
-    await emitCurrentPrice(price);
+    await emitCurrentPrice(100_000_000 + index * 100_000);
   }
-  await page.clock.runFor(3_100);
+  await page.clock.runFor(15_100);
 
   const automaticFailure = page.getByText(
     "자동 시세 갱신에 실패했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다.",

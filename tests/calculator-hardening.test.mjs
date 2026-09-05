@@ -257,7 +257,7 @@ test("wires calculator hardening states into the client component", async () => 
   assert.match(component, /paymentLifecycleBlocksShare/);
   assert.match(component, /if \(state\.status !== "empty"\)[\s\S]*?paymentLockRef\.current = true[\s\S]*?paymentLockRef\.current = false/);
   assert.match(component, /window\.addEventListener\("storage", handleStorage\)/);
-  assert.match(component, /자금 출처는 저장하지 않습니다/);
+  assert.doesNotMatch(component, /저장된 초안 삭제|자금 출처는 저장하지 않습니다/);
   assert.match(component, /function changeTradeRole[\s\S]*?현재 거래 금액과 입력 단위를 유지했습니다/);
   assert.doesNotMatch(component, /<label className="field" htmlFor="seller-premium">/);
   assert.match(component, /1 sat은 Lightning에서 전송 가능한 단위이지만[\s\S]*?온체인에서는 dust 기준에 미달할 수 있고 네트워크 수수료가 거래액을 넘을 수 있습니다/);

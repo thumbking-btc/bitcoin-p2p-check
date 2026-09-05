@@ -91,7 +91,7 @@ test("materializes the final 4:3 trade card without DOM transform bridges", asyn
 test("caches premium work without request-scoped module globals", async () => {
   const marketWorker = await source("../worker/market.ts");
 
-  assert.match(marketWorker, /PREMIUM_FRESH_CACHE_SECONDS\s*=\s*60/);
+  assert.match(marketWorker, /PREMIUM_FRESH_CACHE_SECONDS\s*=\s*5 \* 60/);
   assert.match(marketWorker, /PREMIUM_RETRY_BACKOFF_SECONDS\s*=\s*30/);
   assert.doesNotMatch(marketWorker, /let\s+pendingPremiumFetch/);
   assert.doesNotMatch(marketWorker, /let\s+pendingSnapshot/);

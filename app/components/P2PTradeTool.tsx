@@ -13,7 +13,6 @@ import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { parseTradeFragment } from "../lib/trade-link.mjs";
 import {
   readTradeDraft,
-  removeTradeDraft,
   TRADE_DRAFT_STORAGE_KEY,
   writeTradeDraft,
 } from "../lib/trade-draft.mjs";
@@ -1565,7 +1564,7 @@ export function P2PTradeTool() {
   const premiumStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : premiumState === "current"
-      ? `약 1분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.premiumCheckedAt) || "최신"}`
       : premiumState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.premium ?? 0) / 60))}분 전`
         : "조회 불가";
@@ -1575,7 +1574,7 @@ export function P2PTradeTool() {
   const feeStatus = marketState === "loading"
     ? market ? "갱신 중" : "조회 중"
     : feeState === "current"
-      ? `약 1분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
+      ? `약 5분마다 자동 갱신 · ${formatClock(market?.feeCheckedAt) || "최신"}`
       : feeState === "stale"
         ? `저장된 값 · ${Math.max(1, Math.ceil((market?.staleAgeSeconds?.fees ?? 0) / 60))}분 전`
         : "조회 불가";
@@ -2185,19 +2184,6 @@ export function P2PTradeTool() {
     setDraftStatus("역할을 바꾸어도 현재 거래 금액과 입력 단위를 유지했습니다.");
   }
 
-  function clearSavedDraft() {
-    const storage = getTradeDraftStorage();
-    const removed = removeTradeDraft(storage);
-    skipNextDraftPersistence.current = true;
-    replaceDraftFields(freshDefaultTradeDraft());
-    setDraftSyncRevision((current) => current + 1);
-    setImportedTradeLink(false);
-    setConfirmedLargeTradeKey("");
-    setDraftStatus(removed
-      ? "이 브라우저에 저장된 초안을 삭제하고 기본값으로 되돌렸습니다."
-      : "초안 저장소에 접근하지 못했지만 화면은 기본값으로 되돌렸습니다.");
-  }
-
   async function copyVerificationUrl(url: string) {
     if (!url) return;
     try {
@@ -2279,10 +2265,6 @@ export function P2PTradeTool() {
             공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
           </p>
         ) : null}
-        <p className="draft-storage-notice">
-          <span>역할·금액·프리미엄은 이 브라우저에 12시간 자동 저장됩니다. 자금 출처는 저장하지 않습니다.</span>
-          <button type="button" onClick={clearSavedDraft}>저장된 초안 삭제</button>
-        </p>
         {draftStatus ? <p className="visually-hidden" role="status">{draftStatus}</p> : null}
 
         <fieldset className="role-fieldset">

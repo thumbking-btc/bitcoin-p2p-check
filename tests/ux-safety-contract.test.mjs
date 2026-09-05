@@ -32,7 +32,7 @@ test("describes prepared payment state without implying it was already shared", 
 test("preserves the current amount basis when switching buy and sell roles", async () => {
   const calculator = await source("../app/components/P2PTradeTool.tsx");
   const start = calculator.indexOf("function changeTradeRole(nextRole: TradeRole)");
-  const end = calculator.indexOf("function clearSavedDraft()", start);
+  const end = calculator.indexOf("async function copyVerificationUrl", start);
   const roleSwitch = calculator.slice(start, end);
 
   assert.ok(start >= 0 && end > start, "role switch handler must exist");
