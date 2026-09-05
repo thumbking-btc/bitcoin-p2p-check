@@ -30,7 +30,7 @@ try {
   const download = page.waitForEvent("download");
   await button.click();
   await (await download).saveAs(`${directory}/staging-trade-card.png`);
-  const manager = page.locator("details.managed-records");
+  const manager = page.locator("details.managed-trade-records");
   // Readback independently confirms that the download action finalized it.
   await expect.poll(async () => (await context.request.get(`${origin}/api/trade-record/${record.id}`)).status(), { timeout: 20000 }).toBe(200);
   const verificationPage = await context.newPage();
@@ -38,10 +38,9 @@ try {
   await expect(verificationPage.getByText("서명 후 기록이 바뀌지 않았습니다.", { exact: true })).toBeVisible({ timeout: 20000 });
   await verificationPage.screenshot({ path: `${directory}/staging-verified-mobile.png`, fullPage: true });
   await verificationPage.close();
-  if (await manager.count()) await manager.evaluate((element) => { element.open = true; });
+  await expect(manager).toBeVisible();
+  if (!(await manager.evaluate((element) => element.open))) await manager.locator("summary").click();
   const revoke = page.getByRole("button", { name: `공개 기록 ${record.id} 링크 비활성화` });
-  // The management details may use another class; open the containing details.
-  await revoke.evaluate((element) => { const details = element.closest("details"); if (details) details.open = true; });
   page.once("dialog", (dialog) => dialog.accept());
   await revoke.click();
   await expect.poll(async () => (await context.request.get(`${origin}/api/trade-record/${record.id}`)).status(), { timeout: 20000 }).toBe(404);
