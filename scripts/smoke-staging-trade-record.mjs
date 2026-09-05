@@ -1,6 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { calculateP2PQuote } from "../app/lib/p2p-quote.mjs";
 import {
+  getTradeRecordRetentionPolicy,
+  TRADE_RECORD_SCHEMA,
+} from "../app/lib/trade-record.ts";
+import {
   isTerminalTradeRecordRevocationError,
   revokeTradeRecord,
 } from "../app/lib/trade-record-client.ts";
@@ -122,6 +126,11 @@ async function main() {
     assertStatus(createdResult.response.status, 201, "비공개 준비 기록 생성");
     if (createdResult.value?.lifecycle !== "pending" || createdResult.value?.revokeToken !== capability) {
       throw new Error("비공개 준비 기록 응답의 관리 capability가 일치하지 않습니다.");
+    }
+    if (createdResult.value?.record?.schema !== TRADE_RECORD_SCHEMA
+      || Date.parse(createdResult.value.record.expiresAt) - Date.parse(createdResult.value.record.createdAt)
+        !== getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA).retentionSeconds * 1_000) {
+      throw new Error("신규 staging 기록의 schema와 보관 기간이 현재 정책과 일치하지 않습니다.");
     }
     id = createdResult.value.id;
     if (createdResult.value.verificationUrl !== `${STAGING_ORIGIN}/verify/?id=${encodeURIComponent(id)}`) {
