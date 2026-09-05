@@ -15,4 +15,7 @@ test("the rendering contract rejects browser-default HTML and missing JavaScript
     { environment: "production" }, { noticeVisible: false }, { scrollWidth: 700 },
   ]) assert.throws(() => assertPreviewUiState({ ...working, ...broken }));
   assert.doesNotThrow(() => assertPreviewUiState({ ...working, hydrated: false }, { hydrated: false }));
+  assert.throws(() => assertPreviewUiState({ ...working, environment: "staging" }));
+  assert.doesNotThrow(() => assertPreviewUiState({ ...working, environment: "staging" }, { environment: "staging" }));
+  assert.throws(() => assertPreviewUiState({ ...working, environment: "production" }, { environment: "production" }));
 });

@@ -5,6 +5,7 @@ import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
 import { getPaymentExpiryState, PAYMENT_EXPIRING_THRESHOLD_SECONDS } from "../lib/payment-lifecycle";
 import { normalizeLightningAddress } from "../lib/lightning-address-normalize";
+import { InvoiceRequestError, readInvoiceResponse, UNKNOWN_INVOICE_MESSAGE } from "../lib/request-feedback.mjs";
 import styles from "./trade-receive-info.module.css";
 
 export type ReceiveRail = "onchain" | "lightning";
@@ -115,15 +116,7 @@ function onchainTargetFromInput(value: string, amountSats: number) {
 }
 
 async function readLightningPayResponse(response: Response): Promise<LightningPayResponse> {
-  const text = await response.text();
-  if (!text) throw new Error(`라이트닝 결제 요청 서버가 빈 응답을 반환했습니다. (HTTP ${response.status})`);
-  try {
-    return JSON.parse(text) as LightningPayResponse;
-  } catch {
-    const contentType = response.headers.get("content-type") ?? "알 수 없음";
-    const preview = text.replace(/\s+/gu, " ").trim().slice(0, 120);
-    throw new Error(`라이트닝 API가 JSON이 아닌 응답을 반환했습니다. (HTTP ${response.status}, ${contentType})${preview ? ` · ${preview}` : ""}`);
-  }
+  return await readInvoiceResponse(response) as LightningPayResponse;
 }
 
 export type TradeReceiveInfoProps = {
@@ -148,6 +141,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [issuanceUnknown, setIssuanceUnknown] = useState(false);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1_000));
   const generationRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
@@ -172,6 +166,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     generationRef.current += 1;
     requestAbortRef.current?.abort();
     requestAbortRef.current = null;
+    queueMicrotask(() => { if (!requestAbortRef.current) setBusy(false); });
   }, [conditionKey, expectedSats, ownerRole]);
 
   useLayoutEffect(() => {
@@ -247,6 +242,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     setResult(null);
     setError("");
     setFeedback("");
+    setIssuanceUnknown(false);
     setBusy(false);
   }
 
@@ -331,7 +327,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   }
 
   async function build(forceOnchainAmountIncluded?: boolean) {
-    if (busy) return;
+    if (busy || requestAbortRef.current) return;
     clear();
     if (!expectedSats) {
       setError("거래 금액을 먼저 계산하십시오.");
@@ -406,7 +402,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       });
       const data = await readLightningPayResponse(response);
       if (!response.ok || !data.ok || typeof data.invoice !== "string" || data.amountSats !== expectedSats) {
-        throw new Error(data.message || `라이트닝 수취정보에서 인보이스를 만들지 못했습니다. (HTTP ${response.status})`);
+        throw new InvoiceRequestError(UNKNOWN_INVOICE_MESSAGE, true);
       }
       if (generationRef.current !== generation) return;
       const next = makeLightningInvoiceResult(data.invoice, expectedSats, true);
@@ -416,24 +412,27 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       const normalized = isAddress ? data.address : data.normalizedSource;
       if (typeof normalized === "string") setLightningSource(normalized);
       setError("");
-      setFeedback("지금 결제할 수 있는 새 고정금액 인보이스를 만들었습니다.");
+      setFeedback("받는 지갑에서 인보이스를 발급받아 현재 금액과 만료를 확인했습니다. 입금 완료 여부는 받는 지갑에서 확인합니다.");
     } catch (reason) {
       if (generationRef.current !== generation) return;
-      if (controller.signal.aborted) {
-        setError("라이트닝 지갑 서비스의 응답 시간이 초과되었습니다. 다시 시도하거나 인보이스를 직접 입력하십시오.");
+      if (controller.signal.aborted || reason instanceof TypeError || (reason instanceof InvoiceRequestError && reason.issuanceUnknown)) {
+        setIssuanceUnknown(true);
+        setError(UNKNOWN_INVOICE_MESSAGE);
       } else {
         setError(reason instanceof Error ? reason.message : "라이트닝 결제 요청을 만들지 못했습니다.");
       }
       setFeedback("");
     } finally {
       window.clearTimeout(timeout);
-      if (requestAbortRef.current === controller) requestAbortRef.current = null;
-      setBusy(false);
+      if (requestAbortRef.current === controller) {
+        requestAbortRef.current = null;
+        setBusy(false);
+      }
     }
   }
 
   const buildLabel = lightningMode === "address"
-      ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제용 인보이스 만들기"
+      ? busy ? "인보이스 요청 중" : issuanceUnknown ? "지갑 확인 후 새로 요청" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제용 인보이스 만들기"
       : "인보이스 확인";
 
   function includeLightningAddress() {
@@ -485,7 +484,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         <>
           <div className={styles.modeRow}>
             <p>{lightningMode === "address"
-              ? "라이트닝 주소를 입력하면 현재 거래 금액의 결제 인보이스를 만들 수 있습니다."
+              ? "라이트닝 주소의 지갑 서비스에 현재 금액의 인보이스를 요청합니다."
               : "지갑에서 만든 인보이스가 현재 거래 금액과 맞는지 확인합니다."}</p>
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
@@ -498,7 +497,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
                 <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com" />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
-              <small>주소만 저장할 수도 있습니다. 결제용 인보이스는 현재 금액으로 새로 만듭니다.</small>
+              <small>인보이스 발급이 지원되지 않으면 지갑에서 직접 만든 인보이스를 입력할 수 있습니다.</small>
             </div>
           ) : (
             <div className={styles.field}>

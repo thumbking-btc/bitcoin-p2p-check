@@ -83,7 +83,8 @@ test("payment UIs expose lifecycle warnings and no longer make the static card l
   assert.match(portal, /지갑에서 새 인보이스를 만들어 다시 확인하십시오/u);
   assert.match(verifier, /document\.addEventListener\("visibilitychange"/u);
   assert.match(verifier, /QR과 인보이스 복사를 중지했습니다/u);
-  assert.match(verifier, /상대방의 신원, 원화 입금, BTC 수령 또는 거래 완료를 보증하지 않습니다/u);
+  assert.match(verifier, /서명은 기록 무결성만 확인합니다/u);
+  assert.match(verifier, /실제 입금과 수령은 각자의 지갑·은행에서 확인/u);
   assert.match(image, /절대 만료/u);
   assert.match(image, /QR에는 결제 금액이 포함되지 않음/u);
   assert.doesNotMatch(image, /공유 정보 보기/u);

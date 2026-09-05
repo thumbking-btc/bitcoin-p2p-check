@@ -30,6 +30,8 @@ import {
   mergeRestMarketSnapshot,
 } from "../lib/market-freshness.mjs";
 import { runWithAbortTimeout } from "../lib/operation-timeout.mjs";
+import { tradeRecordPreparationFeedback } from "../lib/request-feedback.mjs";
+import { STAGING_HOSTNAME } from "../lib/deployment-environment.mjs";
 import {
   createPendingTradeRecord,
   createTradeRecordRevokeToken,
@@ -590,6 +592,11 @@ export function P2PTradeTool() {
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
   const [outputMode, setOutputMode] = useState<OutputMode>("recruitment");
   const [draftHydrated, setDraftHydrated] = useState(false);
+  const [recordPreviewOnly, setRecordPreviewOnly] = useState(false);
+  useEffect(() => {
+    const environment = document.documentElement.getAttribute("data-deployment-environment");
+    queueMicrotask(() => setRecordPreviewOnly(environment === "preview" || environment === "unknown"));
+  }, []);
   const skipNextDraftPersistence = useRef(true);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
@@ -1637,6 +1644,7 @@ export function P2PTradeTool() {
   const shareAttemptKey = tradeRecordDraft ? JSON.stringify(tradeRecordDraft) : "";
   const preparedShareIsCurrent = Boolean(preparedTradeShare && preparedTradeShare.key === shareAttemptKey);
   const shareImageAllowed = Boolean(quote)
+    && !recordPreviewOnly
     && outputMode === "trade-image"
     && referencePrice !== null
     && premiumPercent !== null
@@ -1832,7 +1840,7 @@ export function P2PTradeTool() {
       const prepared = createPreparedTradeShare(attempt, pending, shareFile, tradeIntent);
       preparedTradeShareRef.current = prepared;
       setPreparedTradeShare(prepared);
-      setShareStatus("비공개 카드 준비를 마쳤습니다. 아래 버튼을 다시 눌러 공유한 뒤 상세 기록을 공개 확정하십시오.");
+      setShareStatus("카드를 준비했습니다. 공유하거나 저장하면 상세 링크도 공개됩니다.");
     } catch (reason) {
       if (stage === "rendering" && attempt.signed) {
         const record = toManagedTradeRecord(attempt.signed, attempt.revokeToken);
@@ -1840,9 +1848,7 @@ export function P2PTradeTool() {
         if (revoked) shareAttemptCacheRef.current = null;
       }
       if (stage !== "rendering" || shareAttemptCacheRef.current) {
-        setShareStatus(reason instanceof Error
-          ? `오류: ${reason.message} 같은 조건으로 재시도하면 동일한 준비 기록을 확인합니다.`
-          : "오류: 거래 기록 카드를 준비하지 못했습니다. 다시 시도해 주세요.");
+        setShareStatus(tradeRecordPreparationFeedback(reason));
       }
     } finally {
       isSharingRef.current = false;
@@ -2282,7 +2288,6 @@ export function P2PTradeTool() {
         <fieldset className="role-fieldset">
           <legend>
             <span>나는 비트코인을</span>
-            <small>시세는 합의의 기준일 뿐입니다.</small>
           </legend>
           <div className="role-options">
             <label htmlFor="trade-role-buyer" aria-label="비트코인을 삽니다. 원화를 보내고 비트코인을 받습니다.">
@@ -2512,6 +2517,12 @@ export function P2PTradeTool() {
               <strong>입력한 거래 조건을 한 장의 카드로 만듭니다.</strong>
               <p>결제 QR은 선택 사항이며, 상세 링크에서 조건 확인과 주소·인보이스 복사가 가능합니다.</p>
             </div>
+            {recordPreviewOnly ? (
+              <p className="record-payment-state" role="status">
+                <strong>전체 기능 검수 환경에서 카드를 만들 수 있습니다.</strong>
+                <a href={`https://${STAGING_HOSTNAME}/?pwa-review=1`}>거래 기록·공유까지 시험하기</a>
+              </p>
+            ) : null}
             <div className="trade-image-funding">
               <label className="fund-source-field" htmlFor="buyer-funding-source">
                 <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
@@ -2550,7 +2561,7 @@ export function P2PTradeTool() {
             ) : null}
             <aside className="share-disclosure" aria-label="거래 기록 저장과 공개 안내">
               <strong>공유 전 확인</strong>
-              <p>공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다.</p>
+              <p>공유하거나 저장하면 조건과 포함한 수취정보가 링크로 공개됩니다. 링크를 아는 사람은 최대 180일간 볼 수 있으며, 아래에서 링크를 끌 수 있습니다.</p>
               <a href="/privacy/">개인정보 처리 안내 보기</a>
             </aside>
             <div className="tool-actions">
@@ -2564,7 +2575,7 @@ export function P2PTradeTool() {
                 disabled={isSharing || !shareImageAllowed || (Boolean(preparedTradeShare) && !preparedShareIsCurrent)}
                 aria-busy={isSharing}
               >
-                {isSharing
+                {recordPreviewOnly ? "전체 기능 검수 환경에서 준비" : isSharing
                   ? preparedTradeShare?.deliveryOutcome
                     ? "상세 기록 공개 확정 중"
                     : preparedTradeShare ? "공유 처리 중" : "거래 기록 카드 준비 중"
@@ -2593,7 +2604,7 @@ export function P2PTradeTool() {
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "첫 단계에서는 15분짜리 비공개 준비 기록만 만듭니다." : "")}
+                {shareStatus || (!isSharing && !recordPreviewOnly ? "준비만 한 카드는 비공개이며 15분 후 만료됩니다." : "")}
               </p>
               {managedTradeRecords.length > 0 ? (
                 <details

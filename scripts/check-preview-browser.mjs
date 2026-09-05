@@ -5,7 +5,9 @@ import { chromium, webkit, expect } from "@playwright/test";
 import { assertPreviewUiState } from "./preview-ui-contract.mjs";
 
 const baseUrl = process.env.PREVIEW_BASE_URL ?? "";
-assert.match(baseUrl, /^https:\/\/[0-9a-f]{8}-bitcoin-p2p-check\.thumbking-btc\.workers\.dev$/u);
+const stagingReview = baseUrl === "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
+if (!stagingReview) assert.match(baseUrl, /^https:\/\/[0-9a-f]{8}-bitcoin-p2p-check\.thumbking-btc\.workers\.dev$/u);
+const environment = stagingReview ? "staging" : "preview";
 const report = { baseUrl, checks: [], failures: [] };
 // Application assertions finish before screenshot capture: Playwright injects
 // a WebKit-only `body {}` animation-sync stylesheet even with caret: initial.
@@ -44,7 +46,7 @@ async function assertRendered(page, calculator = true, hydrated = true) {
   if (calculator) await expect(page.locator(".role-options")).toHaveCSS("display", "grid", { timeout: 10_000 });
   await expect(page.locator("#deployment-environment-notice")).toBeVisible();
   const state = await page.evaluate(readUiState);
-  assertPreviewUiState(state, { calculator, hydrated });
+  assertPreviewUiState(state, { calculator, hydrated, environment });
   return state;
 }
 
@@ -91,7 +93,7 @@ function assertHtmlHeaders(response) {
   assert.ok(response, "Missing navigation response");
   assert.equal(response.status(), 200);
   const headers = response.headers();
-  assert.equal(headers["x-deployment-environment"], "preview");
+  assert.equal(headers["x-deployment-environment"], environment);
   assert.equal(headers["x-content-type-options"], "nosniff");
   assert.match(headers["content-security-policy"] ?? "", /script-src[^;]*'self'/u);
   assert.doesNotMatch(headers["content-security-policy"] ?? "", /unsafe-inline/u);
@@ -115,8 +117,8 @@ try {
   });
   assert.equal(versionResponse.status, 200);
   report.version = await versionResponse.json();
-  assert.equal(report.version.deploymentEnvironment, "preview");
-  assert.equal(report.version.workerVersion?.id?.slice(0, 8), new URL(baseUrl).hostname.slice(0, 8));
+  assert.equal(report.version.deploymentEnvironment, environment);
+  if (!stagingReview) assert.equal(report.version.workerVersion?.id?.slice(0, 8), new URL(baseUrl).hostname.slice(0, 8));
 
   for (const [engine, browserType] of [["chromium", chromium], ["webkit", webkit]]) {
     const browser = await browserType.launch();
@@ -164,7 +166,7 @@ try {
             for (const sheet of document.styleSheets) sheet.disabled = true;
           });
           const broken = await page.evaluate(readUiState);
-          assert.throws(() => assertPreviewUiState(broken), /stylesheet|CSS|theme|layout|padding/u);
+          assert.throws(() => assertPreviewUiState(broken, { environment }), /stylesheet|CSS|theme|layout|padding/u);
           return { rejectedState: broken };
         } finally { await context.close(); }
       });

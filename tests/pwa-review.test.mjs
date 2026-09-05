@@ -32,9 +32,11 @@ test("keeps service workers disabled on non-production environments by default",
   assert.equal(shouldDisableServiceWorker(STAGING_HOSTNAME, "staging"), true);
 });
 
-test("allows explicit PWA review only on a Worker-annotated exact preview host", () => {
+test("allows explicit PWA review on matched preview or canonical isolated staging only", () => {
   assert.equal(shouldDisableServiceWorker(COMMIT_PREVIEW_HOSTNAME, "preview", true), false);
-  assert.equal(shouldDisableServiceWorker(STAGING_HOSTNAME, "staging", true), true);
+  assert.equal(shouldDisableServiceWorker(STAGING_HOSTNAME, "staging", true), false);
+  assert.equal(shouldDisableServiceWorker(`other-${STAGING_HOSTNAME}`, "staging", true), true);
+  assert.equal(shouldDisableServiceWorker(STAGING_HOSTNAME, "preview", true), true);
   assert.equal(shouldDisableServiceWorker(PRODUCTION_HOSTNAME, "preview", true), true);
   assert.equal(shouldDisableServiceWorker(COMMIT_PREVIEW_HOSTNAME, "production", true), true);
 });

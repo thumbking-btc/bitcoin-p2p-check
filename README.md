@@ -1,6 +1,6 @@
 # 비트코인 P2P 계산기
 
-현재 운영 버전: **v2.2.0**
+main 소스 버전: **v2.2.3** (실제 운영 배포 버전과 별도로 확인하십시오.)
 이 브랜치의 검증 대상 릴리스 후보: **v2.3.0**
 
 구매자와 판매자가 한 화면에서 거래 조건을 계산하고, 거래 모집글 또는 원본 확인이 가능한 거래 기록 카드로 공유할 수 있는 설치형 웹 앱(PWA)입니다.
@@ -75,7 +75,7 @@ npm run dev
 
 - `npm run dev`: vinext 개발 서버를 실행합니다.
 - `npm run start`: `wrangler.jsonc`의 production 형태를 로컬 Worker로 실행합니다. 거래 기록 시험에는 commit하지 않은 local signing secret이 필요합니다.
-- `npm run start:staging`: 운영 저장소·서명 키가 없고 거래 기록 기능이 fail closed인 격리 staging 구성을 실행합니다.
+- `npm run start:staging`: 별도 저장소를 사용하는 전체 기능 staging 구성을 로컬에서 실행합니다. 기록 생성에는 로컬 검수용 signing secret이 필요합니다.
 - `npm run start:preview`: KV와 signing secret 없이 거래 기록 기능이 fail closed인 `wrangler.preview.jsonc`를 실행합니다.
 - `npm run test:built`: 기존 `dist`를 대상으로 모든 `tests/*.test.mjs`를 실행합니다.
 - `npm test`: 새로 build한 뒤 전체 빌드 결과 test를 실행합니다.
@@ -84,6 +84,8 @@ npm run dev
 local secret은 `.dev.vars` 또는 `.env` 계열에만 두고 commit하지 마십시오. production Durable Object·legacy KV·signing key를 staging 또는 preview 환경과 함께 사용하지 마십시오.
 
 ## 배포
+
+사용자 검수는 [전체 기능 검수 환경](https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev/?pwa-review=1)에서 진행합니다. 거래 기록 생성·공개·철회와 설치 시험이 가능하며 운영 데이터와 분리되어 있습니다. [인보이스 지식과 UI 개선 근거](./docs/invoice-and-review-2026-09-05.md)를 함께 참고하십시오.
 
 Cloudflare의 Git 직접 배포와 기능 branch preview는 비활성화해야 합니다. 현재 `.github/workflows/verify.yml`의 production job은 의도적으로 실패합니다. 새 Durable Object `exports`를 기존 production Worker에 적용하는 별도 compatibility bootstrap과, declarative exports 제약을 따르는 승인형 atomic 배포 workflow가 아직 없기 때문입니다. 따라서 최신 `main`의 검증·attestation 산출물이 있어도 production 배포 승인을 진행하면 안 됩니다. 필요한 선행 절차와 차단 해제 조건은 [프로덕션 운영 런북](./docs/production-operations.md)에 기록되어 있습니다.
 

@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 // These values distinguish the application's layout from browser-default HTML.
 // Keep this separate from screenshot baselines so missing CSS cannot be approved
 // accidentally by updating a reference image.
-export function assertPreviewUiState(state, { calculator = true, hydrated = true } = {}) {
-  assert.equal(state.environment, "preview", "HTML must be annotated by the real preview Worker");
+export function assertPreviewUiState(state, { calculator = true, hydrated = true, environment = "preview" } = {}) {
+  assert.ok(environment === "preview" || environment === "staging", "Only isolated review environments are supported");
+  assert.equal(state.environment, environment, "HTML must be annotated by the expected review Worker");
   assert.equal(state.noticeVisible, true, "The preview identity must remain visible");
   assert.ok(state.theme.length > 0, "The global stylesheet did not establish the theme");
   assert.equal(state.bodyMargin, "0px", "Browser-default body margins indicate missing CSS");

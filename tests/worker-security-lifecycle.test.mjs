@@ -549,7 +549,9 @@ test("Lightning discovery and callback map upstream 429 and timeout aborts to cl
       const response = await pendingResponse;
       assert.equal(activeController.signal.aborted, true);
       assert.equal(response.status, 504);
-      assert.equal((await response.json()).code, "PROVIDER_TIMEOUT");
+      const body = await response.json();
+      assert.equal(body.code, "PROVIDER_TIMEOUT");
+      assert.equal(body.issuanceStatus, failurePhase === "callback" ? "unknown" : "not-issued");
       assert.deepEqual(timeoutDurations, [12_000]);
       assert.equal(calls, failurePhase === "discovery" ? 1 : 2);
     }

@@ -173,6 +173,7 @@ export async function handleLightningAddressRequest(
     return json({ ok: false, code: "METHOD_NOT_ALLOWED", message: "POST 요청만 사용할 수 있습니다." }, 405);
   }
 
+  let callbackStarted = false;
   try {
     const rateLimit = await checkLightningRateLimit(request, environment);
     if (rateLimit === "unavailable") fail("RATE_LIMIT_UNAVAILABLE", "요청 제한 서비스를 사용할 수 없습니다.", 503);
@@ -237,6 +238,7 @@ export async function handleLightningAddressRequest(
       fail("INVALID_PROVIDER_RESPONSE", "라이트닝 주소의 인보이스 발급 도메인을 확인하지 못했습니다.", 502);
     }
     callbackUrl.searchParams.set("amount", String(amountMsat));
+    callbackStarted = true;
     const invoiceResponse = (await fetchJson(callbackUrl, providerDeadline)).value;
     if (!isRecord(invoiceResponse)) {
       fail("INVALID_PROVIDER_RESPONSE", "라이트닝 인보이스 응답을 확인하지 못했습니다.", 502);
@@ -259,12 +261,14 @@ export async function handleLightningAddressRequest(
     });
   } catch (error) {
     if (error instanceof LightningAddressRequestError) {
-      return json({ ok: false, code: error.code, message: error.message }, error.status);
+      return json({ ok: false, code: error.code, message: error.message,
+        issuanceStatus: callbackStarted && error.code !== "INVOICE_REJECTED" ? "unknown" : "not-issued",
+      }, error.status);
     }
     console.error(JSON.stringify({
       event: "lightning_address_request_failed",
       errorName: error instanceof Error ? error.name : "UnknownError",
     }));
-    return json({ ok: false, code: "INTERNAL_ERROR", message: "라이트닝 결제 요청을 만들지 못했습니다." }, 500);
+    return json({ ok: false, code: "INTERNAL_ERROR", message: "라이트닝 결제 요청을 만들지 못했습니다.", issuanceStatus: callbackStarted ? "unknown" : "not-issued" }, 500);
   }
 }

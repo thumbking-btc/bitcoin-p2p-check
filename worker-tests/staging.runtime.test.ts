@@ -24,7 +24,7 @@ describe("staging Worker isolation and identification", () => {
     expect(notice).not.toContain("hidden");
     expect(notice).toContain("data-deployment-environment=\"staging\"");
     expect(html).toContain(">STAGING<");
-    expect(html).toContain("시험 환경입니다. 거래 기록은 스테이징 전용 저장소에 저장되며 실제 거래에 사용하면 안 됩니다.");
+    expect(html).toContain("전체 기능 검수 환경입니다. 기록은 시험용 저장소에 보관됩니다. 실제 송금은 하지 마십시오.");
 
     const version = await exports.default.fetch("https://staging.test/api/version");
     expect(version.headers.get("cache-control")).toBe("no-store");

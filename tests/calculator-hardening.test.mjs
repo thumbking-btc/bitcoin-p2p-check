@@ -262,7 +262,7 @@ test("wires calculator hardening states into the client component", async () => 
   assert.doesNotMatch(component, /<label className="field" htmlFor="seller-premium">/);
   assert.match(component, /1 sat은 Lightning에서 전송 가능한 단위이지만[\s\S]*?온체인에서는 dust 기준에 미달할 수 있고 네트워크 수수료가 거래액을 넘을 수 있습니다/);
   assert.match(component, /id="tiny-trade-warning" role="status"/);
-  assert.match(component, /공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
+  assert.match(component, /링크를 아는 사람은 최대 180일간 볼 수 있으며/);
   assert.doesNotMatch(component, /공개 확정 전에 철회 권한을 먼저 브라우저에 저장/);
   assert.match(component, /<details[\s\S]*?className="managed-trade-records"/);
   assert.match(component, /ref=\{managedTradeRecordsDetailsRef\}/);

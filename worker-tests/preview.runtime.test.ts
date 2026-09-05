@@ -22,7 +22,7 @@ describe("preview Worker isolation", () => {
     expect(notice).not.toContain("hidden");
     expect(notice).toContain("data-deployment-environment=\"preview\"");
     expect(html).toContain(">PREVIEW<");
-    expect(html).toContain("시험 환경입니다. 서버 거래 기록 저장 기능은 비활성화되어 있습니다.");
+    expect(html).toContain("화면 검수 환경입니다. 거래 기록·공유는 전체 기능 검수 환경에서 시험할 수 있습니다.");
 
     const version = await exports.default.fetch("https://preview.test/api/version");
     expect(version.headers.get("x-deployment-environment")).toBe("preview");

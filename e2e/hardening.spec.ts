@@ -16,6 +16,42 @@ const PAYMENT_EXPIRES_AT_MS = CREATED_AT_MS + 121_000;
 const RECORD_EXPIRES_AT_MS = CREATED_AT_MS + 180 * 24 * 60 * 60 * 1_000;
 const BOLT11_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
+test("preview directs record creation to the isolated full review environment", async ({ page }) => {
+  await installFakeMarket(page);
+  let createRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/trade-record") createRequests += 1;
+  });
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await expect(page.locator("button.share-button")).toBeDisabled();
+  await expect(page.getByRole("link", { name: "거래 기록·공유까지 시험하기" })).toHaveAttribute("href", "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev/?pwa-review=1");
+  expect(createRequests).toBe(0);
+});
+
+test("unknown invoice issuance requires an explicit new request without exposing upstream HTML", async ({ page }) => {
+  await installFakeMarket(page);
+  let issuanceRequests = 0;
+  await page.route("**/api/market?receive=lightning-address", async (route) => {
+    issuanceRequests += 1;
+    await route.fulfill({ status: 502, contentType: "text/html", body: "<h1>UPSTREAM_PRIVATE_DIAGNOSTIC</h1>" });
+  });
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.getByRole("radio", { name: "라이트닝" }).check({ force: true });
+  await page.getByLabel("라이트닝 주소", { exact: true }).fill("review@example.com");
+  await page.getByRole("button", { name: "결제용 인보이스 만들기" }).click();
+  const retry = page.getByRole("button", { name: "지갑 확인 후 새로 요청" });
+  await expect(retry).toBeEnabled();
+  await expect(page.getByText(/인보이스 발급 결과를 받지 못했습니다/u)).toBeVisible();
+  await expect(page.getByText("UPSTREAM_PRIVATE_DIAGNOSTIC")).toHaveCount(0);
+  expect(issuanceRequests).toBe(1);
+  await retry.click();
+  await expect.poll(() => issuanceRequests).toBe(2);
+});
+
 function marketSnapshot(priceKrw = 100_000_000, checkedAtMs = Date.now()) {
   const checkedAt = new Date(checkedAtMs).toISOString();
   return {
@@ -323,7 +359,8 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
   await expect(page.getByText("공개 기록", { exact: true })).toBeVisible();
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
   const disclosure = page.getByRole("complementary", { name: "거래 기록 저장과 공개 안내" });
-  await expect(disclosure.locator("p")).toHaveText("공유 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다.");
+  await expect(disclosure.locator("p")).toContainText("조건과 포함한 수취정보가 링크로 공개됩니다.");
+  await expect(disclosure.locator("p")).toContainText("링크를 아는 사람은 최대 180일간 볼 수 있으며");
   await expect(disclosure.locator("li")).toHaveCount(0);
 
   const openLink = page.getByRole("link", { name: "링크 열기" });
@@ -1059,7 +1096,7 @@ test("preview stays visibly marked and hides install entry at 320px without Java
     const notice = page.locator("#deployment-environment-notice");
     await expect(notice).toBeVisible();
     await expect(notice).toContainText("PREVIEW");
-    await expect(notice).toContainText("시험 환경입니다.");
+    await expect(notice).toContainText("화면 검수 환경입니다.");
     await expect(notice).not.toHaveAttribute("hidden", /.*/u);
     await expect(page.locator(".site-route-install")).toBeHidden();
 
@@ -1111,7 +1148,7 @@ test("silent WebSocket ticks keep the visual and accessible result in sync", asy
   expect(observedModes).toContain("off");
 });
 
-test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice boundary", async ({ page }) => {
+test("@production-only the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice boundary", async ({ page }) => {
   await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS });
@@ -1172,7 +1209,7 @@ test("the calculator blocks sharing at the 121 to 120 to 119 to 0 invoice bounda
   await expect(shareButton).toBeDisabled();
 });
 
-test("a silent WebSocket watchdog failure blocks sharing until REST recovery", async ({ page }) => {
+test("@production-only a silent WebSocket watchdog failure blocks sharing until REST recovery", async ({ page }) => {
   await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   const market = await installFakeMarket(page, page, {
@@ -1204,7 +1241,7 @@ test("a silent WebSocket watchdog failure blocks sharing until REST recovery", a
   await expect(shareButton).toBeEnabled();
 });
 
-test("a fresh WebSocket tick clears a failed silent-refresh sharing error", async ({ page }) => {
+test("@production-only a fresh WebSocket tick clears a failed silent-refresh sharing error", async ({ page }) => {
   await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
   await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS, failRequestAt: 2 });
