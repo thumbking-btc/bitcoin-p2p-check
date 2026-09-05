@@ -2561,7 +2561,7 @@ export function P2PTradeTool() {
             ) : null}
             <aside className="share-disclosure" aria-label="거래 기록 저장과 공개 안내">
               <strong>공유 전 확인</strong>
-              <p>공유하거나 저장하면 조건과 포함한 수취정보가 링크로 공개됩니다. 링크를 아는 사람은 최대 180일간 볼 수 있으며, 아래에서 링크를 끌 수 있습니다.</p>
+              <p>공유하거나 저장하면 조건과 포함한 수취정보가 링크로 공개됩니다. 새 링크는 14일 후 자동으로 만료되며, 아래에서 바로 끌 수 있습니다.</p>
               <a href="/privacy/">개인정보 처리 안내 보기</a>
             </aside>
             <div className="tool-actions">

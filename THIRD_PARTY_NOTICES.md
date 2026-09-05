@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This file is generated from the production dependency graph locked for bitcoin-p2p-check v2.3.0. It intentionally includes the complete runtime dependency graph as a conservative superset of code that may be present in browser or Worker bundles. Build tools and test-only packages are documented in the release SBOM instead.
+This file is generated from the production dependency graph locked for bitcoin-p2p-check v2.3.1. It intentionally includes the complete runtime dependency graph as a conservative superset of code that may be present in browser or Worker bundles. Build tools and test-only packages are documented in the release SBOM instead.
 
 Generation verifies that every listed package ships a license or notice file. This inventory does not grant a license to this project and does not replace artifact-level license scanning or legal approval. Regenerate with `npm run notices:generate` after dependency changes and verify with `npm run notices:check`.
 

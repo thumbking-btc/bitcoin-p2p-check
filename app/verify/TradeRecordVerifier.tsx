@@ -237,7 +237,7 @@ function AuditDetails({ record }: Readonly<{ record: TradeRecord }>) {
   return (
     <details className={styles.audit}>
       <summary>기록 확인 정보</summary>
-      <p>상세 링크는 생성 후 180일간 제공됩니다.</p>
+      <p>이 링크의 정확한 제공 기한은 아래와 같습니다.</p>
       <dl>
         <div><dt>기록 ID</dt><dd><code>{record.id}</code></dd></div>
         <div><dt>생성 시각</dt><dd>{formatTime(record.createdAt)} KST</dd></div>

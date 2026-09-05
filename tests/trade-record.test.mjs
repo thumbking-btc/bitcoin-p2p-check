@@ -12,6 +12,7 @@ import {
   TRADE_RECORD_RETENTION_SECONDS,
   TRADE_RECORD_SCHEMA,
   TRADE_RECORD_SCHEMA_V1,
+  TRADE_RECORD_SCHEMA_V2,
 } from "../app/lib/trade-record.ts";
 import {
   PRODUCTION_TRADE_RECORD_PUBLIC_KEYS,
@@ -224,13 +225,15 @@ async function finalizedManagedRecordFixture() {
   return { ...fixture, capability, created, recordUrl };
 }
 
-test("pins the v1 retention policy and canonical signed representation", () => {
+test("preserves v1 while new v2 records use fourteen-day retention", () => {
   const policy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1);
-  assert.equal(TRADE_RECORD_SCHEMA, TRADE_RECORD_SCHEMA_V1);
+  const currentPolicy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V2);
+  assert.equal(TRADE_RECORD_SCHEMA, TRADE_RECORD_SCHEMA_V2);
   assert.equal(policy.schema, "bitcoin-p2p-trade-record/v1");
   assert.equal(policy.retentionSeconds, 15_552_000);
   assert.equal(TRADE_RECORD_RETENTION_SECONDS, policy.retentionSeconds);
-  assert.equal(getTradeRecordRetentionPolicy("bitcoin-p2p-trade-record/v2"), null);
+  assert.equal(currentPolicy.schema, "bitcoin-p2p-trade-record/v2");
+  assert.equal(currentPolicy.retentionSeconds, 1_209_600);
   assert.equal(Object.isFrozen(TRADE_RECORD_RETENTION_POLICIES), true);
   assert.equal(Object.isFrozen(policy), true);
 
@@ -271,6 +274,16 @@ test("pins the v1 retention policy and canonical signed representation", () => {
     () => canonicalizeTradeRecord({ ...v1Record, schema: "bitcoin-p2p-trade-record/v2" }),
     (error) => error?.code === "INVALID_RECORD",
   );
+  const v2Record = {
+    ...v1Record,
+    schema: TRADE_RECORD_SCHEMA_V2,
+    expiresAt: "2026-01-15T00:00:00.000Z",
+  };
+  assert.equal(canonicalizeTradeRecord(v2Record).schema, TRADE_RECORD_SCHEMA_V2);
+  assert.throws(
+    () => canonicalizeTradeRecord({ ...v2Record, expiresAt: "2026-01-15T00:00:01.000Z" }),
+    (error) => error?.code === "INVALID_RECORD",
+  );
 });
 
 test("creates privately, finalizes, fetches, and independently verifies a signed trade record", async () => {
@@ -285,7 +298,7 @@ test("creates privately, finalizes, fetches, and independently verifies a signed
   assert.match(created.id, /^[A-Za-z0-9_-]{16}$/u);
   assert.equal(created.id, created.record.id);
   assert.equal(created.verificationUrl, `https://records.example/verify/?id=${created.id}`);
-  assert.equal(created.record.schema, TRADE_RECORD_SCHEMA_V1);
+  assert.equal(created.record.schema, TRADE_RECORD_SCHEMA_V2);
   assert.equal(
     Date.parse(created.record.expiresAt) - Date.parse(created.record.createdAt),
     getTradeRecordRetentionPolicy(created.record.schema).retentionSeconds * 1_000,
@@ -310,7 +323,7 @@ test("creates privately, finalizes, fetches, and independently verifies a signed
   }));
   assert.equal(finalizeResponse.status, 200);
   assert.equal(records.puts.length, 2);
-  assert.equal(records.puts[1].options.expirationTtl, TRADE_RECORD_RETENTION_SECONDS);
+  assert.equal(records.puts[1].options.expirationTtl, getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V2).retentionSeconds);
 
   const getResponse = await handle(
     new Request(recordUrl, { headers: { Accept: "application/json" } }),

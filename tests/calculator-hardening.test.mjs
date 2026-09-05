@@ -206,11 +206,11 @@ test("drops funding sources while migrating version 3 browser drafts", () => {
 test("explains local deletion and public-link deactivation without conflating them", async () => {
   const privacy = await readFile(new URL("../app/privacy/page.tsx", import.meta.url), "utf8");
 
-  assert.match(privacy, /공개 링크가 있으면 누구나 로그인 없이 최대 180일간 기록을 볼 수 있습니다/);
+  assert.match(privacy, /새로 만든 공개 링크는 로그인 없이 14일간 볼 수 있습니다/);
   assert.match(privacy, /브라우저 사이트 데이터를 지워도 서버의 공개 링크는 그대로 남습니다/);
   assert.match(privacy, /공개 기록이 있으면 먼저 <strong>공개 링크 비활성화<\/strong>/);
   assert.match(privacy, /사이트 데이터를 먼저 지우면 공개 링크를 나중에 비활성화할 수 없습니다/);
-  assert.match(privacy, /비활성화되었다는 표시만 최대 180일간 남습니다/);
+  assert.match(privacy, /비활성화 상태는 해당 기록의 원래 만료 시점까지 남으며/);
   assert.doesNotMatch(privacy, /저장된 초안 삭제/);
   assert.doesNotMatch(privacy, /사이트 데이터를 삭제하면 제거됩니다\. 같은 사이트를 연 다른 탭에는 삭제·변경 사실이 동기화됩니다/);
   assert.doesNotMatch(privacy, /철회 권한|공개 기록 철회/);
@@ -262,7 +262,7 @@ test("wires calculator hardening states into the client component", async () => 
   assert.doesNotMatch(component, /<label className="field" htmlFor="seller-premium">/);
   assert.match(component, /1 sat은 Lightning에서 전송 가능한 단위이지만[\s\S]*?온체인에서는 dust 기준에 미달할 수 있고 네트워크 수수료가 거래액을 넘을 수 있습니다/);
   assert.match(component, /id="tiny-trade-warning" role="status"/);
-  assert.match(component, /링크를 아는 사람은 최대 180일간 볼 수 있으며/);
+  assert.match(component, /새 링크는 14일 후 자동으로 만료되며/);
   assert.doesNotMatch(component, /공개 확정 전에 철회 권한을 먼저 브라우저에 저장/);
   assert.match(component, /<details[\s\S]*?className="managed-trade-records"/);
   assert.match(component, /ref=\{managedTradeRecordsDetailsRef\}/);

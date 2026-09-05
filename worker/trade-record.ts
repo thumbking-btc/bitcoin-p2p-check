@@ -12,6 +12,7 @@ import {
   getTradeRecordRetentionPolicy,
   isTradeRecordId,
   TRADE_RECORD_KEY_ID_PATTERN,
+  TRADE_RECORD_SCHEMA,
   TRADE_RECORD_SCHEMA_V1,
   TradeRecordValidationError,
   type SignedTradeRecord,
@@ -46,7 +47,7 @@ const MAX_PRIVATE_JWK_BYTES = 2_048;
 const MAX_UPBIT_PRICE_RESPONSE_BYTES = 16_384;
 const MAX_UPBIT_PREMIUM_RESPONSE_BYTES = 256_000;
 const EMPTY_MANAGEMENT_BODY_TIMEOUT_MS = 100;
-const WRITTEN_TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
+const WRITTEN_TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA;
 const UPBIT_PRICE_URL = "https://api.upbit.com/v1/ticker?markets=KRW-BTC";
 const UPBIT_PREMIUM_URL = "https://datalab-api.upbit.com/api/v1/indicator/premium/assets?symbols=BTC";
 const UPBIT_PRICE_TIMEOUT_MS = 4_000;
@@ -693,8 +694,10 @@ async function revokeRecord(request: Request, environment: TradeRecordEnvironmen
     // mirror failure does not by itself make this attempt unsafe.
   }
 
-  const tombstoneTtlSeconds = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1).retentionSeconds;
   const persistRevocation = async (record?: ReturnType<typeof parseStoredRecord>): Promise<void> => {
+    const tombstoneTtlSeconds = getTradeRecordRetentionPolicy(
+      record?.signed.record.schema ?? TRADE_RECORD_SCHEMA_V1,
+    ).retentionSeconds;
     try {
       // Re-write the tombstone even on an idempotent retry. If a previous
       // response was 503, both this put and the delete must reach legacy KV

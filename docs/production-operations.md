@@ -418,6 +418,8 @@ KV key list의 `expiration`은 처음에 TTL로 저장했더라도 UNIX epoch se
 
 `bitcoin-p2p-trade-record/v1`의 `expiresAt`은 `createdAt`으로부터 정확히 15,552,000초(24시간 단위 180일) 뒤이며, 이 관계와 canonical JSON 필드 순서는 이미 발행된 서명의 일부입니다. `app/lib/trade-record.ts`의 버전별 retention policy와 조회 함수가 이 계약의 기준이며, v1 호환 상수도 v1에 고정되어 있습니다.
 
+`bitcoin-p2p-trade-record/v2`의 `expiresAt`은 `createdAt`으로부터 정확히 1,209,600초(14일) 뒤입니다. 신규 발행은 v2를 사용하고, v1과 v2 조회·서명 검증은 각 schema의 원래 만료 시점까지 함께 유지합니다.
+
 보존 기간이나 서명 필드를 변경할 때는 기존 v1 정책·canonicalizer·호환 상수를 수정하지 마십시오. 새 schema 식별자, 별도 retention policy, 별도 canonicalizer를 추가하고 Worker의 신규 발행 schema만 명시적으로 전환하십시오. 배포 전에는 고정 v1 canonical JSON 회귀 테스트, 과거 v1 서명 검증, 새 버전 만료·KV TTL, 두 버전의 동시 조회를 검증해야 합니다. 복원 작업도 record의 schema별 정책을 조회하되 manifest의 기존 absolute `expiration`을 연장해서는 안 됩니다.
 
 ### revoke·삭제 전파

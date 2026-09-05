@@ -13,7 +13,7 @@ import {
 const RECORD_ID = "AAAAAAAAAAAAAAAA";
 const CREATED_AT_MS = Date.parse("2027-01-15T08:00:00.000Z");
 const PAYMENT_EXPIRES_AT_MS = CREATED_AT_MS + 121_000;
-const RECORD_EXPIRES_AT_MS = CREATED_AT_MS + 180 * 24 * 60 * 60 * 1_000;
+const RECORD_EXPIRES_AT_MS = CREATED_AT_MS + 14 * 24 * 60 * 60 * 1_000;
 const BOLT11_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 test("preview directs record creation to the isolated full review environment", async ({ page }) => {
@@ -360,7 +360,7 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
   await expect(page.getByText(/저장하지 못한 공개 기록/u)).toHaveCount(0);
   const disclosure = page.getByRole("complementary", { name: "거래 기록 저장과 공개 안내" });
   await expect(disclosure.locator("p")).toContainText("조건과 포함한 수취정보가 링크로 공개됩니다.");
-  await expect(disclosure.locator("p")).toContainText("링크를 아는 사람은 최대 180일간 볼 수 있으며");
+  await expect(disclosure.locator("p")).toContainText("새 링크는 14일 후 자동으로 만료되며");
   await expect(disclosure.locator("li")).toHaveCount(0);
 
   const openLink = page.getByRole("link", { name: "링크 열기" });
@@ -772,7 +772,8 @@ test("a persisted unresolved finalization retries idempotently and removes a mis
       revokeToken: "d".repeat(43),
       verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
       lifecycle: "finalizing",
-      expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1_000).toISOString(),
+      retentionSeconds: 14 * 24 * 60 * 60,
+      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString(),
     }));
   }, { id, key });
   let recordReads = 0;
@@ -810,6 +811,7 @@ test("a permanent finalization authorization failure removes the invalid capabil
       revokeToken: "m".repeat(43),
       verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
       lifecycle: "finalizing",
+      retentionSeconds: 14 * 24 * 60 * 60,
       expiresAt: new Date(value.expiresAtMs).toISOString(),
     }));
   }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id, key });
@@ -848,6 +850,7 @@ test("a non-contract finalization 403 keeps the capability for retry", async ({ 
       revokeToken: "q".repeat(43),
       verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
       lifecycle: "finalizing",
+      retentionSeconds: 14 * 24 * 60 * 60,
       expiresAt: new Date(value.expiresAtMs).toISOString(),
     }));
   }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id, key });
@@ -882,7 +885,7 @@ test("a memory-only finalizing 404 stops at the pending recovery deadline", asyn
   const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${id}`;
   const recoveryDeadlineMs = CREATED_AT_MS + 60_000;
   const finalExpiresAtMs = recoveryDeadlineMs
-    + 180 * 24 * 60 * 60 * 1_000
+    + 14 * 24 * 60 * 60 * 1_000
     - 15 * 60 * 1_000
     - MANAGED_TRADE_RECORD_CLOCK_SKEW_GRACE_MS;
   await page.addInitScript((value) => {
@@ -891,6 +894,7 @@ test("a memory-only finalizing 404 stops at the pending recovery deadline", asyn
       revokeToken: "l".repeat(43),
       verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
       lifecycle: "finalizing",
+      retentionSeconds: 14 * 24 * 60 * 60,
       expiresAt: new Date(value.finalExpiresAtMs).toISOString(),
     }));
   }, { finalExpiresAtMs, id, key });
@@ -962,6 +966,7 @@ test("clearing browser storage during reconciliation keeps a confirmed capabilit
       revokeToken: "e".repeat(43),
       verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
       lifecycle: "finalizing",
+      retentionSeconds: 14 * 24 * 60 * 60,
       expiresAt: new Date(value.expiresAtMs).toISOString(),
     }));
   }, { expiresAtMs: RECORD_EXPIRES_AT_MS, id: RECORD_ID, key });
@@ -1033,6 +1038,7 @@ test("finalizing records reconcile independently without aborting sibling reques
         revokeToken: value.revokeToken,
         verificationUrl: `${window.location.origin}/verify/?id=${value.id}`,
         lifecycle: "finalizing",
+        retentionSeconds: 14 * 24 * 60 * 60,
         expiresAt: new Date(value.expiresAtMs).toISOString(),
       }));
     }
@@ -1344,7 +1350,7 @@ test("@production-pwa production registers its service worker and serves verify 
   await expect.poll(async () => page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
     return registration.active?.scriptURL ?? null;
-  }), { timeout: 30_000 }).toContain("/sw.js?v=2.3.0");
+  }), { timeout: 30_000 }).toContain("/sw.js?v=2.3.1");
   await expect.poll(async () => {
     try {
       return await page.evaluate(() => navigator.serviceWorker.controller !== null);
@@ -1360,7 +1366,7 @@ test("@production-pwa production registers its service worker and serves verify 
   }, { timeout: 30_000 }).toBe(true);
   await page.waitForLoadState("domcontentloaded");
   await expect.poll(async () => page.evaluate(async () => (
-    (await caches.keys()).some((key) => key === "bitcoin-p2p-check-precache-2.3.0")
+    (await caches.keys()).some((key) => key === "bitcoin-p2p-check-precache-2.3.1")
   )), { timeout: 30_000 }).toBe(true);
 
   await context.setOffline(true);

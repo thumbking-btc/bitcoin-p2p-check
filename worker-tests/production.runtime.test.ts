@@ -599,7 +599,7 @@ describe("production Worker bindings and routing", () => {
     expect(response.headers.get("x-deployment-environment")).toBe("production");
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
-      appVersion: "2.3.0",
+      appVersion: "2.3.1",
       deploymentEnvironment: "production",
     });
   });

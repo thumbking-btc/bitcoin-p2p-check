@@ -2,6 +2,8 @@ import { isReferenceShareable } from "./share-transport.mjs";
 import { PAYMENT_EXPIRING_THRESHOLD_SECONDS } from "./payment-lifecycle.ts";
 import {
   isTradeRecordId,
+  getTradeRecordRetentionPolicy,
+  TRADE_RECORD_RETENTION_POLICIES,
   TRADE_RECORD_RETENTION_SECONDS,
   TRADE_RECORD_REVOKE_TOKEN_PATTERN,
   type TradeRecordApiSuccess,
@@ -47,6 +49,7 @@ export type ManagedTradeRecord = Readonly<{
   verificationUrl: string;
   lifecycle: "pending" | "finalizing" | "finalized";
   expiresAt: string;
+  retentionSeconds?: number;
   persistence: "memory-only" | "browser";
 }>;
 
@@ -181,6 +184,10 @@ export function toManagedTradeRecord(
     expiresAt: lifecycle === "pending"
       ? new Date(pendingCreatedAtMs + PENDING_MANAGEMENT_TTL_MS).toISOString()
       : signed.record.expiresAt,
+    retentionSeconds: (
+      getTradeRecordRetentionPolicy(signed.record.schema)
+      ?? getTradeRecordRetentionPolicy("bitcoin-p2p-trade-record/v1")
+    ).retentionSeconds,
     persistence: "memory-only",
   });
 }
@@ -188,8 +195,10 @@ export function toManagedTradeRecord(
 function isExactManagedRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const keys = Object.keys(value).sort();
-  return keys.length === 5
-    && keys.every((key, index) => key === ["expiresAt", "id", "lifecycle", "revokeToken", "verificationUrl"][index]);
+  const legacyKeys = ["expiresAt", "id", "lifecycle", "revokeToken", "verificationUrl"];
+  const currentKeys = ["expiresAt", "id", "lifecycle", "retentionSeconds", "revokeToken", "verificationUrl"];
+  return (keys.length === legacyKeys.length && keys.every((key, index) => key === legacyKeys[index]))
+    || (keys.length === currentKeys.length && keys.every((key, index) => key === currentKeys[index]));
 }
 
 function restoredManagedRecord(
@@ -205,8 +214,13 @@ function restoredManagedRecord(
     || (value.lifecycle !== "pending" && value.lifecycle !== "finalizing" && value.lifecycle !== "finalized")
     || typeof value.expiresAt !== "string") return null;
   const expiresAtMs = Date.parse(value.expiresAt);
+  const retentionSeconds = value.retentionSeconds === undefined
+    ? TRADE_RECORD_RETENTION_SECONDS
+    : Number(value.retentionSeconds);
+  if (!Number.isSafeInteger(retentionSeconds)
+    || !Object.values(TRADE_RECORD_RETENTION_POLICIES).some((policy) => policy.retentionSeconds === retentionSeconds)) return null;
   const managementExpiresAtMs = value.lifecycle === "finalizing"
-    ? expiresAtMs - TRADE_RECORD_RETENTION_SECONDS * 1_000 + PENDING_MANAGEMENT_TTL_MS
+    ? expiresAtMs - retentionSeconds * 1_000 + PENDING_MANAGEMENT_TTL_MS
     : expiresAtMs;
   const maximumRemainingMs = value.lifecycle === "pending"
     ? PENDING_MANAGEMENT_TTL_MS
@@ -236,6 +250,7 @@ function restoredManagedRecord(
     verificationUrl: verificationUrl.toString(),
     lifecycle: value.lifecycle,
     expiresAt: value.expiresAt,
+    retentionSeconds,
     persistence: "browser",
   });
 }
@@ -310,12 +325,13 @@ export function serializeManagedTradeRecords(
     .filter((record) => (
       record.lifecycle === "finalized" && managedTradeRecordCleanupAt(record) > now
     ))
-    .map(({ id, revokeToken, verificationUrl, lifecycle, expiresAt }) => ({
+    .map(({ id, revokeToken, verificationUrl, lifecycle, expiresAt, retentionSeconds }) => ({
       id,
       revokeToken,
       verificationUrl,
       lifecycle,
       expiresAt,
+      ...(retentionSeconds === undefined ? {} : { retentionSeconds }),
     }));
   return JSON.stringify(records);
 }
@@ -331,6 +347,7 @@ function serializeManagedTradeRecord(
     verificationUrl: record.verificationUrl,
     lifecycle: record.lifecycle,
     expiresAt: record.expiresAt,
+    ...(record.retentionSeconds === undefined ? {} : { retentionSeconds: record.retentionSeconds }),
   });
   const restored = parsePersistedManagedTradeRecord(serialized, expectedOrigin, now);
   if (!restored || restored.id !== record.id) {
@@ -480,7 +497,7 @@ export function managedTradeRecordPendingExpiresAt(record: ManagedTradeRecord): 
   const finalExpiryMs = Date.parse(record.expiresAt);
   if (!Number.isFinite(finalExpiryMs)) return null;
   return new Date(
-    finalExpiryMs - TRADE_RECORD_RETENTION_SECONDS * 1_000 + PENDING_MANAGEMENT_TTL_MS,
+    finalExpiryMs - (record.retentionSeconds ?? TRADE_RECORD_RETENTION_SECONDS) * 1_000 + PENDING_MANAGEMENT_TTL_MS,
   ).toISOString();
 }
 

@@ -31,7 +31,7 @@ describe("staging Worker isolation and identification", () => {
     expect(version.headers.get("x-deployment-environment")).toBe("staging");
     await expect(version.json()).resolves.toMatchObject({
       ok: true,
-      appVersion: "2.3.0",
+      appVersion: "2.3.1",
       deploymentEnvironment: "staging",
     });
   });

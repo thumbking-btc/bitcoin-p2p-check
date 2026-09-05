@@ -18,7 +18,7 @@ import { handleLightningPayRequest } from "../worker/lightning-pay.ts";
 import {
   canonicalizeTradeRecordApiSuccess,
   getTradeRecordRetentionPolicy,
-  TRADE_RECORD_SCHEMA_V1,
+  TRADE_RECORD_SCHEMA_V2,
 } from "../app/lib/trade-record.ts";
 import { validateBolt11Invoice } from "../app/lib/bolt11-invoice.mjs";
 import { handleTradeRecordRequest } from "../worker/trade-record.ts";
@@ -886,7 +886,7 @@ test("pending records are idempotent, hidden until finalize, and revocable only 
   const tombstoneWrite = records.puts.find(({ key }) => key.startsWith("trade-record:v1:manage:"));
   assert.equal(
     tombstoneWrite?.options.expirationTtl,
-    getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1).retentionSeconds,
+    getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V2).retentionSeconds,
   );
   assert.equal(records.deletes.length, 2, "an idempotent retry also cleans up any partially revoked record");
 });

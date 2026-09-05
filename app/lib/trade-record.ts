@@ -1,14 +1,19 @@
 import { calculateP2PQuote, MAX_SATS, roundedAppliedPriceKrw } from "./p2p-quote.mjs";
 
 export const TRADE_RECORD_SCHEMA_V1 = "bitcoin-p2p-trade-record/v1" as const;
+export const TRADE_RECORD_SCHEMA_V2 = "bitcoin-p2p-trade-record/v2" as const;
 
-/** Compatibility alias pinned to v1. New writers must select an explicit schema version. */
-export const TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V1;
+/** Current schema used by new records. Readers continue to accept v1. */
+export const TRADE_RECORD_SCHEMA = TRADE_RECORD_SCHEMA_V2;
 
 export const TRADE_RECORD_RETENTION_POLICIES = Object.freeze({
   [TRADE_RECORD_SCHEMA_V1]: Object.freeze({
     schema: TRADE_RECORD_SCHEMA_V1,
     retentionSeconds: 180 * 24 * 60 * 60,
+  }),
+  [TRADE_RECORD_SCHEMA_V2]: Object.freeze({
+    schema: TRADE_RECORD_SCHEMA_V2,
+    retentionSeconds: 14 * 24 * 60 * 60,
   }),
 });
 
@@ -83,7 +88,7 @@ export type TradeRecordDraft = Readonly<{
 }>;
 
 export type TradeRecord = Readonly<{
-  schema: typeof TRADE_RECORD_SCHEMA_V1;
+  schema: TradeRecordSchema;
   id: string;
   createdAt: string;
   expiresAt: string;
@@ -282,16 +287,16 @@ function canonicalizeStoredPayment(value: unknown): TradeRecordPayment | null {
   });
 }
 
-function canonicalizeTradeRecordV1(value: Record<string, unknown>): TradeRecord {
+function canonicalizeTradeRecordVersion(value: Record<string, unknown>, schema: TradeRecordSchema): TradeRecord {
   if (!hasExactKeys(value, ["schema", "id", "createdAt", "expiresAt", "condition", "payment"])) {
     fail("INVALID_RECORD", "거래 기록 항목을 확인하지 못했습니다.");
   }
-  if (value.schema !== TRADE_RECORD_SCHEMA_V1 || !isTradeRecordId(value.id)) fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
+  if (value.schema !== schema || !isTradeRecordId(value.id)) fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
 
   const createdAt = canonicalIso(value.createdAt, "기록 생성");
   const expiresAt = canonicalIso(value.expiresAt, "기록 보관 만료");
   const createdAtMs = Date.parse(createdAt);
-  const retentionPolicy = getTradeRecordRetentionPolicy(TRADE_RECORD_SCHEMA_V1);
+  const retentionPolicy = getTradeRecordRetentionPolicy(schema);
   if (Date.parse(expiresAt) !== createdAtMs + retentionPolicy.retentionSeconds * 1_000) {
     fail("INVALID_RECORD", "거래 기록 보관 기간을 확인하지 못했습니다.");
   }
@@ -303,7 +308,7 @@ function canonicalizeTradeRecordV1(value: Record<string, unknown>): TradeRecord 
   }
 
   return Object.freeze({
-    schema: TRADE_RECORD_SCHEMA_V1,
+    schema,
     id: value.id,
     createdAt,
     expiresAt,
@@ -317,7 +322,9 @@ export function canonicalizeTradeRecord(value: unknown): TradeRecord {
 
   switch (value.schema) {
     case TRADE_RECORD_SCHEMA_V1:
-      return canonicalizeTradeRecordV1(value);
+      return canonicalizeTradeRecordVersion(value, TRADE_RECORD_SCHEMA_V1);
+    case TRADE_RECORD_SCHEMA_V2:
+      return canonicalizeTradeRecordVersion(value, TRADE_RECORD_SCHEMA_V2);
     default:
       fail("INVALID_RECORD", "거래 기록 버전 또는 식별자를 확인하지 못했습니다.");
   }

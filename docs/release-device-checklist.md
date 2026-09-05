@@ -95,7 +95,7 @@
 - [ ] screen reader에서 label, 결과 변경, 오류와 share 상태를 이해할 수 있습니다.
 - [ ] 색상만으로 역할·오류·시장 freshness를 구분하지 않습니다.
 - [ ] touch target, focus indicator, contrast와 reduced motion을 실제 기기 설정으로 확인했습니다.
-- [ ] `/privacy/`의 수집·전송·180일 보관·원본 링크 공개 범위·revoke/삭제 설명이 실제 동작과 일치합니다.
+- [ ] `/privacy/`의 수집·전송·신규 기록 14일 보관·원본 링크 공개 범위·revoke/삭제 설명이 실제 동작과 일치합니다.
 - [ ] service worker가 API 응답이나 거래 기록을 browser cache에 저장하지 않습니다.
 - [ ] 외부 Upbit, mempool.space, LNURL-pay 요청에 거래 메모·자금 출처·불필요한 수취정보가 전송되지 않습니다.
 - [ ] 서비스 비중개, 상호 신원 확인, 사기 주의, signature의 제한과 보관 기간이 핵심 흐름에서 확인됩니다.
@@ -107,7 +107,7 @@
 - [ ] 서비스가 규제상 중개, 권유, 전자금융 또는 가상자산사업에 해당하는지 검토했습니다.
 - [ ] AML/KYC, 제재, suspicious transaction, 미성년자 및 지역 제한 의무를 검토했습니다.
 - [ ] 소비자 보호, 표시·광고, 수수료·premium 표시, 오해 방지와 분쟁 처리 절차를 검토했습니다.
-- [ ] 개인정보 처리 근거, 최소 수집, 180일 보관, 원본 링크 접근, revoke/삭제, backup 삭제 전파와 국외 이전을 검토했습니다.
+- [ ] 개인정보 처리 근거, 최소 수집, 신규 기록 14일 보관, 원본 링크 접근, revoke/삭제, backup 삭제 전파와 국외 이전을 검토했습니다.
 - [ ] Lightning Address/LNURL-pay와 외부 API provider에 대한 약관·책임·개인정보 고지를 검토했습니다.
 - [ ] 세무·회계 기록 의무와 사용자 고지를 검토했습니다.
 - [ ] 이용약관, privacy notice, 면책 문구와 incident/통지 절차를 승인했습니다.

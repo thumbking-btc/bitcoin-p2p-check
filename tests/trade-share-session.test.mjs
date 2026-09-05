@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { TRADE_RECORD_SCHEMA_V1, TRADE_RECORD_SCHEMA_V2 } from "../app/lib/trade-record.ts";
 
 import {
   cacheAttemptFile,
@@ -33,6 +34,8 @@ function signedRecord({
   id = "record-1",
   lifecycle = "pending",
   payment = null,
+  schema = TRADE_RECORD_SCHEMA_V1,
+  expiresAt = "2027-07-14T08:00:00.000Z",
   verificationUrl = "https://example.test/verify/record-1",
 } = {}) {
   return {
@@ -40,9 +43,10 @@ function signedRecord({
     lifecycle,
     verificationUrl,
     record: {
+      schema,
       payment,
       createdAt: "2027-01-15T08:00:00.000Z",
-      expiresAt: "2027-07-14T08:00:00.000Z",
+      expiresAt,
       condition: { marketObservedAt: "2027-01-15T08:00:00.000Z" },
     },
   };
@@ -89,6 +93,26 @@ test("a share attempt is reused only for the same condition key and gains render
   assert.equal(withRecord.file, undefined);
   assert.equal(withFile.signed, signed);
   assert.equal(withFile.file, file);
+});
+
+test("v2 management persistence retains the fourteen-day recovery window", () => {
+  const now = Date.parse("2027-01-15T08:00:00.000Z");
+  const id = "AAAAAAAAAAAAAAAZ";
+  const expiresAt = "2027-01-29T08:00:00.000Z";
+  const finalized = toManagedTradeRecord(signedRecord({
+    id,
+    lifecycle: "finalized",
+    schema: TRADE_RECORD_SCHEMA_V2,
+    expiresAt,
+    verificationUrl: `https://example.test/verify/?id=${id}`,
+  }), "z".repeat(43), "finalized");
+  assert.equal(finalized.retentionSeconds, 14 * 24 * 60 * 60);
+  const serialized = serializeManagedTradeRecords([finalized], now);
+  assert.match(serialized, /"retentionSeconds":1209600/u);
+  assert.deepEqual(
+    parsePersistedManagedTradeRecords(serialized, "https://example.test", now),
+    [{ ...finalized, persistence: "browser" }],
+  );
 });
 
 test("prepared delivery state retains the pending record and does not mutate the private preparation", () => {
