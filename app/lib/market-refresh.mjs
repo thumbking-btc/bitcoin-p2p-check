@@ -1,5 +1,5 @@
-export const MARKET_REFERENCE_REFRESH_INTERVAL_MS = 5 * 60_000;
-export const MARKET_PRICE_FALLBACK_INTERVAL_MS = 60_000;
+export const MARKET_REFRESH_WITH_LIVE_PRICE_MS = 5 * 60_000;
+export const MARKET_REFRESH_FALLBACK_MS = 60_000;
 export const LIVE_PRICE_RECONNECT_DELAYS_MS = Object.freeze([
   15_000,
   30_000,
@@ -8,8 +8,8 @@ export const LIVE_PRICE_RECONNECT_DELAYS_MS = Object.freeze([
 
 export function getMarketRefreshInterval(livePriceActive = false) {
   return livePriceActive
-    ? MARKET_REFERENCE_REFRESH_INTERVAL_MS
-    : MARKET_PRICE_FALLBACK_INTERVAL_MS;
+    ? MARKET_REFRESH_WITH_LIVE_PRICE_MS
+    : MARKET_REFRESH_FALLBACK_MS;
 }
 
 export function getLivePriceReconnectDelay(attempt) {

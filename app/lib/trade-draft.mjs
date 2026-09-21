@@ -1,9 +1,10 @@
-export const TRADE_DRAFT_VERSION = 3;
+export const TRADE_DRAFT_VERSION = 4;
 export const TRADE_DRAFT_TTL_MS = 12 * 60 * 60 * 1_000;
 export const TRADE_DRAFT_STORAGE_KEY = "bitcoin-p2p-check:trade-draft";
 export const TRADE_DRAFT_MAX_RAW_LENGTH = 8 * 1_024;
 
-const LEGACY_TRADE_DRAFT_VERSION = 2;
+const ROLE_FUNDING_TRADE_DRAFT_VERSION = 2;
+const SINGLE_FUNDING_TRADE_DRAFT_VERSION = 3;
 
 const TRADE_ROLES = new Set(["buyer", "seller"]);
 const AMOUNT_BASES = new Set(["krw", "bitcoin"]);
@@ -31,10 +32,10 @@ const DRAFT_KEYS = [
   "bitcoinAmountInputs",
   "amountBasisByRole",
   "premiumInput",
-  "fundingSource",
   "bitcoinDisplayUnit",
 ];
-const LEGACY_DRAFT_KEYS = DRAFT_KEYS.map((key) => key === "fundingSource" ? "fundingSources" : key);
+const SINGLE_FUNDING_DRAFT_KEYS = [...DRAFT_KEYS, "fundingSource"];
+const ROLE_FUNDING_DRAFT_KEYS = [...DRAFT_KEYS, "fundingSources"];
 const ROLE_KEYS = ["buyer", "seller"];
 
 function isRecord(value) {
@@ -88,7 +89,7 @@ function hasValidBaseFields(value, now) {
   return isPremiumInput(value.premiumInput);
 }
 
-function normalizedTradeDraft(value, fundingSource) {
+function normalizedTradeDraft(value) {
   return {
     version: TRADE_DRAFT_VERSION,
     savedAt: value.savedAt,
@@ -103,25 +104,30 @@ function normalizedTradeDraft(value, fundingSource) {
       seller: value.amountBasisByRole.seller,
     },
     premiumInput: value.premiumInput,
-    fundingSource,
     bitcoinDisplayUnit: value.bitcoinDisplayUnit,
   };
 }
 
-function migrateLegacyTradeDraft(value, now) {
-  if (!hasExactKeys(value, LEGACY_DRAFT_KEYS)) return null;
-  if (value.version !== LEGACY_TRADE_DRAFT_VERSION || !hasValidBaseFields(value, now)) return null;
+function migrateRoleFundingTradeDraft(value, now) {
+  if (!hasExactKeys(value, ROLE_FUNDING_DRAFT_KEYS)) return null;
+  if (value.version !== ROLE_FUNDING_TRADE_DRAFT_VERSION || !hasValidBaseFields(value, now)) return null;
   if (!hasExactKeys(value.fundingSources, ROLE_KEYS)
     || !ROLE_KEYS.every((role) => FUNDING_SOURCES.has(value.fundingSources[role]))) return null;
-  return normalizedTradeDraft(value, value.fundingSources[value.tradeRole]);
+  return normalizedTradeDraft(value);
+}
+
+function migrateSingleFundingTradeDraft(value, now) {
+  if (!hasExactKeys(value, SINGLE_FUNDING_DRAFT_KEYS)) return null;
+  if (value.version !== SINGLE_FUNDING_TRADE_DRAFT_VERSION || !hasValidBaseFields(value, now)) return null;
+  if (!FUNDING_SOURCES.has(value.fundingSource)) return null;
+  return normalizedTradeDraft(value);
 }
 
 export function validateTradeDraft(value, now = Date.now()) {
   if (!hasExactKeys(value, DRAFT_KEYS)) return null;
   if (value.version !== TRADE_DRAFT_VERSION) return null;
   if (!hasValidBaseFields(value, now)) return null;
-  if (!FUNDING_SOURCES.has(value.fundingSource)) return null;
-  return normalizedTradeDraft(value, value.fundingSource);
+  return normalizedTradeDraft(value);
 }
 
 export function readTradeDraft(storage, now = Date.now()) {
@@ -141,7 +147,8 @@ export function readTradeDraft(storage, now = Date.now()) {
     const parsed = JSON.parse(raw);
     const draft = validateTradeDraft(parsed, now);
     if (draft) return draft;
-    const migrated = migrateLegacyTradeDraft(parsed, now);
+    const migrated = migrateSingleFundingTradeDraft(parsed, now)
+      ?? migrateRoleFundingTradeDraft(parsed, now);
     if (migrated) {
       try {
         storage?.setItem?.(TRADE_DRAFT_STORAGE_KEY, JSON.stringify(migrated));
@@ -166,7 +173,6 @@ export function writeTradeDraft(storage, fields, now = Date.now()) {
     bitcoinAmountInputs: fields?.bitcoinAmountInputs,
     amountBasisByRole: fields?.amountBasisByRole,
     premiumInput: fields?.premiumInput,
-    fundingSource: fields?.fundingSource,
     bitcoinDisplayUnit: fields?.bitcoinDisplayUnit,
   }, now);
   if (!draft) return false;
@@ -174,6 +180,15 @@ export function writeTradeDraft(storage, fields, now = Date.now()) {
   try {
     storage?.setItem?.(TRADE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
     return typeof storage?.setItem === "function";
+  } catch {
+    return false;
+  }
+}
+
+export function removeTradeDraft(storage) {
+  try {
+    storage?.removeItem?.(TRADE_DRAFT_STORAGE_KEY);
+    return typeof storage?.removeItem === "function";
   } catch {
     return false;
   }

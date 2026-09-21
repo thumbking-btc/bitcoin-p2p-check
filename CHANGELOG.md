@@ -2,6 +2,14 @@
 
 정식 버전은 승인된 코드가 `main`에 반영되고 프로덕션에 배포될 때만 기록합니다. 기능 브랜치의 프리뷰 수정과 폐기된 실험에는 별도 버전을 부여하지 않습니다.
 
+## 후보 기록
+
+### v2.3.1 — 통합 완성 후보 (미배포)
+
+- `origin/main@ca735db`를 기준으로 검증 브랜치의 보안·안정성 개선을 통합했습니다.
+- 기존 한 화면 계산·모집글·4:3 카드 흐름과 5분 참고값 갱신을 유지하면서, 거래 기록 수명주기·Lightning 검증·PWA·배포 격리를 강화했습니다.
+- 이 후보는 사용자 검수용이며 `main` 병합, production 배포, production tag 생성을 하지 않습니다.
+
 ## v2.2.3 — 프리미엄 카드 문구 간소화
 
 - 하단 `계산 기준·데이터 출처`와 중복되던 `업비트 데이터랩 · 시장 참고값` 문구를 프리미엄 카드에서 제거했습니다.
@@ -19,6 +27,46 @@
 - WebSocket 재연결은 15초, 30초, 60초 순서로 간격을 늘리고 이후에는 60초 간격을 유지하도록 변경했습니다.
 - 최초 진입·화면 복귀·온라인 복구·수동 새로고침에서는 즉시 조회하며, 수동 조회가 끝난 시점부터 다음 자동 조회 주기를 다시 계산합니다.
 - 화면에 프리미엄과 온체인 수수료의 5분 자동 갱신 정책을 안내하고, 백그라운드·오프라인에서는 조회와 재연결을 중지합니다.
+
+### v2.3.0 — 프로덕션 하드닝 (릴리스 후보·미배포)
+
+### 보안·개인정보
+
+- 거래 기록을 짧은 수명의 보류 상태로 먼저 만들고, 공유가 실제로 시작된 뒤에만 장기 보관 상태로 확정하며, 사용자가 링크를 철회할 수 있는 수명주기를 추가했습니다.
+- 구버전·헤더 누락 요청과 직접 공개 생성을 저장 전에 거부하고, 철회 capability가 있는 비공개 준비 요청만 허용하도록 롤아웃 경계를 fail closed로 바꿨습니다.
+- 거래 기록 공유 직전에 공개 범위·보관 기간·철회 방법을 알리고, 상세 개인정보 안내와 연락 경로를 제공하도록 정리했습니다.
+- 철회 capability를 기록별 브라우저 항목으로 보관하고, 공개 확정 요청 전 동기 저장·응답 유실 상태 재확인·탭 간 철회 tombstone·만료 정리를 적용했습니다. 전체 저장소 삭제 뒤 stale write를 다시 제거하고, 같은 기록 ID의 다른 token은 기존 capability를 덮어쓰지 않도록 격리합니다. 저장 실패 시 공개 확정을 시작하지 않으며, 관리 목록에서 식별자·만료 시각과 철회 확인을 제공합니다.
+- Lightning 요청과 외부 응답을 제한된 크기로 스트리밍 처리하고, 정확한 미디어 타입 검사·전용 속도 제한·허용된 callback 관계 검사를 적용했습니다.
+- LNURL-pay의 필수 metadata와 `text/plain` 설명을 검증하고, 앱이 제공하지 않는 필수 payer data를 callback 전에 차단하며 discovery부터 callback까지 하나의 12초 deadline을 사용합니다. 발급된 BOLT11도 메인넷·정확한 금액·만료·서명을 Worker에서 다시 검증합니다.
+- 거래 기록 생성 시 클라이언트가 제출한 업비트 프리미엄 참고값을 데이터랩 원본과 독립 비교하여 조작된 참고값이 사이트 서명에 포함되지 않도록 했습니다.
+- 거래 기록 create·read·finalize·revoke 제한을 Durable Object 선택 전에 적용하고, 모든 환경 값 누락을 fail closed로 바꿨습니다.
+- BOLT11 인보이스의 만료·만료 임박 상태를 열린 화면에서도 다시 계산하여 만료된 QR과 복사 동작을 차단하도록 강화했습니다.
+- CSP의 인라인 스크립트·스타일 허용을 제거하고 빌드 산출물의 실제 해시만 허용하도록 배포 헤더 생성을 강화했습니다.
+
+### 안정성·사용성
+
+- 시장 데이터의 관측 시각, WebSocket watchdog, REST 복구 경로를 분리해 멈춘 연결이 최신 데이터처럼 표시되지 않도록 했습니다.
+- 계산 입력 범위와 서버 계약을 통일하고, 고정소수점 계산·비현실적 거래액 경고·다중 탭 초안 충돌 방지를 추가했습니다.
+- 접근성 출력과 화면 계산값을 같은 상태에서 갱신하고, 입력 label 구조·작은 화면 reflow·PWA 오프라인 검증 화면과 명시적 업데이트 동작을 개선했습니다.
+- 거래 기록 조회의 fetch·재시도·본문 stream 전체에 15초 deadline을 적용해 검증 화면이 무기한 대기하지 않도록 했습니다.
+- 거래 기록 lifecycle을 record별 SQLite Durable Object에서 직렬화하고 legacy KV를 순서 보장형 비동기 호환 mirror로 전환했습니다.
+- 브라우저에 저장된 `finalizing` 기록은 인증된 멱등 finalize로 복구하고 memory-only 기록은 읽기 전용으로 확인합니다. 조회 응답 ID를 요청 ID에 결속하고 제거 tombstone이 늦게 끝난 복구보다 항상 우선하도록 했습니다. 복구 요청은 최대 4개 동시 실행과 600ms 시작 간격으로 제한하고 실패한 항목만 5분 뒤 독립 재시도합니다.
+- Durable Object 만료 정리가 실패하면 alarm을 다시 예약하고, 재예약도 실패할 때는 최초 오류를 보존해 플랫폼 재시도가 끊기지 않도록 했습니다.
+- 외부 HTTP 본문의 header·stream 전체에 제한을 적용하고 timeout·redirect·초과 응답에서 body 취소가 사용자 응답을 지연하거나 원래 오류를 덮지 않도록 정리했습니다.
+
+### 배포·운영·공급망
+
+- lint, 독립 typecheck, 빌드, Node/Workers/브라우저 회귀시험, 전체 High 의존성 감사와 동일 커밋 산출물 검증을 하나의 릴리스 gate로 묶었습니다. production job은 별도 Durable Object export bootstrap과 후속 atomic workflow가 마련될 때까지 의도적으로 실패합니다.
+- 프로덕션, 격리 staging, preview Worker 구성을 분리하고 비프로덕션에서 운영 Durable Object·KV·서명 키·거래 기록 쓰기 기능을 사용할 수 없도록 fail-closed 기본값을 적용했습니다. production의 record별 Durable Object는 명시적 환경 binding 없이 `context.exports` loopback으로만 접근합니다.
+- staging은 검증한 bundle을 고유 version URL에서 전체 asset graph와 정확한 version ID로 smoke한 뒤에만 별도 canonical Worker로 승격하도록 구성했습니다.
+- declarative Durable Object `exports`에는 `versions upload`·gradual deployment를 사용할 수 없고 최초 lifecycle 변경은 이전 version으로 rollback할 수 없음을 확인하여, 잘못 구성한 production 후보·0% override 경로를 제거했습니다. 기존 요청 동작을 보존하는 compatibility bootstrap artifact와 environment 보호형 atomic workflow가 별도로 검토되기 전까지 production은 fail closed입니다.
+- production·staging·preview의 원격 secret 이름·type 및 선택한 version의 secret binding allowlist 검사기를 추가했습니다. staging 배포에는 전후 검사를 연결했으며, production 검사는 차단 해제 후 atomic workflow에 다시 연결해야 합니다. 이 검사는 secret 값이나 signer fingerprint를 증명하지 않습니다.
+- staging 배포 경쟁을 직렬화하고 배포 전·승격 전·canonical smoke 후에 최신 `staging` SHA를 확인하도록 했습니다. 후속 production atomic workflow에도 배포 전후 `main` SHA와 exact deployment 검사가 필요합니다.
+- GitHub Actions를 전체 커밋 SHA로 고정하고, 정적·Worker 산출물 provenance와 Worker CycloneDX SBOM attestation, npm/GitHub Actions 주간 Dependabot 점검을 추가했습니다.
+- 배포 후 읽기 전용 smoke, 민감 URL 비수집형 관측성 정책, KV 백업/복원, 서명 키 교체와 장애 대응 절차를 문서화했습니다.
+- 프로젝트 수준 라이선스가 아직 부여되지 않았음을 명시하고, 외부 배포 전에 권리자·배포 조건·서드파티 고지를 전문 검토하는 릴리스 게이트를 추가했습니다.
+
+이 항목들은 아직 정식 릴리스가 아닙니다. 승인된 `main`의 동일 산출물을 프로덕션에 배포하고 smoke 검증을 마친 뒤에만 정식 릴리스와 tag를 기록해야 합니다.
 
 ## v2.2.0 — 거래 기록 카드와 결제정보 공유 개편
 

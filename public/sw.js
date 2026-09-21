@@ -7,6 +7,9 @@ const MAX_RUNTIME_ENTRIES = 40;
 const APP_SHELL = [
   "/",
   "/install/",
+  "/privacy/",
+  "/verify/",
+  "/404",
   "/manifest.webmanifest",
   "/favicon-v2.svg",
   "/icons/icon-192-v2.png",
@@ -46,7 +49,7 @@ function referencedSameOriginAssets(html, baseUrl) {
 
 async function precachePath(cache, path) {
   const response = await fetch(path, { cache: "reload" });
-  if (!response.ok) return;
+  if (!response.ok) throw new Error(`필수 앱 셸을 가져오지 못했습니다: ${path}`);
 
   await cache.put(path, response.clone());
   const contentType = response.headers.get("content-type") || "";
@@ -54,10 +57,11 @@ async function precachePath(cache, path) {
 
   const html = await response.text();
   const assets = referencedSameOriginAssets(html, new URL(path, self.location.origin));
-  await Promise.allSettled(assets.map(async (assetUrl) => {
+  await Promise.all(assets.map(async (assetUrl) => {
     if (await cache.match(assetUrl)) return;
     const assetResponse = await fetch(assetUrl, { cache: "reload" });
-    if (assetResponse.ok) await cache.put(assetUrl, assetResponse);
+    if (!assetResponse.ok) throw new Error(`필수 앱 자산을 가져오지 못했습니다: ${assetUrl}`);
+    await cache.put(assetUrl, assetResponse);
   }));
 }
 
@@ -73,19 +77,46 @@ async function matchOfflineNavigation(request) {
   const exact = await matchCurrentCaches(request);
   if (exact) return exact;
 
+  const pathname = new URL(request.url).pathname;
+  const fallbackPath = pathname === "/"
+    ? "/"
+    : pathname === "/install" || pathname.startsWith("/install/")
+      ? "/install/"
+      : pathname === "/privacy" || pathname.startsWith("/privacy/")
+        ? "/privacy/"
+        : pathname === "/verify" || pathname.startsWith("/verify/")
+          ? "/verify/"
+          : "/404";
   const [runtime, precache] = await Promise.all([
     caches.open(RUNTIME_CACHE_NAME),
     caches.open(PRECACHE_NAME),
   ]);
-  return (await runtime.match("/")) ?? (await precache.match("/")) ?? Response.error();
+  const fallback = (await runtime.match(fallbackPath)) ?? (await precache.match(fallbackPath));
+  if (!fallback) return Response.error();
+  if (fallbackPath !== "/404") return fallback;
+  return new Response(fallback.body, {
+    status: 404,
+    statusText: "Not Found",
+    headers: fallback.headers,
+  });
 }
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(PRECACHE_NAME);
-    await Promise.allSettled(APP_SHELL.map((path) => precachePath(cache, path)));
+    try {
+      await Promise.all(APP_SHELL.map((path) => precachePath(cache, path)));
+    } catch (error) {
+      await caches.delete(PRECACHE_NAME);
+      throw error;
+    }
   })());
-  self.skipWaiting();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    event.waitUntil(self.skipWaiting());
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -118,7 +149,9 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.ok) {
+          // Verification URLs contain bearer record IDs. Keep only the generic
+          // shell in the precache and never persist the full query as a cache key.
+          if (response.ok && url.pathname !== "/verify" && !url.pathname.startsWith("/verify/")) {
             event.waitUntil(putRuntime(request, response.clone()).catch(() => {}));
           }
           return response;

@@ -15,8 +15,8 @@ import {
   getMarketRefreshDelay,
   getMarketRefreshInterval,
   LIVE_PRICE_RECONNECT_DELAYS_MS,
-  MARKET_PRICE_FALLBACK_INTERVAL_MS,
-  MARKET_REFERENCE_REFRESH_INTERVAL_MS,
+  MARKET_REFRESH_FALLBACK_MS,
+  MARKET_REFRESH_WITH_LIVE_PRICE_MS,
 } from "../app/lib/market-refresh.mjs";
 import {
   buildTradeRecruitmentPost,
@@ -26,6 +26,7 @@ import {
 } from "../app/lib/trade-recruitment.mjs";
 import {
   readTradeDraft,
+  removeTradeDraft,
   TRADE_DRAFT_MAX_RAW_LENGTH,
   TRADE_DRAFT_STORAGE_KEY,
   TRADE_DRAFT_TTL_MS,
@@ -38,6 +39,13 @@ import {
   INSTALL_INVITE_DISMISS_MS,
   isInstallInviteSuppressed,
 } from "../app/lib/install-invite.mjs";
+import {
+  inferDeploymentEnvironment,
+  normalizeDeploymentEnvironment,
+  normalizeOptionalDeploymentEnvironment,
+  resolveDeploymentNotice,
+  shouldDisableServiceWorker,
+} from "../app/lib/deployment-environment.mjs";
 
 async function readAppVersion() {
   const source = await readFile(new URL("../app/lib/app-version.ts", import.meta.url), "utf8");
@@ -68,7 +76,7 @@ async function render(pathname = "/") {
 test("calculates buyer and seller quotes without hiding fees", () => {
   const buyer = calculateP2PQuote({ mode: "krw", amount: 3_000_000, referencePrice: 100_000_000, premiumPercent: 2 });
   assert.ok(buyer);
-  assert.equal(buyer.appliedPrice, 102_000_000);
+  assert.equal(buyer.appliedPriceKrw, "102000000");
   assert.equal(buyer.paymentKrw, 3_000_000);
   assert.equal(buyer.sats, 2_941_176);
 
@@ -447,23 +455,22 @@ test("round-trips validated trade inputs in a server-private URL fragment", () =
   ]) assert.equal(parseTradeFragment(malformed), null);
 });
 
-test("uses five-minute reference refreshes, one-minute price fallback, and bounded reconnect backoff", () => {
-  assert.equal(MARKET_REFERENCE_REFRESH_INTERVAL_MS, 300_000);
-  assert.equal(MARKET_PRICE_FALLBACK_INTERVAL_MS, 60_000);
-  assert.equal(getMarketRefreshInterval(true), MARKET_REFERENCE_REFRESH_INTERVAL_MS);
-  assert.equal(getMarketRefreshInterval(false), MARKET_PRICE_FALLBACK_INTERVAL_MS);
-  assert.deepEqual([...LIVE_PRICE_RECONNECT_DELAYS_MS], [15_000, 30_000, 60_000]);
-  assert.equal(getLivePriceReconnectDelay(Number.NaN), 15_000);
-  assert.equal(getLivePriceReconnectDelay(-1), 15_000);
+test("uses the inherited fallback, reference refresh, and reconnect policy", () => {
+  assert.equal(MARKET_REFRESH_FALLBACK_MS, 60_000);
+  assert.equal(MARKET_REFRESH_WITH_LIVE_PRICE_MS, 5 * 60_000);
+  assert.deepEqual(LIVE_PRICE_RECONNECT_DELAYS_MS, [15_000, 30_000, 60_000]);
+  assert.equal(getMarketRefreshInterval(false), MARKET_REFRESH_FALLBACK_MS);
+  assert.equal(getMarketRefreshInterval(true), MARKET_REFRESH_WITH_LIVE_PRICE_MS);
+  assert.equal(getMarketRefreshDelay(0, MARKET_REFRESH_FALLBACK_MS, 100_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 100_000), 60_000);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 159_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_FALLBACK_MS, 160_000), 0);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 399_999), 1);
+  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFRESH_WITH_LIVE_PRICE_MS, 400_000), 0);
   assert.equal(getLivePriceReconnectDelay(0), 15_000);
   assert.equal(getLivePriceReconnectDelay(1), 30_000);
   assert.equal(getLivePriceReconnectDelay(2), 60_000);
-  assert.equal(getLivePriceReconnectDelay(20), 60_000);
-  assert.equal(getMarketRefreshDelay(0, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 100_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 100_000), 300_000);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 399_999), 1);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_REFERENCE_REFRESH_INTERVAL_MS, 400_000), 0);
-  assert.equal(getMarketRefreshDelay(100_000, MARKET_PRICE_FALLBACK_INTERVAL_MS, 160_000), 0);
+  assert.equal(getLivePriceReconnectDelay(99), 60_000);
 });
 
 test("keeps a strictly allowlisted trade draft in this browser for 12 hours", () => {
@@ -497,12 +504,12 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   const storedJson = values.get(TRADE_DRAFT_STORAGE_KEY);
   const storedObject = JSON.parse(storedJson);
   assert.deepEqual(Object.keys(storedObject).sort(), [
-    "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "fundingSource",
-    "krwAmounts", "premiumInput", "savedAt", "tradeRole", "version",
+    "amountBasisByRole", "bitcoinAmountInputs", "bitcoinDisplayUnit", "krwAmounts",
+    "premiumInput", "savedAt", "tradeRole", "version",
   ]);
   assert.equal(storedObject.version, TRADE_DRAFT_VERSION);
   assert.equal(storedObject.savedAt, now);
-  assert.equal(storedObject.fundingSource, "근로소득");
+  assert.equal(Object.hasOwn(storedObject, "fundingSource"), false);
   assert.equal(Object.hasOwn(storedObject, "fundingSources"), false);
   for (const forbidden of ["market", "quote", "referenceTime", "png", "shareStatus"]) {
     assert.equal(Object.hasOwn(storedObject, forbidden), false);
@@ -532,6 +539,7 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   };
   assert.equal(readTradeDraft(blockedStorage, now), null);
   assert.equal(writeTradeDraft(blockedStorage, fields, now), false);
+  assert.equal(removeTradeDraft(blockedStorage), false);
 
   const legacyValues = new Map();
   legacyValues.set(TRADE_DRAFT_STORAGE_KEY, JSON.stringify({
@@ -552,8 +560,10 @@ test("keeps a strictly allowlisted trade draft in this browser for 12 hours", ()
   };
   const migrated = readTradeDraft(legacyStorage, now);
   assert.equal(migrated.version, TRADE_DRAFT_VERSION);
-  assert.equal(migrated.fundingSource, "사업소득");
-  assert.equal(JSON.parse(legacyValues.get(TRADE_DRAFT_STORAGE_KEY)).fundingSource, "사업소득");
+  assert.equal(Object.hasOwn(migrated, "fundingSource"), false);
+  assert.equal(Object.hasOwn(JSON.parse(legacyValues.get(TRADE_DRAFT_STORAGE_KEY)), "fundingSource"), false);
+  assert.equal(removeTradeDraft(legacyStorage), true);
+  assert.equal(legacyValues.has(TRADE_DRAFT_STORAGE_KEY), false);
 });
 
 test("hydrates a local draft once and lets an imported share link win", async () => {
@@ -572,7 +582,7 @@ test("hydrates a local draft once and lets an imported share link win", async ()
   assert.ok(hydrationBlock.indexOf("writeTradeDraft(storage, hydratedDraft)") < hydrationBlock.indexOf("setDraftHydrated(true)"));
   assert.match(component, /if \(!draftHydrated\) return;[\s\S]*?skipNextDraftPersistence\.current[\s\S]*?writeTradeDraft\(getTradeDraftStorage\(\)/);
   assert.match(component, /shareImageAllowed = Boolean\(quote\)[\s\S]*?&& draftHydrated/);
-  assert.match(component, /상세 링크는 생성 후 180일간 열 수 있습니다/);
+  assert.match(component, /새 링크는 14일 후 자동으로 만료되며/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(css, /\.trade-tool\.is-draft-hydrating[\s\S]*?visibility:\s*hidden/);
   assert.match(draftHelper, /TRADE_DRAFT_TTL_MS = 12 \* 60 \* 60 \* 1_000/);
@@ -605,8 +615,8 @@ test("renders a focused, capture-ready P2P calculator", async () => {
     assert.match(html, new RegExp(`>${fundingSource}<`));
   }
   assert.match(html, /거래 기록 카드에만 포함됩니다/);
-  assert.match(html, /상세 링크는 생성 후 180일간 열 수 있습니다/);
-  assert.match(html, /거래 기록 카드 공유/);
+  assert.match(html, /새 링크는 14일 후 자동으로 만료되며/);
+  assert.match(html, /거래 기록 카드 준비/);
   assert.match(html, /입력한 거래 조건을 한 장의 카드로 만듭니다/);
   assert.match(html, /결제정보 미포함/);
   assert.doesNotMatch(html, /함께 공유되는 문구|읽기 전용 · 공유 전 확인/);
@@ -616,7 +626,6 @@ test("renders a focused, capture-ready P2P calculator", async () => {
   assert.match(html, /업비트 프리미엄/);
   assert.match(html, /시장 참고값/);
   assert.match(html, /시세 조회 중/);
-  assert.match(html, /시세는 합의의 기준일 뿐입니다/);
   assert.match(html, /CoinMarketCap 기준 글로벌 가격/);
   assert.match(html, /<b>수수료:<\/b><span>판매자 부담 · 구매자 수령량 차감 없음<\/span>/);
   assert.match(html, /<b>반올림:<\/b><span>1 sat·1원<\/span>/);
@@ -633,12 +642,14 @@ test("renders a focused, capture-ready P2P calculator", async () => {
 });
 
 test("keeps market data official and interaction failures recoverable", async () => {
-  const [component, imageRenderer, shareTransport, tradeLink, api, css, packageJson] = await Promise.all([
+  const [component, imageRenderer, shareTransport, shareSession, tradeLink, api, marketParsers, css, packageJson] = await Promise.all([
     readFile(new URL("../app/components/P2PTradeTool.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-share-image.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/share-transport.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/trade-share-session.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/trade-link.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/market.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/market-source-parsers.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -646,14 +657,15 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(api, /api\.upbit\.com\/v1\/ticker\?markets=KRW-BTC/);
   assert.match(api, /datalab-api\.upbit\.com\/api\/v1\/indicator\/premium\/assets\?symbols=BTC/);
   assert.match(api, /mempool\.space\/api\/v1\/fees\/recommended/);
-  assert.match(api, /disparityRate/);
-  assert.match(api, /fastestFee/);
-  assert.match(api, /halfHourFee/);
-  assert.match(api, /hourFee/);
-  assert.match(api, /FEE_FRESH_CACHE_SECONDS = 60/);
+  assert.match(marketParsers, /disparityRate/);
+  assert.match(marketParsers, /fastestFee/);
+  assert.match(marketParsers, /halfHourFee/);
+  assert.match(marketParsers, /hourFee/);
+  assert.match(api, /PREMIUM_FRESH_CACHE_SECONDS = 5 \* 60/);
+  assert.match(api, /FEE_FRESH_CACHE_SECONDS = 5 \* 60/);
   assert.match(api, /fees-backoff/);
   assert.doesNotMatch(api, /Coinbase|coinbaseKrwGap|frankfurter/i);
-  assert.match(component, /fetch\(`\/api\/market\?price=\$\{includePrice \? "1" : "0"\}`, \{ cache: "no-store" \}\)/);
+  assert.match(component, /fetch\(`\/api\/market\?price=\$\{includePrice \? "1" : "0"\}`,[\s\S]*?cache: "no-store",[\s\S]*?signal,/);
   assert.match(component, /시세 새로고침/);
   assert.match(component, /현재 온체인 수수료율/);
   assert.match(component, /feeRates\?\.nextBlock/);
@@ -667,41 +679,44 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /최근 체결: \$\{formatTime\(tradeObservedAt\)\}/);
   assert.match(component, /<LiveMarketTime active=\{livePriceActive\} tradeObservedAt=\{referenceTime\} \/>/);
   assert.match(css, /\.live-market-time \{ font-variant-numeric: tabular-nums; \}/);
-  assert.equal((component.match(/약 5분마다 자동 갱신 ·/g) ?? []).length, 2);
+  assert.match(component, /약 5분마다 자동 갱신 ·/);
   assert.match(component, /premiumCheckedAt/);
   assert.match(component, /feeCheckedAt/);
-  assert.doesNotMatch(component, /market-reference-refresh-note/);
-  assert.doesNotMatch(component, /업비트 데이터랩 · 시장 참고값/);
-  assert.match(component, /\.finally\(\(\) => \{[\s\S]*lastMarketRefreshAtRef\.current = Date\.now\(\);/);
+  assert.doesNotMatch(component, /<small>업비트 데이터랩 · 시장 참고값<\/small>/);
   assert.match(component, /className="network-fees-status"/);
   assert.match(component, /<span>mempool\.space<\/span>/);
   assert.match(component, /const marketRefreshIntervalMs = getMarketRefreshInterval\(livePriceActive\)/);
   assert.match(component, /const getRefreshDelay = \(\) => getMarketRefreshDelay\([\s\S]*lastMarketRefreshAtRef\.current,[\s\S]*marketRefreshIntervalMs/);
-  assert.match(component, /const refreshImmediately = \(\) =>/);
-  assert.match(component, /lastMarketRefreshAtRef\.current = 0;/);
-  assert.match(component, /const handleVisibilityChange = \(\) => \{[\s\S]*refreshImmediately\(\);/);
-  assert.match(component, /const handleOnline = \(\) => refreshImmediately\(\);/);
-  assert.match(component, /document\.visibilityState !== "visible"/);
+  assert.match(component, /const browserCanRefresh = \(\) =>[\s\S]*?document\.visibilityState === "visible" && navigator\.onLine !== false/);
+  assert.match(component, /lastMarketRefreshAtRef\.current = 0;[\s\S]*?void runWhenDue\(\)/);
+  assert.match(component, /window\.addEventListener\("online", handleOnline\)/);
+  assert.match(component, /window\.addEventListener\("offline", handleOffline\)/);
+  assert.match(component, /window\.removeEventListener\("online", handleOnline\)/);
+  assert.match(component, /window\.removeEventListener\("offline", handleOffline\)/);
+  assert.match(component, /getLivePriceReconnectDelay\(reconnectAttempt\)/);
+  assert.match(component, /reconnectAttempt \+= 1/);
+  assert.match(component, /reconnectAttempt = 0;[\s\S]*?setStreamActive\(true\)/);
+  assert.match(component, /isLiveStreamStalled\(lastMessageAt\)/);
+  assert.match(component, /markMarketStale\("실시간 시세 수신이 중단되었습니다\. 최신 시세를 다시 확인하고 있습니다\."\)/);
   assert.match(component, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
   assert.match(component, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
-  assert.match(component, /const delay = getLivePriceReconnectDelay\(reconnectAttempt\);/);
-  assert.match(component, /reconnectAttempt \+= 1;/);
-  assert.match(component, /lastLiveMessageAt = lastRenderedAt;[\s\S]*reconnectAttempt = 0;[\s\S]*scheduleStaleCheck\(\);/);
-  assert.match(component, /const checkStale = \(\) =>/);
-  assert.doesNotMatch(component, /LIVE_PRICE_RECONNECT_DELAY_MS|12_000/);
   assert.match(component, /if \(activeRefresh\) \{[\s\S]*return activeRefresh\.promise/);
   assert.match(component, /marketRequestRef\.current === refresh/);
-  assert.match(component, /if \(refresh\.mode === "silent" && marketRef\.current\) return/);
+  assert.match(component, /markMarketStale\(refresh\.mode === "silent"[\s\S]*?자동 시세 갱신에 실패했습니다/);
   assert.match(component, /pendingMarketSnapshotRef\.current = nextData/);
   assert.match(component, /applyMarketSnapshot\(pendingSnapshot, true\)/);
-  const shareTradeBlock = component.slice(
-    component.indexOf("async function shareTrade()"),
-    component.indexOf("function changeBitcoinDisplayUnit", component.indexOf("async function shareTrade()")),
+  const prepareTradeShareBlock = component.slice(
+    component.indexOf("async function prepareTradeShare()"),
+    component.indexOf("async function sharePreparedTrade()"),
+  );
+  const sharePreparedTradeBlock = component.slice(
+    component.indexOf("async function sharePreparedTrade()"),
+    component.indexOf("async function cancelPreparedTrade()"),
   );
   assert.doesNotMatch(component, /preparedShareImage|preparedShareFormKeyRef|shareFormKey|shareImageGeneration|shareImagePreparing|backgroundShareImagePreparing/);
-  assert.match(shareTradeBlock, /await import\("\.\.\/lib\/trade-share-image"\)/);
-  assert.match(shareTradeBlock, /await createTradeShareImage\(\{/);
-  assert.ok(shareTradeBlock.indexOf("setIsSharing(true)") < shareTradeBlock.indexOf('await import("../lib/trade-share-image")'));
+  assert.match(prepareTradeShareBlock, /await import\("\.\.\/lib\/trade-share-image"\)/);
+  assert.match(prepareTradeShareBlock, /await createTradeShareImage\(\{/);
+  assert.ok(prepareTradeShareBlock.indexOf("setIsSharing(true)") < prepareTradeShareBlock.indexOf('await import("../lib/trade-share-image")'));
   assert.doesNotMatch(component, /<dl aria-live="polite" aria-label="mempool\.space/);
   assert.doesNotMatch(component, /manualReferencePrice|기준 시세 직접 입력|직접 입력 시세|이 가격 사용/);
   assert.match(component, /navigator\.share/);
@@ -715,25 +730,22 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /\? "내 구매 자금 출처"\s*: "구매자가 제공한 자금 출처"/);
   assert.match(component, /구매자가 알려준 내용만 선택해 주세요/);
   assert.doesNotMatch(component, /송금 계좌 명의|제3자|확인 전/);
-  assert.match(component, /const signedCondition = signed\.record\.condition/);
+  assert.match(component, /const signedCondition = pending\.record\.condition/);
   assert.match(component, /buyerFundingSource: signedCondition\.fundingSource \?\? "기재하지 않음"/);
   assert.match(component, /fundingSource: fundingSource === "기재하지 않음" \? null : fundingSource/);
-  assert.match(component, /const signed = await createTradeRecord\(\{/);
+  assert.match(prepareTradeShareBlock, /const pending = attempt\.signed \?\? await createPendingTradeRecord\(tradeRecordDraft, \{[\s\S]*?revokeToken: attempt\.revokeToken,[\s\S]*?timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS/);
   assert.match(component, /paymentKrw: quote\.paymentKrw/);
   assert.match(component, /sats: quote\.sats/);
   assert.match(component, /marketObservedAt: new Date\(referenceTime\)\.toISOString\(\)/);
   assert.match(component, /payment: paymentForRecord/);
-  assert.match(component, /verificationUrl: signed\.verificationUrl/);
-  const shareTextBlock = component.slice(
-    component.indexOf("const shareText =", component.indexOf("async function shareTrade()")),
-    component.indexOf("].join(\"\\n\")", component.indexOf("const shareText =", component.indexOf("async function shareTrade()"))),
-  );
-  assert.match(shareTextBlock, /비트코인 P2P 거래 기록 카드/);
-  assert.match(shareTextBlock, /거래 정보 확인·복사: \$\{signed\.verificationUrl\}/);
-  assert.match(shareTextBlock, /주소·금액·입금·수령 내역을 상대방과 함께 확인하세요/);
-  assert.doesNotMatch(shareTextBlock, /\[가격 계산\]|계산 시각:|구매자 → 판매자:|판매자 → 구매자:|구매자 자금 출처:/);
+  assert.match(component, /verificationUrl: pending\.verificationUrl/);
+  assert.match(shareSession, /비트코인 P2P 거래 기록 카드/);
+  assert.match(shareSession, /거래 정보 확인·복사: \$\{signed\.verificationUrl\}/);
+  assert.match(shareSession, /주소·금액·입금·수령 내역을 상대방과 함께 확인하세요/);
+  assert.doesNotMatch(shareSession, /\[가격 계산\]|계산 시각:|구매자 → 판매자:|판매자 → 구매자:|구매자 자금 출처:/);
+  assert.ok(sharePreparedTradeBlock.indexOf("await shareImageFile") < sharePreparedTradeBlock.indexOf("await finalizeTradeRecord"));
   assert.match(component, /buildTradeIntent/);
-  assert.match(component, /title: tradeIntent/);
+  assert.match(component, /createPreparedTradeShare\(attempt, pending, shareFile, tradeIntent\)/);
   assert.match(component, /BTC로 보기/);
   assert.match(component, /sats로 보기/);
   assert.match(component, /비트코인 표시 단위/);
@@ -750,7 +762,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /satsToBtcInput\(imported\.amount\)/);
   assert.match(component, /inputMode=\{amountBasis === "krw" \|\| bitcoinDisplayUnit === "sats" \? "numeric" : "decimal"\}/);
   assert.match(shareTransport, /files: \[file\]/);
-  assert.match(component, /text: shareText/);
+  assert.match(component, /text: activePrepared\.text/);
+  assert.match(shareSession, /text: buildTradeRecordShareText\(signed\)/);
   assert.doesNotMatch(component, /shareTextWithLink|거래 조건 검증하기:|<details className="trade-share-preview"/);
   assert.doesNotMatch(shareTransport, /currentTradeShareText|includePriceDetails|compactTradeShareText|document\.documentElement\.dataset/);
   assert.match(component, /parseTradeFragment\(window\.location\.hash\)/);
@@ -760,15 +773,18 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
   assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
   assert.doesNotMatch(component, /거래 조건 이미지 준비 중|거래 조건 이미지 공유 중/);
-  assert.match(component, /거래 기록 카드 만드는 중/);
-  assert.match(component, /PNG 이미지를 저장했습니다/);
+  assert.match(component, /거래 기록 카드 준비 중/);
+  assert.match(component, /PNG를 저장하고 상세 기록을 공개 확정했습니다/);
   assert.match(imageRenderer, /new File\(\[blob\]/);
   assert.match(imageRenderer, /type: "image\/png"/);
   assert.match(imageRenderer, /const WIDTH = 1_440/);
+  assert.match(imageRenderer, /STAGING · TEST ONLY/u);
+  assert.match(imageRenderer, /STAGING TEST RECORD/u);
+  assert.match(imageRenderer, /시험 기록 · 실제 거래 사용 금지/u);
   assert.match(imageRenderer, /const HEIGHT = 1_080/);
   assert.match(imageRenderer, /A signed trade record is required/);
   assert.match(imageRenderer, /비트코인 P2P 거래 기록/);
-  assert.match(imageRenderer, /공유 정보 보기/);
+  assert.match(imageRenderer, /거래 조건 확인·결제정보 복사 가능/);
   assert.match(imageRenderer, /비트코인 기준 가격/);
   assert.match(imageRenderer, /시세 \$\{formatTime\(input\.referenceTime\)\}/);
   assert.match(imageRenderer, /referencePriceKrw/);
@@ -801,7 +817,7 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /주소·금액·입금·수령 내역을 서로 확인/);
   assert.doesNotMatch(imageRenderer, /sat\/vB|fastestFee|halfHourFee|hourFee/);
   assert.doesNotMatch(component, /buildTradeFragment|const browserOrigin|tradeFragment && browserOrigin/);
-  assert.match(component, /aria-live="polite"/);
+  assert.match(component, /aria-live=\{resultLiveMode\}[\s\S]*?\{currentResultAnnouncement\}/);
   assert.match(component, /aria-invalid/);
   assert.doesNotMatch(component, /setInterval|feeSats/);
   assert.match(css, /\.role-options\s*\{[^}]*grid-template-columns:\s*repeat\(2/s);
@@ -817,8 +833,8 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(css, /\.amount-unit-select\s*\{[^}]*font:\s*780 11px\/1\.3 var\(--sans\)/s);
   assert.match(css, /\.amount-unit-chevron\s*\{[^}]*width:\s*22px[^}]*pointer-events:\s*none/s);
   assert.match(css, /\.amount-unit-control:focus-within::after\s*\{[^}]*inset:\s*2px[^}]*border:\s*3px solid var\(--orange-dark\)/s);
-  assert.match(css, /\.premium-stepper\s*\{[^}]*width:\s*56px;[^}]*min-height:\s*56px;[^}]*grid-template-rows:\s*repeat\(2, minmax\(28px, 1fr\)\)/s);
-  assert.match(css, /\.premium-stepper button\s*\{[^}]*min-width:\s*28px;[^}]*min-height:\s*28px/s);
+  assert.match(css, /\.premium-stepper\s*\{[^}]*width:\s*88px;[^}]*grid-template-columns:\s*repeat\(2, 44px\);[^}]*grid-template-rows:\s*minmax\(44px, 1fr\)/s);
+  assert.match(css, /\.premium-stepper button\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/s);
   assert.match(css, /\.trade-image-funding \.fund-source-field\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(css, /\.fund-source-field select\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.result-row dd\s*\{[^}]*overflow-wrap:\s*anywhere/s);
@@ -943,13 +959,12 @@ test("renders recruitment and signed record-card flows without DOM bridges", asy
   assert.match(integration, /bitcoinDisplayUnit=\{bitcoinDisplayUnit\}/);
   assert.doesNotMatch(integration, /fundingSource|market|address|invoice|qr/i);
   assert.match(recruitmentComponent, /shareTradeRecruitmentText\(previewText/);
-  assert.match(recruitmentComponent, /const structuredChanged = previewState\.structuredKey !== structuredKey/);
-  assert.match(recruitmentComponent, /const syncedPreview = structuredChanged[\s\S]*syncTradeRecruitmentPreview\(\{/);
+  assert.match(recruitmentComponent, /<RecruitmentPreview[\s\S]*key=\{structuredKey\}/);
+  assert.match(recruitmentComponent, /const syncedPreview = syncTradeRecruitmentPreview\(\{/);
   assert.match(recruitmentComponent, /previousGenerated: previewState\.generatedText/);
   assert.match(recruitmentComponent, /nextGenerated: generated\.text/);
   assert.match(recruitmentComponent, /setPreviewState\(\{[\s\S]*preview: event\.target\.value,[\s\S]*generatedText: generated\.text/);
-  assert.doesNotMatch(recruitmentComponent, /key=\{structuredKey\}/);
-  assert.doesNotMatch(recruitmentComponent, /useEffect|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
+  assert.doesNotMatch(recruitmentComponent, /useEffect|structuredChanged|setPreviewText|setPreviewDirty|previousGeneratedRef|previousStructuredKeyRef/);
   assert.match(recruitmentComponent, /disabled=\{!previewText\.trim\(\) \|\| sharing\}/);
   assert.doesNotMatch(recruitmentComponent, /previewOutdated|거래 조건이 바뀌어 다시 만들기 필요|Discord/);
   assert.match(recruitmentComponent, /tradeRole === "buyer" \? \(/);
@@ -993,12 +1008,71 @@ test("renders creator identity and Lightning support details", async () => {
   assert.match(html, /https:\/\/www\.threads\.com\/@thumb\.ggul/);
   assert.ok(html.includes("\uB77C\uC774\uD2B8\uB2DD\uC73C\uB85C \uD6C4\uC6D0\uD558\uAE30"));
   assert.ok(html.includes("\uC774 \uACC4\uC0B0\uAE30\uAC00 \uB3C4\uC6C0\uC774 \uB418\uC5C8\uB2E4\uBA74 \uC9C0\uC18D\uC801\uC778 \uAC80\uC99D\uACFC \uB2E4\uC74C \uBC84\uC804 \uC81C\uC791\uC744 \uD6C4\uC6D0\uD574 \uC8FC\uC138\uC694."));
-  assert.match(html, /href="\/lightning-support-qr\.png"/);
+  assert.match(html, /src="\/lightning-support-qr\.png"/);
+  assert.match(html, /loading="lazy"/);
   assert.ok(html.includes("\uC5C4\uC9C0\uC655 \uB77C\uC774\uD2B8\uB2DD \uD6C4\uC6D0 QR"));
   assert.ok(html.includes("\uC5C4\uC9C0\uC655 \uB77C\uC774\uD2B8\uB2DD \uD6C4\uC6D0 \uC8FC\uC18C\uB97C \uB2F4\uC740 QR \uCF54\uB4DC"));
   assert.ok(html.includes("thumbking@oksu.su"));
   assert.ok(html.includes("\uB77C\uC774\uD2B8\uB2DD \uC8FC\uC18C \uBCF5\uC0AC"));
   assert.ok(html.includes("\uD6C4\uC6D0\uD558\uAE30 \uC804, \uB77C\uC774\uD2B8\uB2DD \uC9C0\uAC11\uC5D0 \uD45C\uC2DC\uB41C \uC218\uC2E0 \uC8FC\uC18C\uAC00 \uC544\uB798 \uC8FC\uC18C\uC640 \uAC19\uC740\uC9C0 \uD655\uC778\uD574 \uC8FC\uC138\uC694."));
+});
+
+test("identifies production, staging, and preview hosts without registering staging service workers", async () => {
+  assert.equal(normalizeDeploymentEnvironment(" StAgInG "), "staging");
+  assert.equal(normalizeDeploymentEnvironment("unexpected"), "unknown");
+  assert.equal(normalizeOptionalDeploymentEnvironment(null), null);
+  assert.equal(normalizeOptionalDeploymentEnvironment("unknown"), "unknown");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check.thumbking-btc.workers.dev"), "production");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("staging-bitcoin-p2p-check.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("4e913cf6-bitcoin-p2p-check.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), "staging");
+  assert.equal(inferDeploymentEnvironment("12345678-bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), "preview");
+  assert.equal(inferDeploymentEnvironment("localhost"), "unknown");
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check.thumbking-btc.workers.dev"), false);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("4e913cf6-bitcoin-p2p-check.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("12345678-bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("12345678-bitcoin-p2p-check-preview.thumbking-btc.workers.dev"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "staging"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "preview"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "unknown"), true);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check.thumbking-btc.workers.dev", "unknown"), true);
+  assert.equal(shouldDisableServiceWorker("custom.example", "production"), false);
+  assert.equal(shouldDisableServiceWorker("bitcoin-p2p-check-staging.thumbking-btc.workers.dev", "production"), true);
+  assert.equal(resolveDeploymentNotice("production", "bitcoin-p2p-check.thumbking-btc.workers.dev"), null);
+  assert.equal(resolveDeploymentNotice(null, "bitcoin-p2p-check.thumbking-btc.workers.dev"), null);
+  assert.deepEqual(resolveDeploymentNotice("unknown", "bitcoin-p2p-check.thumbking-btc.workers.dev"), {
+    environment: "unknown",
+    mismatch: false,
+    inferredEnvironment: "production",
+    reportedEnvironment: "unknown",
+  });
+  assert.deepEqual(resolveDeploymentNotice("staging", "bitcoin-p2p-check-staging.thumbking-btc.workers.dev"), {
+    environment: "staging",
+    mismatch: false,
+    inferredEnvironment: "staging",
+    reportedEnvironment: "staging",
+  });
+  assert.equal(
+    resolveDeploymentNotice("production", "bitcoin-p2p-check-staging.thumbking-btc.workers.dev")?.mismatch,
+    true,
+  );
+
+  const html = await (await render()).text();
+  const notice = html.match(/<aside[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
+  assert.match(notice, /hidden/u);
+  assert.doesNotMatch(html, />STAGING<|>PREVIEW</u);
+  assert.match(html, /data-deployment-label=""/u);
+  assert.match(html, /data-deployment-message=""/u);
+  const noticeSource = await readFile(new URL("../app/components/DeploymentEnvironmentNotice.tsx", import.meta.url), "utf8");
+  assert.match(noticeSource, /document\.documentElement\.getAttribute\("data-deployment-environment"\)/u);
+  assert.match(noticeSource, /if \(annotatedEnvironment === null\)/u);
+  assert.match(noticeSource, /setReportedEnvironment\(annotatedEnvironment\)/u);
+  assert.match(noticeSource, /setReportedEnvironment\(environment\)/u);
+  assert.match(noticeSource, /"NON-PRODUCTION"/u);
 });
 
 test("ships an installable PWA with compact link metadata and no cached API data", async () => {
@@ -1021,6 +1095,9 @@ test("ships an installable PWA with compact link metadata and no cached API data
   assert.equal(manifest.start_url, "/");
   assert.equal(manifest.scope, "/");
   assert.equal(manifest.display, "standalone");
+  assert.deepEqual(manifest.display_override, ["standalone", "minimal-ui"]);
+  assert.equal(Object.hasOwn(manifest, "orientation"), false);
+  assert.equal(manifest.display_override.includes("window-controls-overlay"), false);
   assert.deepEqual(
     manifest.icons.map(({ src, sizes, purpose }) => ({ src, sizes, purpose })),
     [
@@ -1049,6 +1126,7 @@ test("ships an installable PWA with compact link metadata and no cached API data
 
   assert.match(registration, /serviceWorkerUrl =/);
   assert.match(registration, /updateViaCache: "none"/);
+  assert.match(registration, /postMessage\(\{ type: "SKIP_WAITING" \}\)/);
   assert.match(installCta, /beforeinstallprompt/);
   assert.match(installCta, /event\.preventDefault\(\)/);
   assert.match(installCta, /await prompt\.prompt\(\)/);
@@ -1083,11 +1161,17 @@ test("ships an installable PWA with compact link metadata and no cached API data
   assert.match(siteRouteNav, /className="site-route-install" href="\/install\/"/);
   assert.match(registration, /navigatorWithStandalone\.standalone === true/);
   assert.match(registration, /"is-installed-pwa"/);
+  assert.match(registration, /getAttribute\("data-deployment-environment"\)/u);
+  assert.match(registration, /shouldDisableServiceWorker\(window\.location\.hostname, annotatedEnvironment\)/u);
+  assert.match(installCta, /installSuppressed/);
+  assert.match(installCta, /data-deployment-environment/);
+  assert.match(css, /html\[data-deployment-environment\]:not\(\[data-deployment-environment="production"\]\) \.site-route-install \{ display: none; \}/);
   assert.match(css, /@media \(display-mode: standalone\), \(display-mode: minimal-ui\), \(display-mode: window-controls-overlay\) \{\s*\.site-route-install \{ display: none; \}/);
   assert.match(css, /\.is-installed-pwa \.site-route-install \{ display: none; \}/);
   assert.match(html, /property="og:description" content="원화와 비트코인을 주고받을 조건을 계산하고 모집글 또는 거래 기록 카드로 공유합니다\."/);
-  assert.match(html, /name="twitter:card" content="summary"/);
-  assert.doesNotMatch(html, /property="og:image|name="twitter:image|summary_large_image|og-v2\.png/);
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(html, /property="og:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/bitcoin-p2p-check\.thumbking-btc\.workers\.dev\/og-v2\.png"/);
 
   const verifyHtml = await (await render("/verify")).text();
   assert.match(verifyHtml, /<title>공유된 거래 정보 \| 비트코인 P2P 계산기<\/title>/);
@@ -1158,12 +1242,14 @@ test("exports static pages and routes market and signed-record APIs through the 
     access(new URL("../dist/client/install/index.html", import.meta.url)),
     access(new URL("../dist/client/verify/index.html", import.meta.url)),
     access(new URL("../dist/client/404.html", import.meta.url)),
+    access(new URL("../dist/client/csp-policy.txt", import.meta.url)),
   ]);
-  const [worker, nextConfig, wrangler, headers, css, home, packageJson, appVersion] = await Promise.all([
+  const [worker, nextConfig, wrangler, headers, cspPolicy, css, home, packageJson, appVersion] = await Promise.all([
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
     readFile(new URL("../public/_headers", import.meta.url), "utf8"),
+    readFile(new URL("../dist/client/csp-policy.txt", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -1173,21 +1259,29 @@ test("exports static pages and routes market and signed-record APIs through the 
   assert.match(nextConfig, /output:\s*"export"/);
   assert.match(wrangler, /"directory":\s*"\.\/dist\/client"/);
   assert.match(wrangler, /"not_found_handling":\s*"404-page"/);
-  assert.match(wrangler, /"run_worker_first":\s*\["\/api\/\*"\]/);
+  assert.match(wrangler, /"binding":\s*"ASSETS"/);
+  assert.match(wrangler, /"run_worker_first":\s*true/);
   assert.match(wrangler, /"binding":\s*"TRADE_RECORDS"/);
-  assert.match(packageJson, /wrangler deploy --config wrangler\.jsonc/);
-  assert.equal(JSON.parse(packageJson).version, appVersion);
+  const manifest = JSON.parse(packageJson);
+  assert.match(manifest.scripts["deploy:production"], /process\.exit\(1\)/);
+  assert.match(manifest.scripts.deploy, /process\.exit\(1\)/);
+  assert.equal(manifest.version, appVersion);
   assert.match(worker, /url\.pathname === "\/api\/market"/);
   assert.match(worker, /isTradeRecordApiPath\(url\.pathname\)/);
-  assert.match(worker, /handleTradeRecordRequest\(request, environment\)/);
+  assert.match(worker, /handleTradeRecordRequest\(request, environment, \{[\s\S]*stateNamespace: context\.exports\.TradeRecordState,[\s\S]*\}\)/);
+  assert.match(worker, /return staticAssetResponse\(request, environment\)/);
   assert.doesNotMatch(worker, /vinext\/server\/app-router-entry/);
-  assert.match(headers, /Content-Security-Policy:/);
+  assert.doesNotMatch(headers, /Content-Security-Policy:/);
+  assert.match(cspPolicy, /script-src[^\n]*sha256-/);
+  assert.doesNotMatch(cspPolicy, /unsafe-inline/);
   assert.match(headers, /Referrer-Policy:\s*no-referrer/);
   assert.match(headers, /X-Content-Type-Options:\s*nosniff/);
   assert.match(headers, /X-Frame-Options:\s*DENY/);
   assert.match(headers, /Permissions-Policy:/);
   assert.match(css, /body\s*\{\s*min-width:\s*0/);
   assert.match(css, /\.refresh-button\s*\{[^}]*min-height:\s*44px/s);
-  assert.match(home, /<details className="reference-details" style=\{REFERENCE_CARD_STYLE\}>/);
+  assert.equal((home.match(/<details className="reference-details">/g) ?? []).length, 2);
+  assert.match(home, /<main className="site-main site-main-with-references">/);
+  assert.doesNotMatch(home, /style=\{/);
   assert.doesNotMatch(home, /className="explanation"|className="source-note"/);
 });

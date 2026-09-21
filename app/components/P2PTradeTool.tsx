@@ -1,21 +1,80 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { calculateP2PQuote, SATS_PER_BTC, stepPremiumPercent } from "../lib/p2p-quote.mjs";
+import {
+  calculateP2PQuote,
+  MAX_PREMIUM_PERCENT,
+  SATS_PER_BTC,
+  stepPremiumPercent,
+} from "../lib/p2p-quote.mjs";
 import { groupedBtcInput, normalizeBtcInput, parseBitcoinAmount, satsToBtcInput } from "../lib/bitcoin-amount.mjs";
 import { isReferenceShareable, shareImageFile } from "../lib/share-transport.mjs";
 import { buildTradeIntent } from "../lib/trade-share-copy.mjs";
 import { parseTradeFragment } from "../lib/trade-link.mjs";
-import { readTradeDraft, writeTradeDraft } from "../lib/trade-draft.mjs";
+import {
+  readTradeDraft,
+  TRADE_DRAFT_STORAGE_KEY,
+  writeTradeDraft,
+} from "../lib/trade-draft.mjs";
 import {
   getLivePriceReconnectDelay,
   getMarketRefreshDelay,
   getMarketRefreshInterval,
 } from "../lib/market-refresh.mjs";
-import { createTradeRecord } from "../lib/trade-record-client";
+import {
+  isLiveStreamStalled,
+  LIVE_STREAM_STALL_TIMEOUT_MS,
+  markMarketPriceStale,
+  mergeLiveMarketSnapshot,
+  mergeRestMarketSnapshot,
+} from "../lib/market-freshness.mjs";
+import { runWithAbortTimeout } from "../lib/operation-timeout.mjs";
+import { tradeRecordPreparationFeedback } from "../lib/request-feedback.mjs";
+import { STAGING_HOSTNAME } from "../lib/deployment-environment.mjs";
+import {
+  createPendingTradeRecord,
+  createTradeRecordRevokeToken,
+  fetchTradeRecord,
+  finalizeTradeRecord,
+  isTerminalTradeRecordRevocationError,
+  revokeTradeRecord,
+  TradeRecordApiRequestError,
+} from "../lib/trade-record-client";
 import { deriveAppliedPriceKrw } from "../lib/trade-record";
+import {
+  cacheAttemptFile,
+  cacheAttemptRecord,
+  createLargeTradeConfirmationKey,
+  createPreparedTradeShare,
+  createShareAttempt,
+  isTradeShareTransitionSafe,
+  LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY,
+  loadPersistedManagedTradeRecords,
+  MANAGED_TRADE_RECORD_STORAGE_PREFIX,
+  managedTradeRecordCleanupAt,
+  matchingShareAttempt,
+  parseManagedTradeRecordStorageKey,
+  parsePersistedManagedTradeRecord,
+  parsePersistedManagedTradeRecords,
+  persistManagedTradeRecord,
+  pruneExpiredManagedTradeRecords,
+  recordShareDelivery,
+  removeManagedTradeRecord,
+  removePersistedManagedTradeRecord,
+  serializeManagedTradeRecords,
+  tradeRecordPaymentExpiresAt,
+  toManagedTradeRecord,
+  upsertManagedTradeRecord,
+  type ManagedTradeRecord,
+  type PreparedTradeShare,
+  type ShareAttemptCache,
+} from "../lib/trade-share-session";
 import { TradeRecruitmentTool } from "./TradeRecruitmentTool";
-import { TradeReceiveInfoPortal, type VerifiedReceiveInfo } from "./TradeReceiveInfoPortal";
+import {
+  TradeReceiveInfoPortal,
+  type ReceiveInfoLifecycleState,
+  type VerifiedReceiveInfo,
+} from "./TradeReceiveInfoPortal";
 
 type TradeRole = "buyer" | "seller";
 type FocusedField = "krw" | "bitcoin" | null;
@@ -38,6 +97,26 @@ const UPBIT_TICKER_WEBSOCKET_URL = "wss://api.upbit.com/websocket/v1";
 const LIVE_PRICE_RENDER_INTERVAL_MS = 1_000;
 const MAX_LIVE_PRICE_AGE_MS = 2 * 60_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 30_000;
+const MARKET_REQUEST_TIMEOUT_MS = 12_000;
+const TRADE_RECORD_CREATE_TIMEOUT_MS = 15_000;
+const FINALIZATION_RECONCILE_RETRY_MS = 5 * 60_000;
+const FINALIZATION_RECONCILE_MAX_CONCURRENCY = 4;
+const FINALIZATION_RECONCILE_START_INTERVAL_MS = 600;
+const MANAGED_RECORD_EXPIRY_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Asia/Seoul",
+});
+
+function formatManagedRecordExpiry(expiresAt: string): string {
+  return MANAGED_RECORD_EXPIRY_FORMATTER.format(new Date(expiresAt));
+}
+
+function managedTradeRecordDisplayDeadline(record: ManagedTradeRecord): string {
+  return record.lifecycle === "finalizing"
+    ? new Date(managedTradeRecordCleanupAt(record)).toISOString()
+    : record.expiresAt;
+}
 
 const FUNDING_SOURCE_OPTIONS = [
   "기재하지 않음",
@@ -74,6 +153,28 @@ const DEFAULT_TRADE_DRAFT: TradeDraftFields = {
   fundingSource: "기재하지 않음",
   bitcoinDisplayUnit: "sats",
 };
+
+function freshDefaultTradeDraft(): TradeDraftFields {
+  return {
+    ...DEFAULT_TRADE_DRAFT,
+    krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
+    bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
+    amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
+  };
+}
+
+function fieldsFromStoredTradeDraft(stored: ReturnType<typeof readTradeDraft>): TradeDraftFields {
+  if (!stored) return freshDefaultTradeDraft();
+  return {
+    tradeRole: stored.tradeRole as TradeRole,
+    krwAmounts: { ...stored.krwAmounts },
+    bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
+    amountBasisByRole: { ...stored.amountBasisByRole },
+    premiumInput: stored.premiumInput,
+    fundingSource: DEFAULT_TRADE_DRAFT.fundingSource,
+    bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
+  };
+}
 
 function getTradeDraftStorage() {
   try {
@@ -121,29 +222,18 @@ type MarketSnapshot = {
 };
 
 async function requestMarketSnapshot(includePrice: boolean) {
-  const response = await fetch(`/api/market?price=${includePrice ? "1" : "0"}`, { cache: "no-store" });
-  if (!response.ok) throw new Error("market request failed");
-  const data = await response.json() as MarketSnapshot;
-  if (includePrice && (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0)) {
-    throw new Error("price unavailable");
-  }
-  return data;
-}
-
-function withLivePrice(snapshot: MarketSnapshot, price: LivePrice): MarketSnapshot {
-  const priceObservedAt = new Date(price.observedAtMs).toISOString();
-  return {
-    ...snapshot,
-    status: snapshot.sourceStatus?.premium === "current" ? "current" : "partial",
-    priceKrw: price.priceKrw,
-    priceObservedAt,
-    sourceStatus: snapshot.sourceStatus
-      ? { ...snapshot.sourceStatus, price: "current" }
-      : snapshot.sourceStatus,
-    staleAgeSeconds: snapshot.staleAgeSeconds
-      ? { ...snapshot.staleAgeSeconds, price: null }
-      : snapshot.staleAgeSeconds,
-  };
+  return runWithAbortTimeout(async (signal: AbortSignal) => {
+    const response = await fetch(`/api/market?price=${includePrice ? "1" : "0"}`, {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok) throw new Error("market request failed");
+    const data = await response.json() as MarketSnapshot;
+    if (includePrice && (!Number.isFinite(data.priceKrw) || Number(data.priceKrw) <= 0)) {
+      throw new Error("price unavailable");
+    }
+    return data;
+  }, MARKET_REQUEST_TIMEOUT_MS, "시세 조회 시간이 초과되었습니다.");
 }
 
 async function parseUpbitTickerMessage(data: unknown): Promise<LivePrice | null> {
@@ -212,7 +302,11 @@ function grouped(value: string) {
   return parsed === null ? value : parsed.toLocaleString("ko-KR");
 }
 
-function formatKrw(value: number | null | undefined) {
+function formatKrw(value: number | string | null | undefined) {
+  if (typeof value === "string") {
+    if (!/^(?:0|[1-9]\d*)$/u.test(value)) return "—";
+    return `${BigInt(value).toLocaleString("ko-KR")}원`;
+  }
   if (value == null || !Number.isFinite(value)) return "—";
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
@@ -312,6 +406,163 @@ function LiveMarketTime({
   );
 }
 
+type ReconciliationPermit = () => void;
+type ReconciliationScheduler = Readonly<{
+  acquire: (signal: AbortSignal) => Promise<ReconciliationPermit>;
+}>;
+
+function createReconciliationScheduler(): ReconciliationScheduler {
+  type Waiter = {
+    signal: AbortSignal;
+    resolve: (release: ReconciliationPermit) => void;
+    reject: (reason: unknown) => void;
+    onAbort: () => void;
+  };
+
+  const queue = new Set<Waiter>();
+  let active = 0;
+  let lastStartedAt = 0;
+  let startTimer: number | null = null;
+
+  const pump = () => {
+    if (startTimer !== null || active >= FINALIZATION_RECONCILE_MAX_CONCURRENCY) return;
+    const waiter = queue.values().next().value as Waiter | undefined;
+    if (!waiter) return;
+    if (waiter.signal.aborted) {
+      waiter.onAbort();
+      return;
+    }
+    const delay = Math.max(
+      0,
+      lastStartedAt + FINALIZATION_RECONCILE_START_INTERVAL_MS - Date.now(),
+    );
+    if (delay > 0) {
+      startTimer = window.setTimeout(() => {
+        startTimer = null;
+        pump();
+      }, delay);
+      return;
+    }
+
+    queue.delete(waiter);
+    waiter.signal.removeEventListener("abort", waiter.onAbort);
+    active += 1;
+    lastStartedAt = Date.now();
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      active -= 1;
+      pump();
+    });
+    pump();
+  };
+
+  return Object.freeze({
+    acquire(signal) {
+      if (signal.aborted) {
+        return Promise.reject(signal.reason ?? new DOMException("Reconciliation aborted.", "AbortError"));
+      }
+      return new Promise<ReconciliationPermit>((resolve, reject) => {
+        const waiter = {} as Waiter;
+        waiter.signal = signal;
+        waiter.resolve = resolve;
+        waiter.reject = reject;
+        waiter.onAbort = () => {
+          if (!queue.delete(waiter)) return;
+          signal.removeEventListener("abort", waiter.onAbort);
+          reject(signal.reason ?? new DOMException("Reconciliation aborted.", "AbortError"));
+          pump();
+        };
+        queue.add(waiter);
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+        pump();
+      });
+    },
+  });
+}
+
+function FinalizingTradeRecordReconciler({
+  record,
+  acquirePermit,
+  readStorageGeneration,
+  onFinalized,
+  onInvalidCapability,
+  onMissing,
+}: {
+  record: ManagedTradeRecord;
+  acquirePermit: (signal: AbortSignal) => Promise<ReconciliationPermit>;
+  readStorageGeneration: () => number;
+  onFinalized: (record: ManagedTradeRecord, storageGeneration: number) => void;
+  onInvalidCapability: (record: ManagedTradeRecord) => void;
+  onMissing: (record: ManagedTradeRecord) => boolean;
+}) {
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const storageGeneration = readStorageGeneration();
+    let retryTimer: number | null = null;
+    const scheduleRetry = () => {
+      const remainingRecoveryMs = managedTradeRecordCleanupAt(record) - Date.now();
+      if (remainingRecoveryMs <= 0) return;
+      retryTimer = window.setTimeout(
+        () => setRevision((current) => current + 1),
+        Math.min(FINALIZATION_RECONCILE_RETRY_MS, remainingRecoveryMs),
+      );
+    };
+
+    void (async () => {
+      let releasePermit: ReconciliationPermit | null = null;
+      try {
+        releasePermit = await acquirePermit(controller.signal);
+        const signed = record.persistence === "browser"
+          ? await finalizeTradeRecord(record.id, record.revokeToken, {
+              signal: controller.signal,
+              timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+            })
+          : await fetchTradeRecord(record.id, {
+              signal: controller.signal,
+              timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+            });
+        if (controller.signal.aborted) return;
+        onFinalized(
+          toManagedTradeRecord(signed, record.revokeToken, "finalized"),
+          storageGeneration,
+        );
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        const invalidCapability = reason instanceof TradeRecordApiRequestError
+          && reason.code === "INVALID_CAPABILITY"
+          && (reason.status === 401 || reason.status === 403);
+        if (invalidCapability) {
+          onInvalidCapability(record);
+          return;
+        }
+        const confirmedMissing = reason instanceof TradeRecordApiRequestError
+          && reason.code === "RECORD_NOT_FOUND"
+          && reason.status === 404;
+        if (confirmedMissing
+          && (record.persistence === "browser"
+            || managedTradeRecordCleanupAt(record) <= Date.now())) {
+          if (!onMissing(record)) scheduleRetry();
+        } else {
+          scheduleRetry();
+        }
+      } finally {
+        releasePermit?.();
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [acquirePermit, onFinalized, onInvalidCapability, onMissing, readStorageGeneration, record, revision]);
+
+  return null;
+}
+
 function formatFeeRate(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
@@ -323,7 +574,7 @@ function downloadTradeImage(file: File) {
   link.href = url;
   link.download = file.name;
   link.style.display = "none";
-  document.body.append(link);
+  document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
@@ -340,6 +591,11 @@ export function P2PTradeTool() {
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
   const [outputMode, setOutputMode] = useState<OutputMode>("recruitment");
   const [draftHydrated, setDraftHydrated] = useState(false);
+  const [recordPreviewOnly, setRecordPreviewOnly] = useState(false);
+  useEffect(() => {
+    const environment = document.documentElement.getAttribute("data-deployment-environment");
+    queueMicrotask(() => setRecordPreviewOnly(environment === "preview" || environment === "unknown"));
+  }, []);
   const skipNextDraftPersistence = useRef(true);
   const [focusedField, setFocusedField] = useState<FocusedField>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
@@ -347,9 +603,16 @@ export function P2PTradeTool() {
   const [marketError, setMarketError] = useState("");
   const [priceExpired, setPriceExpired] = useState(false);
   const [livePriceActive, setLivePriceActive] = useState(false);
-  const [resultAnnouncement, setResultAnnouncement] = useState("");
+  const [resultLiveMode, setResultLiveMode] = useState<"off" | "polite">("polite");
   const [shareStatus, setShareStatus] = useState("");
+  const [preparedTradeShare, setPreparedTradeShare] = useState<PreparedTradeShare | null>(null);
+  const [managedTradeRecords, setManagedTradeRecords] = useState<ManagedTradeRecord[]>([]);
+  const [managedTradeRecordsHydrated, setManagedTradeRecordsHydrated] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [confirmedLargeTradeKey, setConfirmedLargeTradeKey] = useState("");
+  const [draftStatus, setDraftStatus] = useState("");
+  const [draftSyncRevision, setDraftSyncRevision] = useState(0);
+  const [receiveInfoLifecycleStatus, setReceiveInfoLifecycleStatus] = useState<ReceiveInfoLifecycleState["status"]>("empty");
   const [verifiedReceiveInfo, setVerifiedReceiveInfo] = useState<VerifiedReceiveInfo | null>(null);
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
@@ -358,22 +621,416 @@ export function P2PTradeTool() {
   const livePriceActiveRef = useRef(false);
   const isSharingRef = useRef(false);
   const paymentLockRef = useRef(false);
+  const receiveInfoLifecycleStatusRef = useRef<ReceiveInfoLifecycleState["status"]>("empty");
   const pendingMarketSnapshotRef = useRef<MarketSnapshot | null>(null);
-  const suppressNextResultAnnouncementRef = useRef(false);
+  const shareAttemptCacheRef = useRef<ShareAttemptCache | null>(null);
+  const preparedTradeShareRef = useRef<PreparedTradeShare | null>(null);
+  const currentShareAttemptKeyRef = useRef("");
+  const sharePreparationAllowedRef = useRef(false);
+  const autoRevokingRecordIdRef = useRef("");
+  const removedManagedRecordIdsRef = useRef(new Set<string>());
+  const suppressedManagedRecordIdsRef = useRef(new Set<string>());
+  const knownManagedRecordIdsRef = useRef(new Set<string>());
+  const knownManagedRecordsRef = useRef(new Map<string, ManagedTradeRecord>());
+  const managedStorageGenerationRef = useRef(0);
+  const managedTradeRecordsRef = useRef<ManagedTradeRecord[]>([]);
+  const managedTradeRecordsDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const reconciliationScheduler = useMemo(() => createReconciliationScheduler(), []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      try {
+        const restored = loadPersistedManagedTradeRecords(
+          window.localStorage,
+          window.location.origin,
+        );
+        const accepted: ManagedTradeRecord[] = [];
+        const conflictedIds = new Set<string>();
+        let capabilityConflict = false;
+        for (const record of restored) {
+          knownManagedRecordIdsRef.current.add(record.id);
+          const known = knownManagedRecordsRef.current.get(record.id);
+          if (known && known.revokeToken !== record.revokeToken) {
+            capabilityConflict = true;
+            conflictedIds.add(record.id);
+            suppressedManagedRecordIdsRef.current.add(record.id);
+            knownManagedRecordsRef.current.set(
+              record.id,
+              Object.freeze({ ...known, persistence: "memory-only" as const }),
+            );
+            try {
+              removePersistedManagedTradeRecord(window.localStorage, record.id);
+            } catch {
+              // The in-memory tombstone still prevents this tab from accepting the conflict.
+            }
+            continue;
+          }
+          const preferred = known ? upsertManagedTradeRecord([known], record)[0] : record;
+          knownManagedRecordsRef.current.set(record.id, preferred);
+          accepted.push(preferred);
+        }
+        if (capabilityConflict) {
+          setShareStatus("오류: 같은 기록에 서로 다른 철회 권한이 저장되어 기존 권한만 이 화면의 메모리에 보존했습니다. 이 화면을 닫기 전에 철회하십시오.");
+        }
+        setManagedTradeRecords((current) => accepted.reduce(
+          (records, record) => upsertManagedTradeRecord(records, record),
+          current.map((record) => (
+            conflictedIds.has(record.id)
+              ? Object.freeze({ ...record, persistence: "memory-only" as const })
+              : record
+          )),
+        ));
+      } catch {
+        // The record flow remains usable when site storage is unavailable.
+      } finally {
+        setManagedTradeRecordsHydrated(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (!managedTradeRecordsHydrated || managedTradeRecords.length === 0) return;
+    const now = Date.now();
+    const expiryTimes = managedTradeRecords
+      .map((record) => managedTradeRecordCleanupAt(record))
+      .filter(Number.isFinite);
+    const nextExpiry = expiryTimes.length === 0 ? now : Math.min(...expiryTimes);
+    const delay = Math.max(0, Math.min(nextExpiry - now, 24 * 60 * 60 * 1_000));
+    const timer = window.setTimeout(() => {
+      const removalTime = Date.now();
+      let browserRemovalFailed = false;
+      for (const record of managedTradeRecords) {
+        if (managedTradeRecordCleanupAt(record) > removalTime) continue;
+        removedManagedRecordIdsRef.current.add(record.id);
+        suppressedManagedRecordIdsRef.current.delete(record.id);
+        knownManagedRecordsRef.current.delete(record.id);
+        try {
+          removePersistedManagedTradeRecord(window.localStorage, record.id);
+        } catch {
+          browserRemovalFailed = true;
+        }
+      }
+      if (browserRemovalFailed) {
+        setShareStatus("오류: 만료된 거래 기록의 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오.");
+      }
+      setManagedTradeRecords((current) => pruneExpiredManagedTradeRecords(current, removalTime));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [managedTradeRecords, managedTradeRecordsHydrated]);
+
+  const finalizingManagedTradeRecords = useMemo(
+    () => managedTradeRecords.filter((record) => record.lifecycle === "finalizing"),
+    [managedTradeRecords],
+  );
+  const hasMemoryOnlyManagedRecords = managedTradeRecords.some((record) => record.persistence === "memory-only");
+
+  useEffect(() => {
+    if (hasMemoryOnlyManagedRecords && managedTradeRecordsDetailsRef.current) {
+      managedTradeRecordsDetailsRef.current.open = true;
+    }
+  }, [hasMemoryOnlyManagedRecords]);
+
+  const readManagedStorageGeneration = useCallback(
+    () => managedStorageGenerationRef.current,
+    [],
+  );
+
+  const handleFinalizingRecordFinalized = useCallback((
+    finalizedRecord: ManagedTradeRecord,
+    reconciliationStorageGeneration: number,
+  ) => {
+    if (removedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+      knownManagedRecordsRef.current.delete(finalizedRecord.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, finalizedRecord.id));
+      return;
+    }
+    knownManagedRecordIdsRef.current.add(finalizedRecord.id);
+    if (reconciliationStorageGeneration !== managedStorageGenerationRef.current
+      || suppressedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, finalizedRecord));
+      setShareStatus("오류: 공개 확정 상태를 확인했지만 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면을 닫기 전에 철회하십시오.");
+      knownManagedRecordsRef.current.set(finalizedRecord.id, finalizedRecord);
+      return;
+    }
+    let remembered = finalizedRecord;
+    try {
+      remembered = persistManagedTradeRecord(
+        window.localStorage,
+        finalizedRecord,
+        window.location.origin,
+      );
+    } catch {
+      setShareStatus("오류: 공개 확정 상태를 확인했지만 철회 권한의 브라우저 저장 상태를 갱신하지 못했습니다. 이 화면을 닫기 전에 철회하십시오.");
+    }
+    knownManagedRecordsRef.current.set(finalizedRecord.id, remembered);
+    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, remembered));
+  }, []);
+
+  const handleFinalizingRecordMissing = useCallback((record: ManagedTradeRecord) => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+      return true;
+    } catch {
+      setShareStatus("오류: 공개 확정할 수 없는 준비 기록의 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오.");
+      return false;
+    }
+  }, []);
+
+  const handleFinalizingRecordInvalidCapability = useCallback((record: ManagedTradeRecord) => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    let browserRemovalFailed = false;
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+    } catch {
+      browserRemovalFailed = true;
+    }
+    setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+    setShareStatus(browserRemovalFailed
+      ? "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저 저장소에서 삭제하지 못했습니다. 브라우저의 사이트 데이터를 직접 삭제하십시오."
+      : "오류: 유효하지 않은 거래 기록 관리 권한을 브라우저에서 제거했습니다.");
+  }, []);
+
+  useEffect(() => {
+    managedTradeRecordsRef.current = managedTradeRecords;
+  }, [managedTradeRecords]);
+
+  useEffect(() => {
+    const keepKnownRecordInMemory = (recordId: string) => {
+      const known = knownManagedRecordsRef.current.get(recordId);
+      if (!known || known.persistence === "memory-only") return;
+      knownManagedRecordsRef.current.set(
+        recordId,
+        Object.freeze({ ...known, persistence: "memory-only" as const }),
+      );
+    };
+    const handleStorage = (event: StorageEvent) => {
+      let storage: Storage;
+      try {
+        storage = window.localStorage;
+      } catch {
+        return;
+      }
+      if (event.storageArea && event.storageArea !== storage) return;
+      if (event.key === null) {
+        managedStorageGenerationRef.current += 1;
+        const recordIds = new Set(knownManagedRecordIdsRef.current);
+        for (const record of managedTradeRecordsRef.current) recordIds.add(record.id);
+        let browserRemovalFailed = false;
+        for (const recordId of recordIds) {
+          knownManagedRecordIdsRef.current.add(recordId);
+          suppressedManagedRecordIdsRef.current.add(recordId);
+          keepKnownRecordInMemory(recordId);
+          try {
+            removePersistedManagedTradeRecord(storage, recordId);
+          } catch {
+            browserRemovalFailed = true;
+          }
+        }
+        if (browserRemovalFailed) {
+          setShareStatus("오류: 삭제 직후 다시 기록된 철회 권한을 정리하지 못했습니다. 이 사이트의 탭을 모두 닫은 뒤 브라우저 사이트 데이터를 직접 삭제하십시오.");
+        }
+        setManagedTradeRecords((current) => current.map((record) => (
+          Object.freeze({ ...record, persistence: "memory-only" as const })
+        )));
+        return;
+      }
+      if (event.key === LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY) {
+        if (event.newValue === null) {
+          setManagedTradeRecords((current) => current.map((record) => {
+            if (record.lifecycle !== "finalized") return record;
+            try {
+              if (storage.getItem(`${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${record.id}`) !== null) {
+                return record;
+              }
+            } catch {
+              // Treat an unreadable scoped value as unavailable in this tab.
+            }
+            keepKnownRecordInMemory(record.id);
+            return Object.freeze({ ...record, persistence: "memory-only" as const });
+          }));
+          return;
+        }
+        const restored = parsePersistedManagedTradeRecords(
+          event.newValue,
+          window.location.origin,
+        );
+        if (restored.length === 0) return;
+        const migrated: ManagedTradeRecord[] = [];
+        const residualLegacyRecords: ManagedTradeRecord[] = [];
+        for (const record of restored) {
+          if (removedManagedRecordIdsRef.current.has(record.id)
+            || suppressedManagedRecordIdsRef.current.has(record.id)) {
+            continue;
+          }
+          const known = knownManagedRecordsRef.current.get(record.id);
+          if (known && known.revokeToken !== record.revokeToken) {
+            migrated.push(Object.freeze({ ...known, persistence: "memory-only" as const }));
+            residualLegacyRecords.push(record);
+            continue;
+          }
+          try {
+            const key = `${MANAGED_TRADE_RECORD_STORAGE_PREFIX}${record.id}`;
+            const existing = parsePersistedManagedTradeRecord(
+              storage.getItem(key),
+              window.location.origin,
+            );
+            if (existing?.id === record.id && existing.revokeToken !== record.revokeToken) {
+              migrated.push(existing);
+              residualLegacyRecords.push(record);
+              continue;
+            }
+            const preferred = existing?.id === record.id
+              ? upsertManagedTradeRecord([existing], record)[0]
+              : record;
+            migrated.push(existing && preferred === existing
+              ? existing
+              : persistManagedTradeRecord(storage, preferred, window.location.origin));
+          } catch {
+            // Keep the valid capability in memory when migration storage is unavailable.
+            migrated.push(record);
+            residualLegacyRecords.push(record);
+          }
+        }
+        try {
+          if (storage.getItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY) === event.newValue) {
+            if (residualLegacyRecords.length === 0) {
+              storage.removeItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY);
+            } else {
+              const residual = serializeManagedTradeRecords(residualLegacyRecords);
+              if (residual !== event.newValue) {
+                storage.setItem(LEGACY_MANAGED_TRADE_RECORD_STORAGE_KEY, residual);
+              }
+            }
+          }
+        } catch {
+          setShareStatus("오류: 삭제 뒤 다시 기록된 이전 형식의 철회 권한을 정리하지 못했습니다. 이 사이트의 탭을 모두 닫은 뒤 브라우저 사이트 데이터를 직접 삭제하십시오.");
+        }
+        for (const record of migrated) {
+          knownManagedRecordIdsRef.current.add(record.id);
+          const known = knownManagedRecordsRef.current.get(record.id);
+          knownManagedRecordsRef.current.set(
+            record.id,
+            known ? upsertManagedTradeRecord([known], record)[0] : record,
+          );
+        }
+        setManagedTradeRecords((current) => migrated.reduce(
+          (records, record) => upsertManagedTradeRecord(records, record),
+          [...current],
+        ));
+        return;
+      }
+      if (!event.key?.startsWith(MANAGED_TRADE_RECORD_STORAGE_PREFIX)) return;
+      const recordId = parseManagedTradeRecordStorageKey(event.key);
+      if (!recordId) return;
+      if (event.newValue === null) {
+        if (suppressedManagedRecordIdsRef.current.has(recordId)) {
+          keepKnownRecordInMemory(recordId);
+          setManagedTradeRecords((current) => current.map((record) => (
+            record.id === recordId
+              ? Object.freeze({ ...record, persistence: "memory-only" as const })
+              : record
+          )));
+          return;
+        }
+        removedManagedRecordIdsRef.current.add(recordId);
+        knownManagedRecordsRef.current.delete(recordId);
+        try {
+          if (storage.getItem(event.key) !== null) storage.removeItem(event.key);
+        } catch {
+          // The in-memory tombstone still prevents this tab from recreating the capability.
+        }
+        setManagedTradeRecords((current) => current.filter((record) => record.id !== recordId));
+        return;
+      }
+      if (removedManagedRecordIdsRef.current.has(recordId)
+        || suppressedManagedRecordIdsRef.current.has(recordId)) {
+        try {
+          storage.removeItem(event.key);
+        } catch {
+          // Keep the in-memory tombstone even when browser storage is unavailable.
+        }
+        return;
+      }
+      const restored = parsePersistedManagedTradeRecord(
+        event.newValue,
+        window.location.origin,
+      );
+      if (!restored || restored.id !== recordId) {
+        keepKnownRecordInMemory(recordId);
+        setManagedTradeRecords((current) => current.map((record) => (
+          record.id === recordId
+            ? Object.freeze({ ...record, persistence: "memory-only" as const })
+            : record
+        )));
+        return;
+      }
+      const known = knownManagedRecordsRef.current.get(recordId);
+      if (known && known.revokeToken !== restored.revokeToken) {
+        const preserved = Object.freeze({ ...known, persistence: "memory-only" as const });
+        suppressedManagedRecordIdsRef.current.add(recordId);
+        knownManagedRecordsRef.current.set(recordId, preserved);
+        try {
+          storage.removeItem(event.key);
+        } catch {
+          // The in-memory tombstone still prevents this tab from accepting the conflict.
+        }
+        setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preserved));
+        setShareStatus("오류: 같은 기록에 서로 다른 철회 권한이 감지되어 기존 권한만 이 화면의 메모리에 보존했습니다. 이 화면을 닫기 전에 철회하십시오.");
+        return;
+      }
+      knownManagedRecordIdsRef.current.add(recordId);
+      const preferred = known ? upsertManagedTradeRecord([known], restored)[0] : restored;
+      let reconciled = preferred;
+      if (known && preferred !== restored) {
+        try {
+          reconciled = persistManagedTradeRecord(
+            storage,
+            preferred,
+            window.location.origin,
+          );
+        } catch {
+          reconciled = Object.freeze({ ...preferred, persistence: "memory-only" as const });
+          try {
+            if (storage.getItem(event.key) === event.newValue) storage.removeItem(event.key);
+          } catch {
+            // Keep the stronger lifecycle in memory when the stale browser value cannot be repaired.
+          }
+        }
+      }
+      knownManagedRecordsRef.current.set(recordId, reconciled);
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, reconciled));
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const replaceDraftFields = useCallback((fields: TradeDraftFields) => {
+    setTradeRole(fields.tradeRole);
+    setKrwAmounts(fields.krwAmounts);
+    setBitcoinAmountInputs(fields.bitcoinAmountInputs);
+    setAmountBasisByRole(fields.amountBasisByRole);
+    setPremiumInput(fields.premiumInput);
+    setFundingSource(fields.fundingSource);
+    setBitcoinDisplayUnit(fields.bitcoinDisplayUnit);
+  }, []);
 
   const applyMarketSnapshot = useCallback((data: MarketSnapshot, silent: boolean) => {
     const current = marketRef.current;
-    const nextData = livePriceActiveRef.current && current?.priceKrw && current.priceObservedAt
-      ? withLivePrice(data, {
-          priceKrw: current.priceKrw,
-          observedAtMs: new Date(current.priceObservedAt).getTime(),
-        })
-      : data;
-    if (isSharingRef.current || paymentLockRef.current) {
+    const referenceLocked = Boolean(isSharingRef.current || paymentLockRef.current || preparedTradeShareRef.current);
+    const latest = referenceLocked ? pendingMarketSnapshotRef.current ?? current : current;
+    const nextData = mergeRestMarketSnapshot(data, latest, livePriceActiveRef.current) as MarketSnapshot;
+    if (referenceLocked) {
       pendingMarketSnapshotRef.current = nextData;
       return;
     }
-    suppressNextResultAnnouncementRef.current = silent;
+    if (silent) setResultLiveMode("off");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
@@ -383,24 +1040,36 @@ export function P2PTradeTool() {
 
   const applyLivePrice = useCallback((price: LivePrice) => {
     const current = marketRef.current;
-    if (!current) return false;
-
-    const currentObservedAt = current.priceObservedAt ? new Date(current.priceObservedAt).getTime() : 0;
-    if (Number.isFinite(currentObservedAt) && currentObservedAt > price.observedAtMs) return true;
-
-    const nextData = withLivePrice(current, price);
-    if (isSharingRef.current || paymentLockRef.current) {
+    const referenceLocked = Boolean(isSharingRef.current || paymentLockRef.current || preparedTradeShareRef.current);
+    const latest = referenceLocked ? pendingMarketSnapshotRef.current ?? current : current;
+    if (!latest) return false;
+    const nextData = mergeLiveMarketSnapshot(latest, price) as MarketSnapshot;
+    if (nextData === latest) return true;
+    if (referenceLocked) {
       pendingMarketSnapshotRef.current = nextData;
       return true;
     }
 
-    suppressNextResultAnnouncementRef.current = true;
+    setResultLiveMode("off");
     marketRef.current = nextData;
     setMarket(nextData);
     setMarketState("ready");
     setMarketError("");
     setPriceExpired(false);
     return true;
+  }, []);
+
+  const markMarketStale = useCallback((message: string) => {
+    const current = marketRef.current;
+    const stale = markMarketPriceStale(current);
+    if (stale) {
+      marketRef.current = stale;
+      setMarket(stale);
+    }
+    setResultLiveMode("off");
+    setMarketState("error");
+    setPriceExpired(true);
+    setMarketError(message);
   }, []);
 
   const refreshMarket = useCallback((mode: MarketRefreshMode) => {
@@ -424,12 +1093,15 @@ export function P2PTradeTool() {
     refresh.promise = requestMarketSnapshot(includePrice).then(
       (data) => applyMarketSnapshot(data, refresh.mode === "silent"),
       () => {
-        if (refresh.mode === "silent" && marketRef.current) return;
+        if (marketRef.current) {
+          markMarketStale(refresh.mode === "silent"
+            ? "자동 시세 갱신에 실패했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다."
+            : "시세를 새로 불러오지 못했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다.");
+          return;
+        }
         setMarketState("error");
         setPriceExpired(true);
-        setMarketError(refresh.mode === "manual"
-          ? "시세를 새로 불러오지 못했습니다. 마지막 조회값은 확인용으로만 표시하며 공유할 수 없습니다."
-          : "업비트 최근 체결가를 불러오지 못했습니다. 잠시 후 시세 새로고침을 눌러 다시 확인하세요.");
+        setMarketError("업비트 최근 체결가를 불러오지 못했습니다. 시세 새로고침을 눌러 다시 확인하세요.");
       },
     ).finally(() => {
       lastMarketRefreshAtRef.current = Date.now();
@@ -437,18 +1109,30 @@ export function P2PTradeTool() {
     });
     marketRequestRef.current = refresh;
     return refresh.promise;
-  }, [applyMarketSnapshot]);
+  }, [applyMarketSnapshot, markMarketStale]);
 
   const loadMarket = useCallback(async () => {
-    if (paymentLockRef.current) return;
+    if (paymentLockRef.current || preparedTradeShareRef.current) return;
     await refreshMarket("manual");
   }, [refreshMarket]);
 
   const handleVerifiedReceiveInfo = useCallback((info: VerifiedReceiveInfo | null) => {
-    const wasLocked = paymentLockRef.current;
-    paymentLockRef.current = Boolean(info);
     setVerifiedReceiveInfo(info);
-    if (!wasLocked || info) return;
+    if (!info) return;
+    paymentLockRef.current = true;
+  }, []);
+
+  const handleReceiveInfoLifecycle = useCallback((state: ReceiveInfoLifecycleState) => {
+    receiveInfoLifecycleStatusRef.current = state.status;
+    setReceiveInfoLifecycleStatus((current) => current === state.status ? current : state.status);
+    if (state.status !== "empty") {
+      paymentLockRef.current = true;
+      return;
+    }
+    const wasLocked = paymentLockRef.current;
+    paymentLockRef.current = false;
+    setVerifiedReceiveInfo(null);
+    if (!wasLocked) return;
     const pendingSnapshot = pendingMarketSnapshotRef.current;
     if (!pendingSnapshot) return;
     pendingMarketSnapshotRef.current = null;
@@ -532,9 +1216,9 @@ export function P2PTradeTool() {
     let reconnectTimer: number | null = null;
     let reconnectAttempt = 0;
     let renderTimer: number | null = null;
-    let staleTimer: number | null = null;
+    let watchdogTimer: number | null = null;
+    let lastMessageAt = 0;
     let lastRenderedAt = 0;
-    let lastLiveMessageAt = 0;
     let queuedPrice: LivePrice | null = null;
 
     const setStreamActive = (active: boolean) => {
@@ -554,10 +1238,10 @@ export function P2PTradeTool() {
       renderTimer = null;
     };
 
-    const clearStaleTimer = () => {
-      if (staleTimer === null) return;
-      window.clearTimeout(staleTimer);
-      staleTimer = null;
+    const clearWatchdogTimer = () => {
+      if (watchdogTimer === null) return;
+      window.clearTimeout(watchdogTimer);
+      watchdogTimer = null;
     };
 
     const browserIsActive = () => document.visibilityState === "visible" && navigator.onLine !== false;
@@ -565,35 +1249,14 @@ export function P2PTradeTool() {
     const disconnect = () => {
       clearReconnectTimer();
       clearRenderTimer();
-      clearStaleTimer();
+      clearWatchdogTimer();
       queuedPrice = null;
       reconnectAttempt = 0;
-      lastLiveMessageAt = 0;
+      lastMessageAt = 0;
       setStreamActive(false);
       const activeSocket = socket;
       socket = null;
       activeSocket?.close();
-    };
-
-    const checkStale = () => {
-      staleTimer = null;
-      if (disposed || !browserIsActive() || !socket || lastLiveMessageAt <= 0) return;
-      const remaining = MAX_LIVE_PRICE_AGE_MS - (Date.now() - lastLiveMessageAt);
-      if (remaining > 0) {
-        staleTimer = window.setTimeout(checkStale, remaining + 1);
-        return;
-      }
-      const activeSocket = socket;
-      socket = null;
-      lastLiveMessageAt = 0;
-      setStreamActive(false);
-      activeSocket.close();
-      scheduleReconnect();
-    };
-
-    const scheduleStaleCheck = () => {
-      clearStaleTimer();
-      staleTimer = window.setTimeout(checkStale, MAX_LIVE_PRICE_AGE_MS + 1);
     };
 
     const flushQueuedPrice = () => {
@@ -602,11 +1265,9 @@ export function P2PTradeTool() {
       queuedPrice = null;
       if (!price || disposed || !browserIsActive()) return;
       lastRenderedAt = Date.now();
-      lastLiveMessageAt = lastRenderedAt;
       if (applyLivePrice(price)) {
         reconnectAttempt = 0;
         setStreamActive(true);
-        scheduleStaleCheck();
       }
     };
 
@@ -632,6 +1293,27 @@ export function P2PTradeTool() {
       reconnectTimer = window.setTimeout(connect, delay);
     };
 
+    const armWatchdog = (activeSocket: WebSocket) => {
+      clearWatchdogTimer();
+      watchdogTimer = window.setTimeout(() => {
+        watchdogTimer = null;
+        if (disposed || socket !== activeSocket || !browserIsActive()) return;
+        if (!isLiveStreamStalled(lastMessageAt)) {
+          armWatchdog(activeSocket);
+          return;
+        }
+        markMarketStale("실시간 시세 수신이 중단되었습니다. 최신 시세를 다시 확인하고 있습니다.");
+        setStreamActive(false);
+        activeSocket.close();
+        const activeRefresh = marketRequestRef.current?.promise;
+        void (async () => {
+          if (activeRefresh) await activeRefresh;
+          if (disposed || !browserIsActive()) return;
+          await refreshMarket("manual");
+        })();
+      }, LIVE_STREAM_STALL_TIMEOUT_MS);
+    };
+
     const connect = () => {
       if (disposed || !browserIsActive() || socket) return;
       clearReconnectTimer();
@@ -645,13 +1327,11 @@ export function P2PTradeTool() {
       }
       nextSocket.binaryType = "arraybuffer";
       socket = nextSocket;
-      lastLiveMessageAt = Date.now();
-      scheduleStaleCheck();
 
       nextSocket.onopen = () => {
         if (disposed || socket !== nextSocket || !browserIsActive()) return;
-        lastLiveMessageAt = Date.now();
-        scheduleStaleCheck();
+        lastMessageAt = Date.now();
+        armWatchdog(nextSocket);
         nextSocket.send(JSON.stringify([
           { ticket: `bitcoin-p2p-check-${Date.now()}` },
           { type: "trade", codes: ["KRW-BTC"], is_only_realtime: true },
@@ -662,6 +1342,8 @@ export function P2PTradeTool() {
       nextSocket.onmessage = (event) => {
         void parseUpbitTickerMessage(event.data).then((price) => {
           if (!price || disposed || socket !== nextSocket || !browserIsActive()) return;
+          lastMessageAt = Date.now();
+          armWatchdog(nextSocket);
           queuePrice(price);
         });
       };
@@ -672,9 +1354,9 @@ export function P2PTradeTool() {
 
       nextSocket.onclose = () => {
         if (socket !== nextSocket) return;
+        clearWatchdogTimer();
+        lastMessageAt = 0;
         socket = null;
-        clearStaleTimer();
-        lastLiveMessageAt = 0;
         setStreamActive(false);
         scheduleReconnect();
       };
@@ -708,27 +1390,14 @@ export function P2PTradeTool() {
       window.removeEventListener("offline", handleOffline);
       disconnect();
     };
-  }, [applyLivePrice]);
+  }, [applyLivePrice, markMarketStale, refreshMarket]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       const imported = parseTradeFragment(window.location.hash);
       const storage = getTradeDraftStorage();
       const stored = readTradeDraft(storage);
-      const hydratedDraft: TradeDraftFields = stored ? {
-        tradeRole: stored.tradeRole as TradeRole,
-        krwAmounts: { ...stored.krwAmounts },
-        bitcoinAmountInputs: { ...stored.bitcoinAmountInputs },
-        amountBasisByRole: { ...stored.amountBasisByRole },
-        premiumInput: stored.premiumInput,
-        fundingSource: stored.fundingSource as FundingSource,
-        bitcoinDisplayUnit: stored.bitcoinDisplayUnit as BitcoinDisplayUnit,
-      } : {
-        ...DEFAULT_TRADE_DRAFT,
-        krwAmounts: { ...DEFAULT_TRADE_DRAFT.krwAmounts },
-        bitcoinAmountInputs: { ...DEFAULT_TRADE_DRAFT.bitcoinAmountInputs },
-        amountBasisByRole: { ...DEFAULT_TRADE_DRAFT.amountBasisByRole },
-      };
+      const hydratedDraft = fieldsFromStoredTradeDraft(stored);
 
       if (imported) {
         const importedRole: TradeRole = imported.side === "buy" ? "buyer" : "seller";
@@ -756,17 +1425,11 @@ export function P2PTradeTool() {
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
 
-      setTradeRole(hydratedDraft.tradeRole);
-      setKrwAmounts(hydratedDraft.krwAmounts);
-      setBitcoinAmountInputs(hydratedDraft.bitcoinAmountInputs);
-      setAmountBasisByRole(hydratedDraft.amountBasisByRole);
-      setPremiumInput(hydratedDraft.premiumInput);
-      setFundingSource(hydratedDraft.fundingSource);
-      setBitcoinDisplayUnit(hydratedDraft.bitcoinDisplayUnit);
+      replaceDraftFields(hydratedDraft);
       setDraftHydrated(true);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [replaceDraftFields]);
 
   useEffect(() => {
     if (!draftHydrated) return;
@@ -780,10 +1443,28 @@ export function P2PTradeTool() {
       bitcoinAmountInputs,
       amountBasisByRole,
       premiumInput,
-      fundingSource,
       bitcoinDisplayUnit,
     });
-  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, fundingSource, krwAmounts, premiumInput, tradeRole]);
+  }, [amountBasisByRole, bitcoinAmountInputs, bitcoinDisplayUnit, draftHydrated, draftSyncRevision, krwAmounts, premiumInput, tradeRole]);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const storage = getTradeDraftStorage();
+    if (!storage) return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== storage || event.key !== TRADE_DRAFT_STORAGE_KEY) return;
+      skipNextDraftPersistence.current = true;
+      replaceDraftFields(fieldsFromStoredTradeDraft(readTradeDraft(storage)));
+      setDraftSyncRevision((current) => current + 1);
+      setDraftStatus(event.newValue === null
+        ? "다른 탭에서 저장된 초안을 삭제하여 기본값으로 되돌렸습니다."
+        : "다른 탭에서 변경한 초안을 반영했습니다.");
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [draftHydrated, replaceDraftFields]);
 
   useEffect(() => {
     if (!market?.priceObservedAt) return;
@@ -799,8 +1480,13 @@ export function P2PTradeTool() {
     ? "판매자 프리미엄을 입력하세요."
     : premiumPercent <= -100
       ? "판매자 프리미엄은 -100%보다 크게 입력하세요."
+      : premiumPercent > MAX_PREMIUM_PERCENT
+        ? `판매자 프리미엄은 ${MAX_PREMIUM_PERCENT}% 이하로 입력하세요.`
       : "";
-  const premiumWarning = premiumPercent !== null && premiumPercent > -100 && Math.abs(premiumPercent) >= 10;
+  const premiumWarning = premiumPercent !== null
+    && premiumPercent > -100
+    && premiumPercent <= MAX_PREMIUM_PERCENT
+    && Math.abs(premiumPercent) >= 10;
   const referencePrice = market?.priceKrw ?? null;
   const referenceLabel = "업비트 최근 체결가";
   const referenceTime = market?.priceObservedAt ?? null;
@@ -840,6 +1526,18 @@ export function P2PTradeTool() {
       premiumPercent,
     });
   }, [amount, amountBasis, premiumPercent, referencePrice]);
+  const largeTradeKey = quote ? createLargeTradeConfirmationKey({
+    role: tradeRole,
+    amountBasis,
+    paymentKrw: quote.paymentKrw,
+    sats: quote.sats,
+  }) : "";
+  const largeTradeConfirmed = !largeTradeKey || confirmedLargeTradeKey === largeTradeKey;
+  const tinyTradeWarning = quote && quote.sats <= 1_000
+    ? quote.sats === 1
+      ? "1 sat은 Lightning에서 전송 가능한 단위이지만, 온체인에서는 dust 기준에 미달할 수 있고 네트워크 수수료가 거래액을 넘을 수 있습니다. 결제 방식을 확인하세요."
+      : `${formatSats(quote.sats)}의 극소액 거래입니다. Lightning을 고려할 수 있지만, 온체인에서는 dust 기준에 미달하거나 네트워크 수수료가 거래액을 넘을 수 있습니다.`
+    : "";
 
   const multiplier = premiumPercent === null ? null : 1 + premiumPercent / 100;
   const premiumSummary = premiumPercent === null
@@ -888,12 +1586,10 @@ export function P2PTradeTool() {
     : resultUnavailable;
 
   useEffect(() => {
-    if (suppressNextResultAnnouncementRef.current) {
-      suppressNextResultAnnouncementRef.current = false;
-      return;
-    }
-    setResultAnnouncement(currentResultAnnouncement);
-  }, [currentResultAnnouncement, market]);
+    if (resultLiveMode !== "off") return;
+    const frame = window.requestAnimationFrame(() => setResultLiveMode("polite"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentResultAnnouncement, resultLiveMode]);
 
   const tradeIntent = quote ? buildTradeIntent({
     tradeRole,
@@ -914,27 +1610,13 @@ export function P2PTradeTool() {
         expiresAt: verifiedReceiveInfo.expiresAt,
       }
     : null;
-  const shareImageAllowed = Boolean(quote)
-    && referencePrice !== null
-    && premiumPercent !== null
-    && draftHydrated
-    && !stalePrice
-    && marketState === "ready";
-  const shareStatusIsError = Boolean(shareStatus)
-    && (shareStatus.startsWith("오류:") || shareStatus.includes("못") || shareStatus.includes("다시"));
-
-  async function shareTrade() {
-    if (!shareImageAllowed || !quote || referencePrice === null || referenceTime === null || premiumPercent === null || isSharing) return;
-    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
-      setPriceExpired(true);
-      setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
-      return;
-    }
-    setShareStatus("");
-    isSharingRef.current = true;
-    setIsSharing(true);
-    try {
-      const signed = await createTradeRecord({
+  const paymentLifecycleBlocksShare = receiveInfoLifecycleStatus === "stale"
+    || receiveInfoLifecycleStatus === "expiring"
+    || receiveInfoLifecycleStatus === "expired";
+  const paymentReferenceLocked = receiveInfoLifecycleStatus !== "empty";
+  const marketReferenceLocked = paymentReferenceLocked || Boolean(preparedTradeShare);
+  const tradeRecordDraft = quote && referencePrice !== null && referenceTime !== null && premiumPercent !== null
+    ? {
         condition: {
           role: tradeRole,
           amountBasis,
@@ -949,17 +1631,169 @@ export function P2PTradeTool() {
         },
         payment: paymentForRecord
           ? paymentForRecord.rail === "onchain" && paymentForRecord.address
-            ? { rail: "onchain", payload: paymentForRecord.payload, address: paymentForRecord.address }
+            ? { rail: "onchain" as const, payload: paymentForRecord.payload, address: paymentForRecord.address }
             : paymentForRecord.rail === "lightning"
               ? paymentForRecord.address
-                ? { rail: "lightning", payload: paymentForRecord.payload, address: paymentForRecord.address }
-                : { rail: "lightning", payload: paymentForRecord.payload }
+                ? { rail: "lightning" as const, payload: paymentForRecord.payload, address: paymentForRecord.address }
+                : { rail: "lightning" as const, payload: paymentForRecord.payload }
               : null
           : null,
+      } satisfies Parameters<typeof createPendingTradeRecord>[0]
+    : null;
+  const shareAttemptKey = tradeRecordDraft ? JSON.stringify(tradeRecordDraft) : "";
+  const preparedShareIsCurrent = Boolean(preparedTradeShare && preparedTradeShare.key === shareAttemptKey);
+  const shareImageAllowed = Boolean(quote)
+    && !recordPreviewOnly
+    && outputMode === "trade-image"
+    && referencePrice !== null
+    && premiumPercent !== null
+    && draftHydrated
+    && largeTradeConfirmed
+    && !paymentLifecycleBlocksShare
+    && !stalePrice
+    && marketState === "ready";
+  const shareStatusIsError = Boolean(shareStatus)
+    && (shareStatus.startsWith("오류:") || shareStatus.includes("못") || shareStatus.includes("다시"));
+
+  useEffect(() => {
+    currentShareAttemptKeyRef.current = shareAttemptKey;
+  }, [shareAttemptKey]);
+
+  useEffect(() => {
+    sharePreparationAllowedRef.current = shareImageAllowed;
+  }, [shareImageAllowed]);
+
+  const releasePreparedReference = useCallback(() => {
+    if (preparedTradeShareRef.current || paymentLockRef.current || isSharingRef.current) return;
+    const pendingSnapshot = pendingMarketSnapshotRef.current;
+    if (!pendingSnapshot) return;
+    pendingMarketSnapshotRef.current = null;
+    applyMarketSnapshot(pendingSnapshot, true);
+  }, [applyMarketSnapshot]);
+
+  const rememberManagedRecord = useCallback((
+    record: ManagedTradeRecord,
+    expectedStorageGeneration = managedStorageGenerationRef.current,
+  ): boolean => {
+    if (removedManagedRecordIdsRef.current.has(record.id)) {
+      knownManagedRecordsRef.current.delete(record.id);
+      setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+      return false;
+    }
+    knownManagedRecordIdsRef.current.add(record.id);
+    const known = knownManagedRecordsRef.current.get(record.id);
+    if (known && known.revokeToken !== record.revokeToken) {
+      const preserved = Object.freeze({ ...known, persistence: "memory-only" as const });
+      suppressedManagedRecordIdsRef.current.add(record.id);
+      knownManagedRecordsRef.current.set(record.id, preserved);
+      setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preserved));
+      return false;
+    }
+    let remembered = record;
+    let persisted = false;
+    if (expectedStorageGeneration === managedStorageGenerationRef.current
+      && !suppressedManagedRecordIdsRef.current.has(record.id)) {
+      try {
+        remembered = persistManagedTradeRecord(
+          window.localStorage,
+          record,
+          window.location.origin,
+        );
+        persisted = true;
+      } catch {
+        // Keep the capability in memory and surface the storage failure to the caller.
+      }
+    }
+    const preferred = known ? upsertManagedTradeRecord([known], remembered)[0] : remembered;
+    knownManagedRecordsRef.current.set(record.id, preferred);
+    setManagedTradeRecords((current) => upsertManagedTradeRecord(current, preferred));
+    return persisted;
+  }, []);
+
+  const forgetManagedRecord = useCallback((record: ManagedTradeRecord): boolean => {
+    removedManagedRecordIdsRef.current.add(record.id);
+    suppressedManagedRecordIdsRef.current.delete(record.id);
+    knownManagedRecordsRef.current.delete(record.id);
+    let browserRemovalFailed = false;
+    try {
+      removePersistedManagedTradeRecord(window.localStorage, record.id);
+    } catch {
+      browserRemovalFailed = true;
+    }
+    setManagedTradeRecords((current) => removeManagedTradeRecord(current, record.id));
+    if (preparedTradeShareRef.current?.signed.id === record.id) {
+      preparedTradeShareRef.current = null;
+      setPreparedTradeShare(null);
+    }
+    if (shareAttemptCacheRef.current?.signed?.id === record.id) shareAttemptCacheRef.current = null;
+    return browserRemovalFailed;
+  }, []);
+
+  const revokeKnownRecord = useCallback(async (record: ManagedTradeRecord, successMessage: string) => {
+    const storageGeneration = managedStorageGenerationRef.current;
+    const failureAction = record.lifecycle === "finalized"
+      ? "공개 링크를 비활성화"
+      : "준비 기록을 취소";
+    try {
+      await revokeTradeRecord(record.id, record.revokeToken, { timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS });
+      const browserRemovalFailed = forgetManagedRecord(record);
+      setShareStatus(browserRemovalFailed
+        ? `${successMessage} 다만 만료 전 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다.`
+        : successMessage);
+      return true;
+    } catch (reason) {
+      if (isTerminalTradeRecordRevocationError(reason)) {
+        const browserRemovalFailed = forgetManagedRecord(record);
+        const alreadyAbsent = reason instanceof TradeRecordApiRequestError
+          && (reason.code === "RECORD_NOT_FOUND" || reason.code === "RECORD_REVOKED");
+        const terminalMessage = alreadyAbsent
+          ? "거래 기록이 이미 없거나 사용할 수 없어 브라우저의 관리 권한을 정리했습니다."
+          : "오류: 거래 기록 관리 권한이 더 이상 유효하지 않아 브라우저에서 제거했습니다. 공개 기록이 남아 있다면 이 권한으로는 링크를 비활성화할 수 없습니다.";
+        setShareStatus(browserRemovalFailed
+          ? `${terminalMessage} 다만 만료 전 철회 권한을 브라우저 저장소에서 삭제하지 못했습니다.`
+          : terminalMessage);
+        return true;
+      }
+      rememberManagedRecord(record, storageGeneration);
+      setShareStatus(reason instanceof Error
+        ? `오류: ${failureAction}하지 못했습니다. ${reason.message}`
+        : `오류: ${failureAction}하지 못했습니다. 다시 시도해 주세요.`);
+      return false;
+    } finally {
+      releasePreparedReference();
+    }
+  }, [forgetManagedRecord, releasePreparedReference, rememberManagedRecord]);
+
+  async function prepareTradeShare() {
+    if (!shareImageAllowed || !quote || !tradeRecordDraft || !shareAttemptKey || referenceTime === null || isSharing) return;
+    if (stalePrice || !isReferenceShareable({ marketState, referenceTime }, Date.now())) {
+      setPriceExpired(true);
+      setShareStatus("최신 시세를 다시 조회한 뒤 거래 조건을 공유해 주세요.");
+      return;
+    }
+
+    setShareStatus("");
+    isSharingRef.current = true;
+    setIsSharing(true);
+    let stage: "creating" | "rendering" = "creating";
+    let attempt = matchingShareAttempt(shareAttemptCacheRef.current, shareAttemptKey);
+    if (!attempt) {
+      attempt = createShareAttempt(shareAttemptKey, createTradeRecordRevokeToken());
+      shareAttemptCacheRef.current = attempt;
+    }
+
+    try {
+      const pending = attempt.signed ?? await createPendingTradeRecord(tradeRecordDraft, {
+        revokeToken: attempt.revokeToken,
+        timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
       });
-      const signedCondition = signed.record.condition;
-      const { createTradeShareImage } = await import("../lib/trade-share-image");
-      const shareFile = await createTradeShareImage({
+      attempt = cacheAttemptRecord(attempt, pending);
+      shareAttemptCacheRef.current = attempt;
+
+      stage = "rendering";
+      const signedCondition = pending.record.condition;
+      const { createTradeShareImage, materializeTradeShareImage } = await import("../lib/trade-share-image");
+      const shareFile = attempt.file ?? await materializeTradeShareImage(await createTradeShareImage({
         tradeRole: signedCondition.role,
         amountBasis: signedCondition.amountBasis,
         bitcoinDisplayUnit: signedCondition.bitcoinDisplayUnit,
@@ -973,57 +1807,325 @@ export function P2PTradeTool() {
         sats: signedCondition.sats,
         btcAmount: signedCondition.sats / SATS_PER_BTC,
         appliedPriceKrw: deriveAppliedPriceKrw(signedCondition),
-        payment: signed.record.payment?.rail === "onchain"
-          ? signed.record.payment
-          : signed.record.payment
+        payment: pending.record.payment?.rail === "onchain"
+          ? pending.record.payment
+          : pending.record.payment
             ? {
                 rail: "lightning",
-                payload: signed.record.payment.payload,
-                ...(signed.record.payment.address ? { address: signed.record.payment.address } : {}),
-                ...(signed.record.payment.expiresAt ? { expiresAt: Math.floor(Date.parse(signed.record.payment.expiresAt) / 1_000) } : {}),
+                payload: pending.record.payment.payload,
+                ...(pending.record.payment.address ? { address: pending.record.payment.address } : {}),
+                ...(pending.record.payment.expiresAt ? { expiresAt: Math.floor(Date.parse(pending.record.payment.expiresAt) / 1_000) } : {}),
               }
             : null,
         record: {
-          id: signed.id,
-          createdAt: signed.record.createdAt,
-          verificationUrl: signed.verificationUrl,
+          id: pending.id,
+          createdAt: pending.record.createdAt,
+          verificationUrl: pending.verificationUrl,
         },
+      }));
+      attempt = cacheAttemptFile(attempt, shareFile);
+      shareAttemptCacheRef.current = attempt;
+
+      const preparationStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: attempt.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: pending.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(pending),
       });
-      const shareText = [
-        "비트코인 P2P 거래 기록 카드",
-        signed.record.payment ? "확인된 결제정보가 카드의 QR에 포함되어 있습니다." : "결제정보를 포함하지 않은 조건 기록입니다.",
-        `거래 정보 확인·복사: ${signed.verificationUrl}`,
-        "주소·금액·입금·수령 내역을 상대방과 함께 확인하세요.",
-      ].join("\n");
-      const outcome = await shareImageFile({
-        file: shareFile,
-        title: tradeIntent,
-        text: shareText,
-        nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
-        nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
-        download: downloadTradeImage,
-      });
-      if (outcome === "shared") {
-        setShareStatus("거래 기록 카드와 상세 정보 링크를 공유했습니다.");
-      } else if (outcome === "downloaded") {
-        setShareStatus("PNG 이미지를 저장했습니다. 메신저에 첨부해 주세요.");
-      } else if (outcome === "downloaded-after-error") {
-        setShareStatus("공유 창을 열지 못해 PNG 이미지를 저장했습니다.");
-      }
+      if (!preparationStillSafe) throw new Error("준비 중 거래 조건 또는 시세 유효성이 바뀌었습니다.");
+
+      const prepared = createPreparedTradeShare(attempt, pending, shareFile, tradeIntent);
+      preparedTradeShareRef.current = prepared;
+      setPreparedTradeShare(prepared);
+      setShareStatus("카드를 준비했습니다. 공유하거나 저장하면 상세 링크도 공개됩니다.");
     } catch (reason) {
-      setShareStatus(reason instanceof Error
-        ? `오류: ${reason.message}`
-        : "오류: 거래 기록 카드를 만들거나 공유하지 못했습니다. 다시 시도해 주세요.");
+      if (stage === "rendering" && attempt.signed) {
+        const record = toManagedTradeRecord(attempt.signed, attempt.revokeToken);
+        const revoked = await revokeKnownRecord(record, "준비에 실패한 비공개 거래 기록을 폐기했습니다.");
+        if (revoked) shareAttemptCacheRef.current = null;
+      }
+      if (stage !== "rendering" || shareAttemptCacheRef.current) {
+        setShareStatus(tradeRecordPreparationFeedback(reason));
+      }
     } finally {
       isSharingRef.current = false;
       setIsSharing(false);
-      const pendingSnapshot = pendingMarketSnapshotRef.current;
-      if (pendingSnapshot && !paymentLockRef.current) {
-        pendingMarketSnapshotRef.current = null;
-        applyMarketSnapshot(pendingSnapshot, true);
-      }
+      releasePreparedReference();
     }
   }
+
+  async function sharePreparedTrade() {
+    const prepared = preparedTradeShareRef.current;
+    if (!prepared || isSharing || prepared.key !== currentShareAttemptKeyRef.current || !sharePreparationAllowedRef.current) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    setShareStatus("");
+    let activePrepared = prepared;
+    let stage: "sharing" | "finalizing" = prepared.deliveryOutcome ? "finalizing" : "sharing";
+    let finalizationStorageGeneration: number | null = null;
+    try {
+      const sharingStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: activePrepared.signed.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(activePrepared.signed),
+      });
+      if (!sharingStillSafe) {
+        await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 직전 인보이스가 만료 임박 상태가 되었거나 거래 조건·시세가 바뀌어 비공개 준비 기록을 폐기했습니다.",
+        );
+        return;
+      }
+
+      if (!activePrepared.deliveryOutcome) {
+        let verificationUrlDelivery: NonNullable<PreparedTradeShare["verificationUrlDelivery"]> = "unavailable";
+        const outcome = await shareImageFile({
+          file: activePrepared.file,
+          title: activePrepared.title,
+          text: activePrepared.text,
+          nativeShare: typeof navigator.share === "function" ? navigator.share.bind(navigator) : null,
+          nativeCanShare: typeof navigator.canShare === "function" ? navigator.canShare.bind(navigator) : null,
+          download: downloadTradeImage,
+          verificationUrl: activePrepared.signed.verificationUrl,
+          copyVerificationUrl: async (url: string) => {
+            if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+            await navigator.clipboard.writeText(url);
+          },
+          onDownloadFallback: (details: { verificationUrlDelivery: NonNullable<PreparedTradeShare["verificationUrlDelivery"]> }) => {
+            verificationUrlDelivery = details.verificationUrlDelivery;
+          },
+        });
+        if (outcome === "cancelled") {
+          await revokeKnownRecord(
+            toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+            "공유를 취소하여 비공개 준비 기록을 폐기했습니다.",
+          );
+          return;
+        }
+        activePrepared = recordShareDelivery(activePrepared, outcome, verificationUrlDelivery);
+        preparedTradeShareRef.current = activePrepared;
+        setPreparedTradeShare(activePrepared);
+        stage = "finalizing";
+      }
+
+      const finalizationStillSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: activePrepared.signed.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(activePrepared.signed),
+      });
+      if (!finalizationStillSafe) {
+        await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 뒤 조건 또는 시세가 바뀌어 비공개 기록을 폐기했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
+        );
+        return;
+      }
+
+      if (activePrepared.signed.lifecycle !== "finalized") {
+        const pendingCapabilityPersisted = rememberManagedRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken, "finalizing"),
+        );
+        if (!pendingCapabilityPersisted) {
+          setShareStatus("오류: 카드가 전달되었지만 철회 권한을 이 브라우저에 저장하지 못해 공개 확정을 시작하지 않았습니다. 사이트 저장을 허용한 뒤 같은 버튼으로 재시도하거나 준비 기록을 철회하십시오.");
+          return;
+        }
+      }
+      finalizationStorageGeneration = managedStorageGenerationRef.current;
+
+      const finalized = activePrepared.signed.lifecycle === "finalized"
+        ? activePrepared.signed
+        : await finalizeTradeRecord(activePrepared.signed.id, activePrepared.revokeToken, {
+            timeoutMs: TRADE_RECORD_CREATE_TIMEOUT_MS,
+          });
+      const finalizedRecord = toManagedTradeRecord(finalized, activePrepared.revokeToken, "finalized");
+      if (finalizationStorageGeneration !== managedStorageGenerationRef.current
+        || suppressedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+        setManagedTradeRecords((current) => upsertManagedTradeRecord(current, finalizedRecord));
+        preparedTradeShareRef.current = null;
+        setPreparedTradeShare(null);
+        shareAttemptCacheRef.current = null;
+        setShareStatus("오류: 상세 기록은 공개 확정했지만 처리 중 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면을 닫기 전에 철회하십시오.");
+        return;
+      }
+      if (removedManagedRecordIdsRef.current.has(finalizedRecord.id)) {
+        knownManagedRecordsRef.current.delete(finalizedRecord.id);
+        setManagedTradeRecords((current) => removeManagedTradeRecord(current, finalizedRecord.id));
+        preparedTradeShareRef.current = null;
+        setPreparedTradeShare(null);
+        shareAttemptCacheRef.current = null;
+        setShareStatus("오류: 공개 확정 처리 중 다른 탭에서 이 기록의 관리 권한이 삭제되어 다시 저장하지 않았습니다. 전달한 상세 링크의 상태를 확인하십시오.");
+        return;
+      }
+      const finalizationRemainsSafe = isTradeShareTransitionSafe({
+        currentAttemptKey: currentShareAttemptKeyRef.current,
+        candidateAttemptKey: activePrepared.key,
+        preparationAllowed: sharePreparationAllowedRef.current,
+        receiveInfoLifecycleStatus: receiveInfoLifecycleStatusRef.current,
+        marketObservedAt: finalized.record.condition.marketObservedAt,
+        paymentExpiresAt: tradeRecordPaymentExpiresAt(finalized),
+      });
+      if (!finalizationRemainsSafe) {
+        await revokeKnownRecord(finalizedRecord, "공개 확정 직후 조건 또는 시세가 바뀌어 기록을 철회했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.");
+        return;
+      }
+
+      const capabilityPersisted = rememberManagedRecord(finalizedRecord);
+      preparedTradeShareRef.current = null;
+      setPreparedTradeShare(null);
+      shareAttemptCacheRef.current = null;
+      if (!capabilityPersisted) {
+        setShareStatus("오류: 상세 기록은 공개 확정했지만 철회 권한을 이 브라우저에 저장하지 못했습니다. 이 화면을 닫지 말고 아래 철회 버튼을 사용하십시오.");
+      } else if (activePrepared.deliveryOutcome === "shared") {
+        setShareStatus("거래 기록 카드 공유 후 상세 기록을 공개 확정했습니다. 아래에서 공개 기록을 철회할 수 있습니다.");
+      } else if (activePrepared.deliveryOutcome === "downloaded") {
+        setShareStatus(activePrepared.verificationUrlDelivery === "copied"
+          ? "PNG를 저장하고 상세 링크를 복사한 뒤 기록을 공개 확정했습니다. 두 항목을 함께 보내 주세요."
+          : "PNG를 저장하고 상세 기록을 공개 확정했습니다. 아래 상세 링크도 함께 보내 주세요.");
+      } else {
+        setShareStatus(activePrepared.verificationUrlDelivery === "copied"
+          ? "공유 창을 열지 못해 PNG와 상세 링크를 준비하고 기록을 공개 확정했습니다."
+          : "공유 창을 열지 못해 PNG를 저장하고 상세 기록을 공개 확정했습니다. 아래 링크도 함께 보내 주세요.");
+      }
+    } catch (reason) {
+      if (stage === "sharing") {
+        const revoked = await revokeKnownRecord(
+          toManagedTradeRecord(activePrepared.signed, activePrepared.revokeToken),
+          "공유 실패 후 비공개 준비 기록을 폐기했습니다.",
+        );
+        if (!revoked) {
+          setShareStatus(reason instanceof Error
+            ? `오류: 카드를 공유하지 못했고 준비 기록도 자동 폐기하지 못했습니다. ${reason.message}`
+            : "오류: 카드를 공유하지 못했고 준비 기록도 자동 폐기하지 못했습니다. 아래 철회 버튼으로 다시 시도해 주세요.");
+        }
+      } else {
+        const uncertainRecord = toManagedTradeRecord(
+          activePrepared.signed,
+          activePrepared.revokeToken,
+          "finalizing",
+        );
+        if (finalizationStorageGeneration !== null
+          && (finalizationStorageGeneration !== managedStorageGenerationRef.current
+            || suppressedManagedRecordIdsRef.current.has(activePrepared.signed.id))
+          && !(reason instanceof TradeRecordApiRequestError && reason.code === "RECORD_REVOKED")) {
+          setManagedTradeRecords((current) => upsertManagedTradeRecord(current, uncertainRecord));
+          setShareStatus("오류: 카드 전달 뒤 공개 확정 결과를 확인하지 못했고 처리 중 브라우저 데이터가 삭제되어 철회 권한을 다시 저장하지 않았습니다. 이 화면에서 철회하거나 상세 링크 상태를 확인하십시오.");
+          return;
+        }
+        if (removedManagedRecordIdsRef.current.has(activePrepared.signed.id)
+          || (reason instanceof TradeRecordApiRequestError && reason.code === "RECORD_REVOKED")) {
+          removedManagedRecordIdsRef.current.add(activePrepared.signed.id);
+          suppressedManagedRecordIdsRef.current.delete(activePrepared.signed.id);
+          knownManagedRecordsRef.current.delete(activePrepared.signed.id);
+          try {
+            removePersistedManagedTradeRecord(window.localStorage, activePrepared.signed.id);
+          } catch {
+            // The local tombstone still prevents the revoked capability from being recreated.
+          }
+          setManagedTradeRecords((current) => removeManagedTradeRecord(current, activePrepared.signed.id));
+          preparedTradeShareRef.current = null;
+          setPreparedTradeShare(null);
+          shareAttemptCacheRef.current = null;
+          setShareStatus("공개 확정 처리 중 다른 탭에서 기록이 철회되었습니다. 전달된 카드의 상세 링크는 열리지 않습니다.");
+          return;
+        }
+        rememberManagedRecord(
+          uncertainRecord,
+          finalizationStorageGeneration ?? managedStorageGenerationRef.current,
+        );
+        setShareStatus(reason instanceof Error
+          ? `오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. ${reason.message} 같은 버튼으로 확정을 재시도하거나 준비 기록을 철회하십시오.`
+          : "오류: 카드는 전달되었지만 상세 기록을 공개 확정하지 못했습니다. 같은 버튼으로 재시도하거나 준비 기록을 철회하십시오.");
+      }
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  async function cancelPreparedTrade() {
+    const prepared = preparedTradeShareRef.current;
+    if (!prepared || isSharing) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    try {
+      await revokeKnownRecord(
+        toManagedTradeRecord(prepared.signed, prepared.revokeToken),
+        prepared.deliveryOutcome
+          ? "전달 후 공개 확정하지 못한 준비 기록을 취소했습니다. 카드의 상세 링크는 열리지 않습니다."
+          : "준비한 비공개 카드와 거래 기록을 폐기했습니다.",
+      );
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  async function revokeManagedTradeRecord(record: ManagedTradeRecord) {
+    if (isSharing) return;
+    const confirmationMessage = record.lifecycle === "finalized"
+      ? `공개 링크를 비활성화하시겠습니까?\n식별자: ${record.id}\n비활성화하면 이 링크로 기록을 열 수 없으며 되돌릴 수 없습니다.`
+      : `준비 기록을 취소하시겠습니까?\n식별자: ${record.id}\n이 작업은 되돌릴 수 없습니다.`;
+    if (!window.confirm(confirmationMessage)) return;
+    isSharingRef.current = true;
+    setIsSharing(true);
+    try {
+      await revokeKnownRecord(
+        record,
+        record.lifecycle === "finalized"
+          ? "공개 링크를 비활성화했습니다. 기존 상세 링크로 기록을 열 수 없습니다."
+          : "준비 기록을 취소했습니다. 전달된 카드의 상세 링크는 열리지 않습니다.",
+      );
+    } finally {
+      isSharingRef.current = false;
+      setIsSharing(false);
+      releasePreparedReference();
+    }
+  }
+
+  useEffect(() => {
+    const prepared = preparedTradeShare;
+    if (!prepared) {
+      autoRevokingRecordIdRef.current = "";
+      return;
+    }
+    if (preparedShareIsCurrent && shareImageAllowed) {
+      if (!isSharingRef.current) autoRevokingRecordIdRef.current = "";
+      return;
+    }
+    if (isSharingRef.current || autoRevokingRecordIdRef.current === prepared.signed.id) return;
+
+    autoRevokingRecordIdRef.current = prepared.signed.id;
+    isSharingRef.current = true;
+    void (async () => {
+      setIsSharing(true);
+      try {
+        await revokeKnownRecord(
+          toManagedTradeRecord(prepared.signed, prepared.revokeToken),
+          "거래 조건 또는 시세가 바뀌어 비공개 준비 기록을 자동으로 폐기했습니다.",
+        );
+      } finally {
+        isSharingRef.current = false;
+        setIsSharing(false);
+        if (!preparedTradeShareRef.current && !paymentLockRef.current) {
+          const pendingSnapshot = pendingMarketSnapshotRef.current;
+          if (pendingSnapshot) {
+            pendingMarketSnapshotRef.current = null;
+            applyMarketSnapshot(pendingSnapshot, true);
+          }
+        }
+      }
+    })();
+  }, [applyMarketSnapshot, preparedShareIsCurrent, preparedTradeShare, revokeKnownRecord, shareImageAllowed]);
 
   function changeBitcoinDisplayUnit(nextUnit: BitcoinDisplayUnit) {
     if (nextUnit === bitcoinDisplayUnit) return;
@@ -1065,12 +2167,53 @@ export function P2PTradeTool() {
     if (nextPremium !== null) setPremiumInput(String(nextPremium));
   }
 
+  function changeTradeRole(nextRole: TradeRole) {
+    if (nextRole === tradeRole) return;
+    if (amountBasis === "krw") {
+      const nextKrw = quote ? String(quote.paymentKrw) : krwAmount;
+      setKrwAmounts((current) => ({ ...current, [nextRole]: nextKrw }));
+      setAmountBasisByRole((current) => ({ ...current, [nextRole]: "krw" }));
+    } else {
+      const nextBitcoin = quote
+        ? bitcoinDisplayUnit === "btc" ? satsToBtcInput(quote.sats) : String(quote.sats)
+        : bitcoinAmountInput;
+      setBitcoinAmountInputs((current) => ({ ...current, [nextRole]: nextBitcoin }));
+      setAmountBasisByRole((current) => ({ ...current, [nextRole]: "bitcoin" }));
+    }
+    setTradeRole(nextRole);
+    setDraftStatus("역할을 바꾸어도 현재 거래 금액과 입력 단위를 유지했습니다.");
+  }
+
+  async function copyVerificationUrl(url: string) {
+    if (!url) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(url);
+      setShareStatus("상세 정보 링크를 클립보드에 복사했습니다.");
+    } catch {
+      setShareStatus("오류: 상세 정보 링크를 자동으로 복사하지 못했습니다. 링크를 직접 열어 복사해 주세요.");
+    }
+  }
+
   return (
     <section
       className={`trade-tool ${draftHydrated ? "is-draft-hydrated" : "is-draft-hydrating"}`}
       aria-labelledby="tool-title"
       aria-busy={!draftHydrated}
     >
+      {managedTradeRecordsHydrated && !isSharing
+        ? finalizingManagedTradeRecords.map((record) => (
+            <FinalizingTradeRecordReconciler
+              key={record.id}
+              record={record}
+              acquirePermit={reconciliationScheduler.acquire}
+              readStorageGeneration={readManagedStorageGeneration}
+              onFinalized={handleFinalizingRecordFinalized}
+              onInvalidCapability={handleFinalizingRecordInvalidCapability}
+              onMissing={handleFinalizingRecordMissing}
+            />
+          ))
+        : null}
       <article className="capture-card" data-capture-card>
         <header className="tool-heading">
           <div className="brand-line">
@@ -1080,13 +2223,15 @@ export function P2PTradeTool() {
           <button
             className="refresh-button"
             type="button"
-            aria-label={verifiedReceiveInfo
-              ? "결제 QR 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
+            aria-label={marketReferenceLocked
+              ? paymentReferenceLocked
+                ? "결제 QR 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
+                : "준비한 거래 기록의 금액을 유지하는 동안 시세 새로고침을 사용할 수 없습니다"
               : marketState === "loading" ? "업비트 시세와 온체인 수수료율 조회 중" : "업비트 시세와 온체인 수수료율 새로고침"}
             onClick={() => void loadMarket()}
-            disabled={marketState === "loading" || isSharing || Boolean(verifiedReceiveInfo)}
+            disabled={marketState === "loading" || isSharing || marketReferenceLocked}
           >
-            {verifiedReceiveInfo ? "금액 고정 중" : marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
+            {marketReferenceLocked ? "금액 고정 중" : marketState === "loading" ? "시세 조회 중" : "시세 새로고침"}
           </button>
         </header>
 
@@ -1095,8 +2240,8 @@ export function P2PTradeTool() {
             <span>{referenceLabel}</span>
             <strong>{formatKrw(referencePrice)} <small>/ BTC</small></strong>
             <small className="live-market-time">
-              {verifiedReceiveInfo
-                ? <>결제 QR 금액 고정 · {formatTime(referenceTime)}</>
+              {marketReferenceLocked
+                ? <>{paymentReferenceLocked ? "결제 QR" : "공유 카드"} 금액 고정 · {formatTime(referenceTime)}</>
                 : <LiveMarketTime active={livePriceActive} tradeObservedAt={referenceTime} />}
             </small>
           </div>
@@ -1120,19 +2265,19 @@ export function P2PTradeTool() {
             공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
           </p>
         ) : null}
+        {draftStatus ? <p className="visually-hidden" role="status">{draftStatus}</p> : null}
 
         <fieldset className="role-fieldset">
           <legend>
             <span>나는 비트코인을</span>
-            <small>시세는 합의의 기준일 뿐입니다.</small>
           </legend>
           <div className="role-options">
             <label htmlFor="trade-role-buyer" aria-label="비트코인을 삽니다. 원화를 보내고 비트코인을 받습니다.">
-              <input id="trade-role-buyer" type="radio" name="trade-role" checked={tradeRole === "buyer"} onChange={() => setTradeRole("buyer")} />
+              <input id="trade-role-buyer" type="radio" name="trade-role" checked={tradeRole === "buyer"} onChange={() => changeTradeRole("buyer")} />
               <span><strong>삽니다</strong><small>원화 보내고 BTC 받기</small></span>
             </label>
             <label htmlFor="trade-role-seller" aria-label="비트코인을 팝니다. 비트코인을 보내고 원화를 받습니다.">
-              <input id="trade-role-seller" type="radio" name="trade-role" checked={tradeRole === "seller"} onChange={() => setTradeRole("seller")} />
+              <input id="trade-role-seller" type="radio" name="trade-role" checked={tradeRole === "seller"} onChange={() => changeTradeRole("seller")} />
               <span><strong>팝니다</strong><small>BTC 보내고 원화 받기</small></span>
             </label>
           </div>
@@ -1164,7 +2309,7 @@ export function P2PTradeTool() {
                   const normalized = normalizeBtcInput(event.target.value);
                   if (normalized !== null) setBitcoinAmountInputs((current) => ({ ...current, [tradeRole]: normalized }));
                 }}
-                aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}`}
+                aria-describedby={`trade-rounding premium-note${bitcoinAmountError ? " bitcoin-amount-error" : ""}${tinyTradeWarning ? " tiny-trade-warning" : ""}${largeTradeKey ? " large-trade-warning" : ""}`}
                 aria-invalid={Boolean(bitcoinAmountError) || undefined}
               />
               <span className="amount-unit-control">
@@ -1184,8 +2329,8 @@ export function P2PTradeTool() {
             </span>
           </div>
 
-          <label className="field" htmlFor="seller-premium">
-            <span>판매자 프리미엄 (%)</span>
+          <div className="field">
+            <label htmlFor="seller-premium">판매자 프리미엄 (%)</label>
             <span className="input-with-unit">
               <input
                 id="seller-premium"
@@ -1200,6 +2345,7 @@ export function P2PTradeTool() {
                 <button
                   type="button"
                   onClick={() => adjustPremium(1)}
+                  disabled={premiumPercent !== null && premiumPercent >= MAX_PREMIUM_PERCENT}
                   aria-label="판매자 프리미엄 0.1% 올리기"
                   title="0.1% 올리기"
                 >
@@ -1216,11 +2362,25 @@ export function P2PTradeTool() {
                 </button>
               </span>
             </span>
-          </label>
+          </div>
           <p className="premium-note" id="premium-note">{premiumSummary}</p>
           {premiumError ? <p className="input-alert" id="premium-error" role="alert">{premiumError}</p> : null}
           {premiumWarning ? <p className="input-alert" id="premium-warning" role="status">기준 시세와 10% 이상 차이 납니다. 입력값을 다시 확인하세요.</p> : null}
           {bitcoinAmountError ? <p className="input-alert" id="bitcoin-amount-error" role="alert">{bitcoinAmountError}</p> : null}
+          {tinyTradeWarning ? <p className="input-alert" id="tiny-trade-warning" role="status">{tinyTradeWarning}</p> : null}
+          {largeTradeKey ? (
+            <div className="input-alert large-trade-confirmation" id="large-trade-warning" role="status">
+              <strong>계산된 원화 금액이 10억원 이상입니다.</strong>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={largeTradeConfirmed}
+                  onChange={(event) => setConfirmedLargeTradeKey(event.target.checked ? largeTradeKey : "")}
+                />
+                자릿수와 거래 금액을 다시 확인했습니다.
+              </label>
+            </div>
+          ) : null}
         </form>
 
         <section className="trade-result" aria-labelledby="result-title">
@@ -1240,8 +2400,8 @@ export function P2PTradeTool() {
           </header>
           {quote && multiplier !== null ? (
             <>
-              <output className="visually-hidden" aria-live="polite" aria-atomic="true">
-                {resultAnnouncement || currentResultAnnouncement}
+              <output className="visually-hidden" aria-live={resultLiveMode} aria-atomic="true">
+                {currentResultAnnouncement}
               </output>
               <dl>
                 <div className={`result-row transfer-row ${tradeRole === "seller" ? "primary" : ""}`}>
@@ -1257,7 +2417,7 @@ export function P2PTradeTool() {
                 </div>
                 <div className="result-row">
                   <dt>적용 BTC 단가</dt>
-                  <dd>{formatKrw(quote.appliedPrice)}<small>{referenceLabel} {formatKrw(referencePrice)} × {multiplier.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</small></dd>
+                  <dd>{formatKrw(quote.appliedPriceKrw)}<small>{referenceLabel} {formatKrw(referencePrice)} × {multiplier.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</small></dd>
                 </div>
               </dl>
             </>
@@ -1339,6 +2499,12 @@ export function P2PTradeTool() {
               <strong>입력한 거래 조건을 한 장의 카드로 만듭니다.</strong>
               <p>결제 QR은 선택 사항이며, 상세 링크에서 조건 확인과 주소·인보이스 복사가 가능합니다.</p>
             </div>
+            {recordPreviewOnly ? (
+              <p className="record-payment-state" role="status">
+                <strong>전체 기능 검수 환경에서 카드를 만들 수 있습니다.</strong>
+                <a href={`https://${STAGING_HOSTNAME}/?pwa-review=1`}>거래 기록·공유까지 시험하기</a>
+              </p>
+            ) : null}
             <div className="trade-image-funding">
               <label className="fund-source-field" htmlFor="buyer-funding-source">
                 <span>{fundingSourceFieldLabel}<small>선택 사항</small></span>
@@ -1359,35 +2525,138 @@ export function P2PTradeTool() {
                 conditionKey={receiveConditionKey}
                 ownerRole={tradeRole}
                 onResultChange={handleVerifiedReceiveInfo}
+                onLifecycleChange={handleReceiveInfoLifecycle}
               />
             ) : null}
-            {!paymentForRecord ? (
+            {paymentLifecycleBlocksShare ? (
+              <p className="record-payment-state" role="alert">
+                <strong>결제정보를 다시 확인해야 합니다.</strong>
+                <span>{receiveInfoLifecycleStatus === "stale"
+                  ? "역할 또는 금액이 달라졌습니다. 현재 조건으로 결제정보를 다시 만들거나 삭제해 주세요."
+                  : "인보이스가 만료되었거나 곧 만료됩니다. 새 인보이스를 발급하거나 결제정보를 삭제해 주세요."}</span>
+              </p>
+            ) : !paymentForRecord ? (
               <p className="record-payment-state" role="status">
                 <strong>결제정보 미포함</strong>
                 <span>카드에는 보관용 거래 기록 QR이 들어갑니다.</span>
               </p>
             ) : null}
+            <aside className="share-disclosure" aria-label="거래 기록 저장과 공개 안내">
+              <strong>공유 전 확인</strong>
+              <p>공유하거나 저장하면 조건과 포함한 수취정보가 링크로 공개됩니다. 새 링크는 14일 후 자동으로 만료되며, 아래에서 바로 끌 수 있습니다.</p>
+              <a href="/privacy/">개인정보 처리 안내 보기</a>
+            </aside>
             <div className="tool-actions">
               <button
                 className="share-button"
                 type="button"
-                onClick={() => void shareTrade()}
-                disabled={!shareImageAllowed || isSharing}
+                onClick={() => {
+                  if (preparedShareIsCurrent) void sharePreparedTrade();
+                  else void prepareTradeShare();
+                }}
+                disabled={isSharing || !shareImageAllowed || (Boolean(preparedTradeShare) && !preparedShareIsCurrent)}
                 aria-busy={isSharing}
               >
-                {isSharing
-                  ? "거래 기록 카드 만드는 중"
-                  : stalePrice
-                    ? "시세 새로고침 후 공유"
-                    : "거래 기록 카드 공유"}
+                {recordPreviewOnly ? "전체 기능 검수 환경에서 준비" : isSharing
+                  ? preparedTradeShare?.deliveryOutcome
+                    ? "상세 기록 공개 확정 중"
+                    : preparedTradeShare ? "공유 처리 중" : "거래 기록 카드 준비 중"
+                  : preparedShareIsCurrent
+                    ? preparedTradeShare?.deliveryOutcome ? "상세 기록 공개 확정 재시도" : "공유 창 열기"
+                  : !largeTradeConfirmed
+                    ? "고액 거래 확인 후 준비"
+                    : paymentLifecycleBlocksShare
+                      ? "결제정보 재확인 후 준비"
+                      : stalePrice
+                        ? "시세 새로고침 후 준비"
+                        : "거래 기록 카드 준비"}
               </button>
+              {preparedTradeShare ? (
+                <button
+                  className="share-cancel-button"
+                  type="button"
+                  onClick={() => void cancelPreparedTrade()}
+                  disabled={isSharing}
+                >
+                  준비 기록 취소
+                </button>
+              ) : null}
               <p
                 className={`share-status ${shareStatusIsError ? "is-error" : shareStatus ? "is-feedback" : "is-idle"}`}
                 aria-live="polite"
                 role={shareStatusIsError ? "alert" : undefined}
               >
-                {shareStatus || (!isSharing ? "상세 링크는 생성 후 180일간 열 수 있습니다." : "")}
+                {shareStatus || (!isSharing && !recordPreviewOnly ? "준비만 한 카드는 비공개이며 15분 후 만료됩니다." : "")}
               </p>
+              {managedTradeRecords.length > 0 ? (
+                <details
+                  ref={managedTradeRecordsDetailsRef}
+                  className="managed-trade-records"
+                >
+                  <summary>
+                    {managedTradeRecords.every((record) => record.lifecycle === "finalized")
+                      ? `공개 링크 ${managedTradeRecords.length}개 관리`
+                      : `거래 기록 ${managedTradeRecords.length}개 관리`}
+                  </summary>
+                  <div className="managed-trade-records-content">
+                    <p>이 브라우저에서 만든 기록과 공개 링크입니다.</p>
+                    {managedTradeRecords.some((record) => (
+                      record.lifecycle === "finalized" && record.persistence === "memory-only"
+                    )) ? (
+                      <p className="is-error" role="alert">저장하지 못한 공개 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 링크를 비활성화하십시오.</p>
+                    ) : null}
+                    {managedTradeRecords.some((record) => (
+                      record.lifecycle !== "finalized" && record.persistence === "memory-only"
+                    )) ? (
+                      <p className="is-error" role="alert">저장하지 못한 준비 기록의 관리 권한이 있습니다. 이 화면을 닫기 전에 재시도하거나 취소하십시오.</p>
+                    ) : null}
+                    <ul>
+                      {managedTradeRecords.map((record) => (
+                        <li key={record.id}>
+                          <span>
+                            <strong>{record.lifecycle === "finalized"
+                              ? "공개 기록"
+                              : record.lifecycle === "finalizing"
+                                ? "확정 상태 확인 필요"
+                                : "준비 기록"}</strong>
+                            <small>
+                              식별자 <code>{record.id}</code> · <time dateTime={managedTradeRecordDisplayDeadline(record)}>
+                                {formatManagedRecordExpiry(managedTradeRecordDisplayDeadline(record))} {record.lifecycle === "finalizing" ? "확인 기한" : "만료"}
+                              </time>
+                            </small>
+                          </span>
+                          <div className="managed-record-actions">
+                            {record.lifecycle === "finalized" ? (
+                              <>
+                                <a className="managed-record-action" href={record.verificationUrl} target="_blank" rel="noreferrer">링크 열기</a>
+                                <button
+                                  className="managed-record-action"
+                                  type="button"
+                                  onClick={() => void copyVerificationUrl(record.verificationUrl)}
+                                  disabled={isSharing}
+                                >
+                                  링크 복사
+                                </button>
+                              </>
+                            ) : null}
+                            <button
+                              className="managed-record-action is-destructive"
+                              type="button"
+                              onClick={() => void revokeManagedTradeRecord(record)}
+                              disabled={isSharing}
+                              aria-label={record.lifecycle === "finalized"
+                                ? `공개 기록 ${record.id} 링크 비활성화`
+                                : `확정 전 기록 ${record.id} 취소`}
+                            >
+                              {record.lifecycle === "finalized" ? "공개 링크 비활성화" : "준비 기록 취소"}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
+              ) : null}
             </div>
           </div>
 

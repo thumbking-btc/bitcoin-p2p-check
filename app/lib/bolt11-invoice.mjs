@@ -126,7 +126,15 @@ function exactlyOne(fields, type, expectedLength, message) {
   return entries[0];
 }
 
-function validateDescription(fields) {
+function constantTimeEqual(left, right) {
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
+}
+
+function validateDescription(fields, expectedDescriptionHash) {
   const descriptions = fields.get("d") ?? [];
   const hashes = fields.get("h") ?? [];
   if ((descriptions.length === 1) === (hashes.length === 1)) {
@@ -135,7 +143,10 @@ function validateDescription(fields) {
   if (descriptions.length > 1 || hashes.length > 1 || (hashes[0] && hashes[0].length !== 52)) {
     fail("DESCRIPTION", "라이트닝 인보이스 설명 필드를 확인하지 못했습니다.");
   }
-  if (hashes[0]) wordsToBytesStrict(hashes[0]);
+  const descriptionHash = hashes[0] ? wordsToBytesStrict(hashes[0]) : null;
+  if (descriptionHash && descriptionHash.length !== 32) {
+    fail("DESCRIPTION", "라이트닝 인보이스 설명 해시를 확인하지 못했습니다.");
+  }
   if (descriptions[0]) {
     const bytes = wordsToBytesStrict(descriptions[0]);
     if (bytes.length > 639) fail("DESCRIPTION", "라이트닝 인보이스 설명이 너무 깁니다.");
@@ -143,6 +154,13 @@ function validateDescription(fields) {
       new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
       fail("DESCRIPTION", "라이트닝 인보이스 설명의 UTF-8 형식을 확인하지 못했습니다.");
+    }
+  }
+  if (expectedDescriptionHash !== undefined) {
+    // Current LUD-06 permits a normal d-only invoice. When a provider elects
+    // to use BOLT11 h, bind it to the exact LNURL metadata preimage we have.
+    if (descriptionHash && !constantTimeEqual(descriptionHash, expectedDescriptionHash)) {
+      fail("DESCRIPTION_HASH_MISMATCH", "LNURL-pay 인보이스와 metadata가 일치하지 않습니다.");
     }
   }
 }
@@ -186,6 +204,12 @@ export function validateBolt11Invoice(input, options = {}) {
   if (typeof options.expectedSats !== "bigint" || options.expectedSats < 1n || options.expectedSats > MAX_SATS) {
     fail("EXPECTED_AMOUNT", "거래의 정확한 사토시를 확인하지 못했습니다.");
   }
+  if (
+    options.expectedDescriptionHash !== undefined
+    && (!(options.expectedDescriptionHash instanceof Uint8Array) || options.expectedDescriptionHash.length !== 32)
+  ) {
+    fail("EXPECTED_DESCRIPTION_HASH", "예상한 인보이스 설명 해시를 확인하지 못했습니다.");
+  }
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1_000);
   const minimumRemainingSeconds = options.minimumRemainingSeconds ?? 60;
   if (!Number.isSafeInteger(nowSeconds) || nowSeconds <= 0 || !Number.isSafeInteger(minimumRemainingSeconds) || minimumRemainingSeconds < 0) {
@@ -224,7 +248,7 @@ export function validateBolt11Invoice(input, options = {}) {
   const paymentHashWords = exactlyOne(fields, "p", 52, "결제 해시 하나가 있는 인보이스만 사용할 수 있습니다.");
   const paymentSecretWords = exactlyOne(fields, "s", 52, "결제 비밀값 하나가 있는 최신 라이트닝 인보이스만 사용할 수 있습니다.");
   wordsToBytesStrict(paymentSecretWords);
-  validateDescription(fields);
+  validateDescription(fields, options.expectedDescriptionHash);
   if ((fields.get("f") ?? []).length > 0) fail("FALLBACK", "온체인 fallback이 포함된 인보이스는 별도 방식 거래에서 사용할 수 없습니다.");
   if ((fields.get("n") ?? []).length > 1 || ((fields.get("n") ?? [])[0]?.length ?? 53) !== 53) fail("PAYEE", "수취 노드 필드를 확인하지 못했습니다.");
   if ((fields.get("x") ?? []).length > 1 || (fields.get("9") ?? []).length > 1) fail("TAG_DUPLICATE", "중복된 인보이스 필드를 사용할 수 없습니다.");

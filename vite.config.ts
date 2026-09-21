@@ -14,6 +14,10 @@ export default defineConfig(async () => {
     plugins: [
       vinext(),
       cloudflare({
+        // Static export and local Vite execution use the isolated preview
+        // bindings, so production KV and required secrets are never loaded by
+        // the build toolchain.
+        configPath: "./wrangler.preview.jsonc",
         // Static export still needs Vinext's RSC handler while prerendering.
         // This build-only override does not change wrangler.jsonc: deploys use
         // the small API-only worker/index.ts entry instead.

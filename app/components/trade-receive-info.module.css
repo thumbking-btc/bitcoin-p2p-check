@@ -163,6 +163,13 @@
   gap: 5px;
 }
 
+.inputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .field > label {
   color: var(--muted);
   font-size: 13px;

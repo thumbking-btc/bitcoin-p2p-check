@@ -3,6 +3,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_BOLT11_LENGTH, validateBolt11Invoice } from "../lib/bolt11-invoice.mjs";
 import { createOnchainRequest } from "../lib/onchain-request.mjs";
+import { getPaymentExpiryState, PAYMENT_EXPIRING_THRESHOLD_SECONDS } from "../lib/payment-lifecycle";
+import { normalizeLightningAddress } from "../lib/lightning-address-normalize";
+import { InvoiceRequestError, readInvoiceResponse, UNKNOWN_INVOICE_MESSAGE } from "../lib/request-feedback.mjs";
 import styles from "./trade-receive-info.module.css";
 
 export type ReceiveRail = "onchain" | "lightning";
@@ -18,6 +21,11 @@ export type VerifiedReceiveInfo = Readonly<{
   address?: string;
   expiresAt?: number;
 }>;
+export type ReceiveInfoLifecycleState =
+  | Readonly<{ status: "empty"; info: null; remainingSeconds: null }>
+  | Readonly<{ status: "ready"; info: VerifiedReceiveInfo; remainingSeconds: number | null }>
+  | Readonly<{ status: "stale"; info: VerifiedReceiveInfo; remainingSeconds: number | null }>
+  | Readonly<{ status: "expiring" | "expired"; info: VerifiedReceiveInfo; remainingSeconds: number }>;
 type Result = VerifiedReceiveInfo & {
   conditionKey: string;
   ownerRole: "buyer" | "seller";
@@ -32,7 +40,7 @@ type LightningPayResponse = {
   address?: string;
 };
 
-const MIN_SHARE_REMAINING_SECONDS = 120;
+const MIN_SHARE_REMAINING_SECONDS = PAYMENT_EXPIRING_THRESHOLD_SECONDS;
 
 function formatSats(value: number) {
   return `${value.toLocaleString("ko-KR")} sats`;
@@ -64,7 +72,12 @@ function invoiceLike(value: string) {
 }
 
 function lightningAddressLike(value: string) {
-  return /^[^\s@]+@[^\s@]+$/u.test(value.trim());
+  try {
+    normalizeLightningAddress(value.trim());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseBip21AmountSats(value: string) {
@@ -103,15 +116,7 @@ function onchainTargetFromInput(value: string, amountSats: number) {
 }
 
 async function readLightningPayResponse(response: Response): Promise<LightningPayResponse> {
-  const text = await response.text();
-  if (!text) throw new Error(`라이트닝 결제 요청 서버가 빈 응답을 반환했습니다. (HTTP ${response.status})`);
-  try {
-    return JSON.parse(text) as LightningPayResponse;
-  } catch {
-    const contentType = response.headers.get("content-type") ?? "알 수 없음";
-    const preview = text.replace(/\s+/gu, " ").trim().slice(0, 120);
-    throw new Error(`라이트닝 API가 JSON이 아닌 응답을 반환했습니다. (HTTP ${response.status}, ${contentType})${preview ? ` · ${preview}` : ""}`);
-  }
+  return await readInvoiceResponse(response) as LightningPayResponse;
 }
 
 export type TradeReceiveInfoProps = {
@@ -119,9 +124,14 @@ export type TradeReceiveInfoProps = {
   conditionKey: string;
   ownerRole: "buyer" | "seller";
   onResultChange: (info: VerifiedReceiveInfo | null) => void;
+  /**
+   * Unlike the compatibility callback above, this reports why an existing
+   * payment request became unusable instead of reducing every state to null.
+   */
+  onLifecycleChange?: (state: ReceiveInfoLifecycleState) => void;
 };
 
-export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange }: TradeReceiveInfoProps) {
+export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange, onLifecycleChange }: TradeReceiveInfoProps) {
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
@@ -131,36 +141,41 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [issuanceUnknown, setIssuanceUnknown] = useState(false);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1_000));
   const generationRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
   const onResultChangeRef = useRef(onResultChange);
+  const onLifecycleChangeRef = useRef(onLifecycleChange);
 
-  const remainingSeconds = useMemo(() => {
-    if (!result?.expiresAt) return null;
-    return Math.max(0, result.expiresAt - nowSeconds);
-  }, [nowSeconds, result?.expiresAt]);
+  const paymentExpiry = useMemo(
+    () => getPaymentExpiryState(result?.expiresAt, nowSeconds),
+    [nowSeconds, result?.expiresAt],
+  );
+  const remainingSeconds = paymentExpiry.remainingSeconds;
 
   const resultStale = Boolean(result && (
     expectedSats !== result.amountSats
     || conditionKey !== result.conditionKey
     || ownerRole !== result.ownerRole
   ));
-  const resultExpiring = remainingSeconds !== null && remainingSeconds < MIN_SHARE_REMAINING_SECONDS;
+  const resultExpiring = paymentExpiry.status === "expiring" || paymentExpiry.status === "expired";
   const resultReady = Boolean(result && !resultStale && !resultExpiring);
 
   useEffect(() => {
     generationRef.current += 1;
     requestAbortRef.current?.abort();
     requestAbortRef.current = null;
+    queueMicrotask(() => { if (!requestAbortRef.current) setBusy(false); });
   }, [conditionKey, expectedSats, ownerRole]);
 
   useLayoutEffect(() => {
     onResultChangeRef.current = onResultChange;
-  }, [onResultChange]);
+    onLifecycleChangeRef.current = onLifecycleChange;
+  }, [onLifecycleChange, onResultChange]);
 
-  const verifiedInfo = useMemo<VerifiedReceiveInfo | null>(() => {
-    if (!result || !resultReady) return null;
+  const resultInfo = useMemo<VerifiedReceiveInfo | null>(() => {
+    if (!result) return null;
     return Object.freeze({
       kind: result.kind,
       rail: result.rail,
@@ -170,17 +185,38 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       address: result.address,
       expiresAt: result.expiresAt,
     });
-  }, [result, resultReady]);
+  }, [result]);
+
+  const lifecycleState = useMemo<ReceiveInfoLifecycleState>(() => {
+    if (!resultInfo) return Object.freeze({ status: "empty", info: null, remainingSeconds: null });
+    if (paymentExpiry.status === "expired") {
+      return Object.freeze({ status: "expired", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    if (paymentExpiry.status === "expiring") {
+      return Object.freeze({ status: "expiring", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    if (resultStale) {
+      return Object.freeze({ status: "stale", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+    }
+    return Object.freeze({ status: "ready", info: resultInfo, remainingSeconds: paymentExpiry.remainingSeconds });
+  }, [paymentExpiry, resultInfo, resultStale]);
+
+  const verifiedInfo = resultReady && lifecycleState.status === "ready" ? lifecycleState.info : null;
 
   useLayoutEffect(() => {
     onResultChangeRef.current(verifiedInfo);
   }, [verifiedInfo]);
+
+  useLayoutEffect(() => {
+    onLifecycleChangeRef.current?.(lifecycleState);
+  }, [lifecycleState]);
 
   useEffect(() => () => {
     generationRef.current += 1;
     requestAbortRef.current?.abort();
     requestAbortRef.current = null;
     onResultChangeRef.current(null);
+    onLifecycleChangeRef.current?.(Object.freeze({ status: "empty", info: null, remainingSeconds: null }));
   }, []);
 
   useEffect(() => {
@@ -188,7 +224,14 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     const tick = () => setNowSeconds(Math.floor(Date.now() / 1_000));
     tick();
     const timer = window.setInterval(tick, 1_000);
-    return () => window.clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [result?.expiresAt]);
 
   function clear() {
@@ -199,6 +242,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     setResult(null);
     setError("");
     setFeedback("");
+    setIssuanceUnknown(false);
     setBusy(false);
   }
 
@@ -264,8 +308,10 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   }
 
   function makeLightningAddressResult(source: string, amountSats: number): Result {
-    const address = source.trim();
-    if (!lightningAddressLike(address)) {
+    let address: string;
+    try {
+      address = normalizeLightningAddress(source.trim()).address;
+    } catch {
       throw new Error("주소만 포함하려면 사용자명@도메인 형식의 라이트닝 주소를 입력하십시오.");
     }
     return {
@@ -281,7 +327,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   }
 
   async function build(forceOnchainAmountIncluded?: boolean) {
-    if (busy) return;
+    if (busy || requestAbortRef.current) return;
     clear();
     if (!expectedSats) {
       setError("거래 금액을 먼저 계산하십시오.");
@@ -300,10 +346,10 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
           conditionKey,
           ownerRole,
           payload: amountIncluded ? request.uri : request.address,
-          copyTarget: request.address,
+          copyTarget: amountIncluded ? request.uri : request.address,
           address: request.address,
         });
-        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소만 거래 기록 카드에 포함합니다.");
+        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소를 결제정보로 준비했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
       }
@@ -316,8 +362,10 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         return;
       }
       try {
-        setResult(makeLightningInvoiceResult(invoice, expectedSats, false));
-        setFeedback("인보이스의 메인넷·금액·서명·만료시간을 확인했습니다.");
+        const next = makeLightningInvoiceResult(invoice, expectedSats, false);
+        setNowSeconds(Math.floor(Date.now() / 1_000));
+        setResult(next);
+        setFeedback("인보이스의 금액·서명·만료 여부를 확인했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "라이트닝 인보이스를 확인하지 못했습니다.");
       }
@@ -354,33 +402,37 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       });
       const data = await readLightningPayResponse(response);
       if (!response.ok || !data.ok || typeof data.invoice !== "string" || data.amountSats !== expectedSats) {
-        throw new Error(data.message || `라이트닝 수취정보에서 인보이스를 만들지 못했습니다. (HTTP ${response.status})`);
+        throw new InvoiceRequestError(UNKNOWN_INVOICE_MESSAGE, true);
       }
       if (generationRef.current !== generation) return;
       const next = makeLightningInvoiceResult(data.invoice, expectedSats, true);
       if (generationRef.current !== generation) return;
+      setNowSeconds(Math.floor(Date.now() / 1_000));
       setResult(next);
       const normalized = isAddress ? data.address : data.normalizedSource;
       if (typeof normalized === "string") setLightningSource(normalized);
       setError("");
-      setFeedback("지금 결제할 수 있는 새 고정금액 인보이스를 만들었습니다.");
+      setFeedback("받는 지갑에서 인보이스를 발급받아 현재 금액과 만료를 확인했습니다. 입금 완료 여부는 받는 지갑에서 확인합니다.");
     } catch (reason) {
       if (generationRef.current !== generation) return;
-      if (controller.signal.aborted) {
-        setError("라이트닝 지갑 서비스의 응답 시간이 초과되었습니다. 다시 시도하거나 인보이스를 직접 입력하십시오.");
+      if (controller.signal.aborted || reason instanceof TypeError || (reason instanceof InvoiceRequestError && reason.issuanceUnknown)) {
+        setIssuanceUnknown(true);
+        setError(UNKNOWN_INVOICE_MESSAGE);
       } else {
         setError(reason instanceof Error ? reason.message : "라이트닝 결제 요청을 만들지 못했습니다.");
       }
       setFeedback("");
     } finally {
       window.clearTimeout(timeout);
-      if (requestAbortRef.current === controller) requestAbortRef.current = null;
-      setBusy(false);
+      if (requestAbortRef.current === controller) {
+        requestAbortRef.current = null;
+        setBusy(false);
+      }
     }
   }
 
   const buildLabel = lightningMode === "address"
-      ? busy ? "인보이스 요청 중" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제 직전 인보이스 만들기"
+      ? busy ? "인보이스 요청 중" : issuanceUnknown ? "지갑 확인 후 새로 요청" : result?.kind === "lightning-generated" ? "새 인보이스 만들기" : "결제용 인보이스 만들기"
       : "인보이스 확인";
 
   function includeLightningAddress() {
@@ -391,23 +443,21 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     }
     try {
       setResult(makeLightningAddressResult(lightningSource, expectedSats));
-      setFeedback("라이트닝 주소를 거래 기록 카드에 포함합니다.");
+      setFeedback("라이트닝 주소를 결제정보로 준비했습니다.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "라이트닝 주소를 확인하지 못했습니다.");
     }
   }
 
-  const inputRowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px", alignItems: "stretch" } as const;
-
   return (
     <section className={styles.section} aria-labelledby="receive-info-title">
       <div className={styles.header}>
-        <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 정보" : "구매자가 제공한 BTC 받을 정보"} <span>(선택 사항)</span></h3>
+        <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 곳" : "구매자가 제공한 BTC 받을 곳"} <span>(선택 사항)</span></h3>
       </div>
       <p className={styles.intro}>{ownerRole === "buyer"
-        ? "내가 받을 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."
-        : "구매자가 확인해 준 주소나 인보이스를 거래 기록 카드에 함께 넣을 수 있습니다."}</p>
-      <p className={styles.amountNote}>현재 거래에서 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
+        ? "받을 주소나 인보이스를 거래 기록 카드에 포함할 수 있습니다."
+        : "구매자가 확인해 준 주소나 인보이스를 거래 기록 카드에 포함할 수 있습니다."}</p>
+      <p className={styles.amountNote}>현재 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
 
       <fieldset className={styles.railPicker} disabled={busy}>
         <legend>BTC 전송 방식</legend>
@@ -417,81 +467,87 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         </label>
         <label>
           <input aria-label="라이트닝" type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} />
-          <span><strong>라이트닝</strong><small>주소·LNURL 또는 인보이스</small></span>
+          <span><strong>라이트닝</strong><small>주소 또는 인보이스</small></span>
         </label>
       </fieldset>
 
       {rail === "onchain" ? (
         <div className={styles.field}>
           <label htmlFor="receive-onchain">온체인 수취 주소</label>
-          <div style={inputRowStyle}>
+          <div className={styles.inputRow}>
             <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
-          <small>주소만 포함하거나, 현재 거래 금액을 넣은 BIP21 결제 QR을 만들 수 있습니다.</small>
+          <small>금액 포함 QR을 만들면 받을 주소와 현재 거래 금액을 한 번에 확인할 수 있습니다.</small>
         </div>
       ) : (
         <>
           <div className={styles.modeRow}>
             <p>{lightningMode === "address"
-              ? "주소만 포함하거나, 실제 결제에 사용할 고정금액 인보이스를 만들 수 있습니다."
-              : "지갑에서 직접 만든 인보이스를 거래 금액과 대조합니다."}</p>
+              ? "라이트닝 주소의 지갑 서비스에 현재 금액의 인보이스를 요청합니다."
+              : "지갑에서 만든 인보이스가 현재 거래 금액과 맞는지 확인합니다."}</p>
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
             </button>
           </div>
           {lightningMode === "address" ? (
             <div className={styles.field}>
-              <label htmlFor="receive-lightning">라이트닝 주소 / LNURL-pay</label>
-              <div style={inputRowStyle}>
-                <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com 또는 LNURL1..." />
+              <label htmlFor="receive-lightning">라이트닝 주소</label>
+              <div className={styles.inputRow}>
+                <input id="receive-lightning" className={styles.input} value={lightningSource} disabled={busy} onChange={(event) => changeLightningSource(event.target.value)} placeholder="username@example.com" />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("lightning")}>붙여넣기</button>
               </div>
-                  <small>주소만 포함하면 만료 없이 주소를 공유합니다. 인보이스 만들기는 현재 거래 금액의 새 BOLT11을 요청합니다.</small>
+              <small>인보이스 발급이 지원되지 않으면 지갑에서 직접 만든 인보이스를 입력할 수 있습니다.</small>
             </div>
           ) : (
             <div className={styles.field}>
               <label htmlFor="receive-invoice">BOLT11 인보이스</label>
-              <div style={inputRowStyle}>
-                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} onChange={(event) => { clear(); setInvoice(event.target.value); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+              <div className={styles.inputRow}>
+                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} maxLength={MAX_BOLT11_LENGTH} onChange={(event) => { clear(); setInvoice(event.target.value.slice(0, MAX_BOLT11_LENGTH)); }} placeholder="lnbc... 또는 lightning:lnbc..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("invoice")}>붙여넣기</button>
               </div>
-              <small>메인넷·서명·만료시간과 현재 거래의 받을 sats가 정확히 같은지 확인합니다.</small>
+              <small>현재 거래 금액과 일치하고 만료되지 않은 인보이스인지 확인합니다.</small>
             </div>
           )}
         </>
       )}
 
-          <div className={styles.actions}>
-            {rail === "onchain" ? (
-              <>
-                <button className={styles.secondary} type="button" disabled={busy} onClick={() => void build(false)}>주소만 포함</button>
-                <button className={styles.primary} type="button" disabled={busy} onClick={() => void build(true)}>금액 포함 QR 만들기</button>
-              </>
-            ) : rail === "lightning" && lightningMode === "address" ? (
-              <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
-            ) : null}
-            {rail !== "onchain" ? <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button> : null}
-            <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>초기화</button>
-          </div>
+      <div className={styles.actions}>
+        {rail === "onchain" ? (
+          <>
+            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build(true)}>금액 포함 QR 만들기</button>
+            <button className={styles.secondary} type="button" disabled={busy} onClick={() => void build(false)}>주소만 포함</button>
+          </>
+        ) : lightningMode === "address" ? (
+          <>
+            <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+            <button className={styles.secondary} type="button" disabled={busy} onClick={includeLightningAddress}>주소만 포함</button>
+          </>
+        ) : (
+          <button className={styles.primary} type="button" disabled={busy} onClick={() => void build()}>{buildLabel}</button>
+        )}
+        <button className={styles.secondary} type="button" disabled={busy} onClick={() => { clear(); setOnchain(""); setLightningSource(""); setInvoice(""); }}>결제정보 지우기</button>
+      </div>
 
       {error ? <p className={`${styles.status} ${styles.error}`} role="alert">{error}</p> : feedback ? <p className={styles.status} role="status">{feedback}</p> : null}
 
       {result ? (
         <div className={styles.result}>
           <div className={styles.resultInfo}>
-                <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
+            <span className={styles.resultBadge}>{result.kind === "onchain-address" ? "온체인 주소" : result.kind === "onchain-request" ? "금액 포함 온체인" : result.kind === "lightning-address" ? "라이트닝 주소" : "라이트닝 인보이스"}</span>
             <strong className={styles.resultAmount}>{formatSats(result.amountSats)}</strong>
-            <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 초기화하면 최신 시세를 다시 반영합니다.</p>
-                <dl>
-                  <div className={styles.resultState}><dt>상태</dt><dd>카드에 포함됨</dd></div>
+            <p className={styles.lockNote}>이 결제정보를 사용하는 동안 거래 금액을 고정합니다. 새 시세로 다시 계산하려면 결제정보를 지우십시오.</p>
+            <dl>
+              <div className={styles.resultState}><dt>상태</dt><dd>{lifecycleState.status === "ready" ? "사용 가능" : lifecycleState.status === "expiring" ? "곧 만료 · 사용 중지" : lifecycleState.status === "expired" ? "만료 · 사용 중지" : "조건 변경 · 사용 중지"}</dd></div>
               {result.expiresAt ? <div><dt>만료</dt><dd>{formatExpiry(result.expiresAt)} · {remainingSeconds === null ? "—" : formatRemaining(remainingSeconds)}</dd></div> : null}
             </dl>
             {resultStale ? <p className={styles.stale} role="alert">거래 조건이 바뀌었습니다. 현재 금액으로 다시 만들어야 공유할 수 있습니다.</p> : null}
-                <details className={styles.resultDetails}>
-                  <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
+            {lifecycleState.status === "expiring" ? <p className={styles.stale} role="alert">인보이스가 2분 안에 만료되어 사용을 중지했습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
+            {lifecycleState.status === "expired" ? <p className={styles.stale} role="alert">인보이스가 만료되어 사용을 중지했습니다. 지갑에서 새 인보이스를 만들어 다시 확인하십시오.</p> : null}
+            <details className={styles.resultDetails}>
+              <summary>{result.kind === "lightning-invoice" || result.kind === "lightning-generated" ? "인보이스 보기" : "주소 보기"}</summary>
               <div className={styles.resultTarget}>
-                    <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
+                <span>{result.rail === "onchain" ? "온체인 주소" : result.kind === "lightning-address" ? "라이트닝 주소" : "BOLT11 인보이스"}</span>
                 <code>{result.copyTarget}</code>
               </div>
             </details>

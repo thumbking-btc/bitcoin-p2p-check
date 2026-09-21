@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { APP_VERSION } from "../lib/app-version";
+import { shouldDisableServiceWorker } from "../lib/deployment-environment.mjs";
+import { resolvePwaReviewOptIn } from "../lib/pwa-review.mjs";
 
 const CACHE_PREFIX = "bitcoin-p2p-check-";
 
-function isPreviewHostname(hostname: string) {
-  return hostname.startsWith("staging-")
-    || /^[0-9a-f]{8}-bitcoin-p2p-check\.thumbking-btc\.workers\.dev$/iu.test(hostname);
-}
-
 export function PwaRegistration() {
+  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
+
   useEffect(() => {
     const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
     document.documentElement.classList.toggle(
@@ -20,7 +19,18 @@ export function PwaRegistration() {
 
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
 
-    if (isPreviewHostname(window.location.hostname)) {
+    const annotatedEnvironment = document.documentElement.getAttribute("data-deployment-environment");
+    let pwaReviewOptIn = false;
+    try {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, window.localStorage);
+    } catch {
+      pwaReviewOptIn = resolvePwaReviewOptIn(window.location.search, null);
+    }
+    const serviceWorkerDisabledByDefault = shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment);
+    const serviceWorkerDisabled = pwaReviewOptIn
+      ? shouldDisableServiceWorker(window.location.hostname, annotatedEnvironment, true)
+      : serviceWorkerDisabledByDefault;
+    if (serviceWorkerDisabled) {
       void navigator.serviceWorker.getRegistrations()
         .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
         .catch(() => {});
@@ -37,14 +47,68 @@ export function PwaRegistration() {
       return;
     }
 
+    let disposed = false;
+    let reloading = false;
+    let registration: ServiceWorkerRegistration | null = null;
+    let trackedInstallingWorker: ServiceWorker | null = null;
+
+    const showWaitingWorker = () => {
+      if (!disposed && registration?.waiting && navigator.serviceWorker.controller) {
+        setWaitingWorker(registration.waiting);
+      }
+    };
+    const handleInstallingState = () => {
+      if (trackedInstallingWorker?.state === "installed") showWaitingWorker();
+    };
+    const handleUpdateFound = () => {
+      trackedInstallingWorker?.removeEventListener("statechange", handleInstallingState);
+      trackedInstallingWorker = registration?.installing ?? null;
+      trackedInstallingWorker?.addEventListener("statechange", handleInstallingState);
+    };
+    const handleControllerChange = () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
     const serviceWorkerUrl = `/sw.js?v=${encodeURIComponent(APP_VERSION)}`;
-    navigator.serviceWorker.register(serviceWorkerUrl, {
+    void navigator.serviceWorker.register(serviceWorkerUrl, {
       scope: "/",
       updateViaCache: "none",
+    }).then((value) => {
+      if (disposed) return;
+      registration = value;
+      showWaitingWorker();
+      registration.addEventListener("updatefound", handleUpdateFound);
+      void registration.update().catch(() => {});
     }).catch(() => {
       // 설치 지원이 없는 브라우저에서도 계산기는 그대로 동작합니다.
     });
+
+    return () => {
+      disposed = true;
+      registration?.removeEventListener("updatefound", handleUpdateFound);
+      trackedInstallingWorker?.removeEventListener("statechange", handleInstallingState);
+      navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
+    };
   }, []);
 
-  return null;
+  if (!waitingWorker) return null;
+
+  return (
+    <aside className="pwa-update-notice" aria-labelledby="pwa-update-title" role="status">
+      <div>
+        <strong id="pwa-update-title">새 버전이 준비되었습니다.</strong>
+        <p>작성 중인 내용을 확인한 뒤 새로고침하십시오.</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => waitingWorker.postMessage({ type: "SKIP_WAITING" })}
+      >
+        새 버전 적용
+      </button>
+      <button type="button" onClick={() => setWaitingWorker(null)}>나중에</button>
+    </aside>
+  );
 }

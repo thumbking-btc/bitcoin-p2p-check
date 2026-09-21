@@ -1,8 +1,13 @@
 import type { NextConfig } from "next";
+import { readBuildIdentity } from "./scripts/build-identity.mjs";
 
+const buildIdentity = readBuildIdentity();
 const nextConfig: NextConfig = {
-  // Vinext uses Next's export mode to prerender each App Router page into
-  // dist/client. Cloudflare can then serve HTML without starting the Worker.
+  // Vinext otherwise embeds a new random RSC compatibility ID into every build.
+  // Bind both identities to the exact source checkout, not the build machine.
+  deploymentId: buildIdentity,
+  generateBuildId: () => buildIdentity,
+  // Export HTML into dist/client; the secured static Worker serves it at runtime.
   output: "export",
   trailingSlash: true,
   images: {

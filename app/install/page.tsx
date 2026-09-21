@@ -23,6 +23,12 @@ export const metadata: Metadata = {
       },
     ],
   },
+  twitter: {
+    card: "summary_large_image",
+    title: "비트코인 P2P 계산기 홈 화면에 추가하기",
+    description: "기기에 맞는 설치 단계를 확인하거나 안내 이미지를 저장해 전달하세요.",
+    images: ["/install/iphone-guide-v1.png"],
+  },
 };
 
 const iphoneSteps = [

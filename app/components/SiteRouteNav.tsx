@@ -3,7 +3,7 @@
 import { APP_VERSION } from "../lib/app-version";
 
 type SiteRouteNavProps = {
-  current: "calculator" | "install";
+  current: "calculator" | "install" | "privacy";
 };
 
 export function SiteRouteNav({ current }: SiteRouteNavProps) {
@@ -18,6 +18,11 @@ export function SiteRouteNav({ current }: SiteRouteNavProps) {
         <span aria-current="page">홈 화면에 추가하는 방법</span>
       ) : (
         <a className="site-route-install" href="/install/">홈 화면에 추가하는 방법</a>
+      )}
+      {current === "privacy" ? (
+        <span aria-current="page">개인정보·데이터 안내</span>
+      ) : (
+        <a href="/privacy/">개인정보·데이터 안내</a>
       )}
       <span className="app-version" aria-label={`버전 ${APP_VERSION}`}>{`v${APP_VERSION}`}</span>
     </nav>
