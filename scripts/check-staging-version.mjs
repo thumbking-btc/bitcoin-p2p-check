@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 export const MAX_STAGING_VERSION_JSON_BYTES = 4 * 1_024 * 1_024;
 export const STAGING_WORKER_NAME = "bitcoin-p2p-check-staging";
 
-const WRANGLER_VERSION = "4.125.0";
+const WRANGLER_VERSION = "4.136.1";
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const WRANGLER_CLI_PATH = fileURLToPath(
   new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url),

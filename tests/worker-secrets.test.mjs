@@ -168,7 +168,7 @@ test("wires exact staging deployment, version, and secret gates while production
     packageJson.scripts["deploy:preview"],
     "npm run verify && npm run secrets:check:preview && wrangler deploy --config wrangler.preview.jsonc && npm run secrets:check:preview",
   );
-  assert.equal(packageJson.devDependencies.wrangler, "4.125.0");
+  assert.equal(packageJson.devDependencies.wrangler, "4.136.1");
   assert.deepEqual(getWorkerSecretProfile("production"), {
     config: "wrangler.jsonc",
     workerName: "bitcoin-p2p-check",
@@ -185,9 +185,9 @@ test("wires exact staging deployment, version, and secret gates while production
     expectedSecrets: [],
   });
   assert.throws(() => getWorkerSecretProfile("toString"), /production, staging 또는 preview/u);
-  assert.match(checker, /WRANGLER_VERSION = "4\.125\.0"/u);
+  assert.match(checker, /WRANGLER_VERSION = "4\.136\.1"/u);
   assert.match(checker, /"secret",\s*\r?\n\s*"list"[\s\S]*"--format",\s*\r?\n\s*"json"/u);
-  assert.match(versionChecker, /WRANGLER_VERSION = "4\.125\.0"/u);
+  assert.match(versionChecker, /WRANGLER_VERSION = "4\.136\.1"/u);
   assert.match(versionChecker, /"versions", "view"[\s\S]*"--json"/u);
   assert.match(stagingVersionChecker, /STAGING_WORKER_NAME = "bitcoin-p2p-check-staging"/u);
   assert.match(stagingVersionChecker, /"versions", "view", versionId/u);

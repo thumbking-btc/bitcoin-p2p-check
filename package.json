@@ -49,8 +49,8 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@cloudflare/vite-plugin": "1.53.1",
-    "@cloudflare/vitest-plugin": "1.0.0",
+    "@cloudflare/vite-plugin": "1.57.1",
+    "@cloudflare/vitest-plugin": "1.2.1",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.3.2",
     "@playwright/test": "1.62.1",
@@ -66,13 +66,13 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
     "react-server-dom-webpack": "19.2.8",
-    "sharp": "0.35.3",
+    "sharp": "0.35.4",
     "typescript": "5.9.3",
     "typescript-eslint": "8.68.0",
     "vinext": "1.0.0-beta.8",
     "vite": "8.2.2",
     "vitest": "4.1.11",
-    "wrangler": "4.125.0"
+    "wrangler": "4.136.1"
   },
   "type": "module"
 }

@@ -103,7 +103,7 @@ test("pins a staging-only deployments status command with bounded output", async
     new URL("../scripts/check-staging-deployment.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(checker, /WRANGLER_VERSION = "4\.125\.0"/u);
+  assert.match(checker, /WRANGLER_VERSION = "4\.136\.1"/u);
   assert.match(checker, /"deployments", "status"/u);
   assert.match(checker, /"--config", STAGING_CONFIG_PATH/u);
   assert.match(checker, /"--name", STAGING_WORKER_NAME/u);

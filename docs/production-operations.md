@@ -116,7 +116,7 @@ curl -sS -D - -o /dev/null "$PREVIEW_BASE_URL/api/trade-record/AAAAAAAAAAAAAAAA"
 
 `TRADE_RECORD_SIGNING_KEY`에는 고유한 `kid`, `kty: EC`, `crv: P-256`, `x`, `y`, `d`가 있어야 합니다. private `d`가 들어간 JWK 전체를 저장소, artifact, 로그, issue, GitHub Release, KV backup 또는 운영자 채팅에 넣지 마십시오. `.dev.vars*`와 `.env*`도 commit하지 마십시오.
 
-Wrangler 설정의 `secrets.required`는 배포에 필요한 secret 이름을 검증하지만 원격 secret을 선언적으로 삭제하지 않습니다. 설정에서 이름을 제거하거나 secret 없는 bundle을 배포해도 기존 원격 secret은 명시적으로 삭제하기 전까지 남을 수 있으므로, 설정 파일 allowlist만으로 격리를 판단하지 마십시오([Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)). 다음 검사는 Wrangler 4.125.0의 `secret list --format json` 출력을 크기 제한과 exact schema로 파싱하며 secret 값은 조회하지 않습니다.
+Wrangler 설정의 `secrets.required`는 배포에 필요한 secret 이름을 검증하지만 원격 secret을 선언적으로 삭제하지 않습니다. 설정에서 이름을 제거하거나 secret 없는 bundle을 배포해도 기존 원격 secret은 명시적으로 삭제하기 전까지 남을 수 있으므로, 설정 파일 allowlist만으로 격리를 판단하지 마십시오([Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)). 다음 검사는 Wrangler 4.136.1의 `secret list --format json` 출력을 크기 제한과 exact schema로 파싱하며 secret 값은 조회하지 않습니다.
 
 ```bash
 npm run secrets:check:production # TRADE_RECORD_SIGNING_KEY 하나만 허용

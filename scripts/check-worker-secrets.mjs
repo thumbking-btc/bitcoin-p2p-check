@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const MAX_WRANGLER_SECRET_LIST_BYTES = 65_536;
 
-const WRANGLER_VERSION = "4.125.0";
+const WRANGLER_VERSION = "4.136.1";
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const WRANGLER_CLI_PATH = fileURLToPath(
   new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url),

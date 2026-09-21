@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const MAX_STAGING_DEPLOYMENT_JSON_BYTES = 1_048_576;
 
-const WRANGLER_VERSION = "4.125.0";
+const WRANGLER_VERSION = "4.136.1";
 const STAGING_WORKER_NAME = "bitcoin-p2p-check-staging";
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const STAGING_CONFIG_PATH = path.join(PROJECT_ROOT, "wrangler.staging.jsonc");

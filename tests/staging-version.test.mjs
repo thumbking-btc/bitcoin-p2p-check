@@ -225,7 +225,7 @@ test("pins the staging-only Wrangler target and bounded subprocess", async () =>
     new URL("../scripts/check-staging-version.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(checker, /WRANGLER_VERSION = "4\.125\.0"/u);
+  assert.match(checker, /WRANGLER_VERSION = "4\.136\.1"/u);
   assert.match(checker, /"versions", "view", versionId/u);
   assert.match(checker, /"--config", STAGING_CONFIG_PATH/u);
   assert.match(checker, /"--name", STAGING_WORKER_NAME/u);

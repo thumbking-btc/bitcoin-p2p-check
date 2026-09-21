@@ -10,7 +10,7 @@ const STAGING_DEPLOY_SOURCE = ".verified-staging-worker/index.js";
 const VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const VERSION_TAG_PATTERN = /^[0-9a-f]{40}$/u;
 const APP_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$/u;
-const WRANGLER_VERSION = "4.125.0";
+const WRANGLER_VERSION = "4.136.1";
 
 function requireStagingWorkerName(expectedWorkerName) {
   if (expectedWorkerName !== STAGING_WORKER_NAME) {

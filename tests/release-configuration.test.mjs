@@ -207,7 +207,7 @@ test("pins the exact version returned by the atomic staging deploy", () => {
   const session = {
     type: "wrangler-session",
     version: 1,
-    wrangler_version: "4.125.0",
+    wrangler_version: "4.136.1",
     command_line_args: [
       "deploy",
       ".verified-staging-worker/index.js",
@@ -263,11 +263,11 @@ test("accepts only one exact Wrangler bootstrap deploy result for the isolated s
   const canonicalUrl = "https://bitcoin-p2p-check-staging.thumbking-btc.workers.dev";
   const expectedTag = "a".repeat(40);
   const bootstrapMessage = `Authorized local bootstrap · staging v2.3.0 · ${expectedTag}`;
-  // Wrangler 4.125.0 writes this session envelope before its command result event.
+  // Wrangler 4.136.1 writes this session envelope before its command result event.
   const sessionEvent = {
     type: "wrangler-session",
     version: 1,
-    wrangler_version: "4.125.0",
+    wrangler_version: "4.136.1",
     command_line_args: [
       "deploy",
       ".wrangler/dry-run/staging/index.js",
@@ -516,7 +516,7 @@ test("bootstrap recorder exports only its validated version and canonical URL", 
     {
       type: "wrangler-session",
       version: 1,
-      wrangler_version: "4.125.0",
+      wrangler_version: "4.136.1",
       command_line_args: [
         "deploy",
         ".wrangler/dry-run/staging/index.js",
