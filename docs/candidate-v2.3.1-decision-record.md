@@ -12,14 +12,25 @@
 
 ### 대화와 실제 사용 사례
 
-- ChatGPT 프로젝트 `P2P 헬퍼 사이트 만들기`의 `실거래 모집 방식 기반 P2P 도구 개선`: Discord 모집글이 구매/판매, 원화 금액, 프리미엄, 온체인·라이트닝, 신뢰 조건, DM 요청을 짧게 전달한다는 실제 사례를 기준으로 삼았습니다. 공개 모집글에 결제 주소, BOLT11 인보이스, QR, 자금 출처를 섞지 않는 결론도 여기서 확인했습니다.
-- `여러 이미지 공유 가능`: 긴 가로 카드보다 4:3 비율을 선호했고, 사용자가 4:3 시안을 긍정적으로 평가했습니다. 기존 시각 정체성을 크게 바꾸지 않고 QR을 기존 로고 영역에 배치하려던 방향을 반영했습니다. 로고를 QR 중앙에 겹친 시안은 스캔 실패가 확인되어 채택하지 않았습니다.
+- ChatGPT 프로젝트 `P2P 헬퍼 사이트 만들기`의 `실거래 모집 방식 기반 P2P 도구 개선`: Discord 모집글이 구매/판매, 원화 금액, 프리미엄, 온체인·라이트닝, 신뢰 조건, DM 요청을 짧게 전달한다는 실제 사례를 기준으로 삼았습니다. 공개 모집글에는 결제 주소·BOLT11·QR이나 실제 자금 출처 상세를 넣지 않고, “자금 출처 설명 가능”처럼 모집에 필요한 의사만 선택적으로 표시합니다.
+- `여러 이미지 공유 가능`, `거래 시퀀스 설계`: 긴 가로 카드보다 4:3 비율을 선호했고, 사용자가 4:3 시안을 긍정적으로 평가했습니다. 최초 로고 합성 시안은 스캔 실패했지만, 이후 원본 `creator-logo.jpg`를 QR 한 변의 12%로 합성하고 최종 QR을 다시 디코딩하는 구현은 사용자가 확인 후 긍정했습니다. 후보는 이 후속 결정을 복원하되 합성 검증이 실패하면 무브랜드 QR로 안전하게 되돌립니다.
 - `PWA 설치 안내`: Samsung Internet의 설치 경험 문제와 Android Chrome 안내 경로를 확인했습니다. 현재 후보는 Samsung Internet에서 검증된 Chrome 설치 안내로 유도합니다.
 - `거래 시퀀스 설계`: 기본 프리미엄이 2%로 남는 이전 draft 문제, 주소 자체 QR, 프리미엄 부호, 과도한 하단 여백, 5분 참고값 갱신에 대한 사용자의 명시적 피드백을 확인했습니다.
 - `제품 전방위 감사`, `코드 전반 점검`, 성능 최적화 대화: 공유 이미지를 요청 시점에만 만들기, 시세 WebSocket 감시, REST fallback, Service Worker version cache, 렌더 격리, dependency·bundle 점검 요구를 확인했습니다.
 - `P2P v3 브랜치·Cloudflare 배포 전략`: preview alias를 full staging처럼 쓰자는 과거 제안은 현재 Durable Object 제약 및 저장소의 배포 계약과 맞지 않아 채택하지 않았습니다.
 - 2026-08-31 Codex 작업 맥락: 당시에는 `integration/p2p-v3`를 staging 기반으로 만드는 선택이 있었지만, 이번 요청의 최신 지시인 “최신 main 기준 새 후보”를 우선했습니다.
 - 2026-09-05 Codex 전체 기능 검수 작업: 사용자가 14일 공개 기록 보존을 선택했고, 이후 UI가 복잡해졌다는 피드백으로 항상 보이는 draft 삭제 UI와 1분 참고값 갱신을 철회하고 5분 갱신과 접힌 관리 UI로 단순화한 이력을 확인했습니다.
+
+### Obsidian Knowledge Vault 핵심 감사
+
+- 조사한 Vault는 `knowledge-vault` 저장소의 깨끗한 `main`이며 `HEAD`와 `origin/main`은 모두 `5e9109e`(`docs: focus Obsidian graph on curated knowledge`)였습니다. 루트 `AGENTS.md`, `README.md`, 세 대화 reader 안내와 `Knowledge/resuming-work.md`를 먼저 읽어 자료의 주체·검토 범위·현재 사실을 구분했습니다.
+- ChatGPT 로컬 검색 DB에서 사용자 발언을 중심으로 저장소명, 제품명, 모집·공유·QR·PWA·브라우저·캐시·브랜치 표현을 교차 검색해 26개 고유 대화 후보를 얻었습니다. 이어 `knowledge/topics/software.md`, 각 카드의 관계·동일 message ID, `Knowledge/resuming-work.md`의 정정 사례를 따라 범위를 확장하여 관련·경계 확인용 카드 40개를 검토했습니다.
+- 핵심 네 대화 `6a871f61-1b98-83ee-9c12-c3d359e0a7c0`, `6a807cc7-43f4-83ee-9658-1c3555c8bc58`, `6a8b1759-1018-83e8-ada6-378bb848c7a0`, `6a8ba690-ec4c-83e8-b938-cd1e72d12fb1`은 의미 요약에 그치지 않고 `reader/conversations/`의 사용자 원문과 첨부까지 역추적했습니다. 실거래 예시는 message `09ff1465-651a-4c5d-8b15-868c626b7e04`, 4:3 선택과 긍정 평가는 `203b5450-b325-461f-a613-16e6b1d4fbd6`·`2c74a08d-95ee-44d2-bf80-e7cab9a297b5`, 최초 QR 스캔 실패는 `eacf326f-89eb-4c2c-a835-2b23a97f1273`, 검증된 12% 로고 구현의 후속 수용은 `f0fb1eb0-a5bb-4817-aa4f-ec6f6e59e40b`에서 확인했습니다.
+- 실제 첨부 10개를 열어 기존 16:9 카드, 선호한 4:3 카드, QR 영역·글자 크기·간격 회귀, 계산 기준·제작자 접기 UI를 비교했습니다. 텍스트 요약만으로 긍정·부정 시안을 판정하지 않았습니다.
+- Claude 416개 의미 검토와 Gemini 실질 내용 3,123개의 최종 검토층도 같은 용어와 `thumbking-btc`·제품명으로 검색했습니다. Claude 직접 후보 1건은 Corn Wallet 인보이스 구상, Gemini의 넓은 키워드 후보 5건은 일반 P2P·지갑·라이트닝 설명이었고 `bitcoin-p2p-check` 직접 근거는 없었습니다. 이름이 겹친다는 이유로 이 후보의 요구사항에 합치지 않았습니다.
+- Vault의 ChatGPT export 기준일은 2026-09-04이므로 이후 2026-09-05 Codex 검수는 Vault에 없다는 한계를 명시했습니다. 후속 판단은 접근 가능한 Codex 맥락, 저장소 문서와 실제 Git commit·코드·테스트를 함께 대조했습니다.
+
+Vault 조사로 계획에서 바뀐 부분은 QR 중앙 제작자 로고의 복원입니다. 이전 후보 기록은 “스캔 실패 시안”만 근거로 로고를 제외했지만 원문에는 그 뒤의 성공한 12% 원본 합성·최종 디코딩 방식과 사용자 수용이 있었습니다. 나머지 후보 구조는 실거래 모집글의 간결성, 공개 모집과 합의 후 결제정보 분리, 4:3 유지, 필요 시 이미지 생성, Samsung Internet 안내, 5분 참고값 정책과 일치하여 유지했습니다.
 
 ### 저장소와 Git 근거
 
@@ -67,9 +78,10 @@ Assistant가 제안만 했고 사용자가 승인하지 않은 아이디어는 �
 - 항상 보이는 “저장된 초안 삭제”와 중복 관리 버튼
 - 프리미엄·수수료 참고값의 1분 강제 갱신
 - 화면 전체를 차지하는 장문의 일반 면책·안전 문구
-- 스캔 검증 없이 QR 중앙에 로고를 겹치는 디자인
+- 스캔 검증 없이 QR 중앙에 로고를 겹치는 디자인. 검증된 12% 로고는 유지하고, 합성 후 디코딩 실패 시 무브랜드 QR로 되돌립니다.
 - production Worker의 version preview URL을 독립 staging으로 간주하는 방식
 - PSBT, 지갑 자동 연결, 결제 완료 자동 판정
+- 사용자 채택이 확인되지 않은 공통 PWA 수동 업데이트 표준, 공개 모집 단계의 주소·인보이스 자동 첨부, 단계식 협상·승인 UI
 
 ## 3. main v2.2.3 대비 후보 변화
 
@@ -79,6 +91,7 @@ Assistant가 제안만 했고 사용자가 승인하지 않은 아이디어는 �
 - 기록별 관리 capability는 브라우저에 분리 저장되며 14일 동안 철회할 수 있습니다. 공개 조회에는 capability가 노출되지 않습니다.
 - preview에서는 기록 기능이 명시적으로 꺼지고 full staging 링크를 안내합니다. production과 staging은 서로 다른 signer·namespace 계약을 사용합니다.
 - 요청 body·upstream response 크기, redirect, timeout, rate limit, origin·media type, Lightning metadata hash를 제한합니다.
+- 4:3 카드 QR에는 1000×1000 제작자 원본을 한 변의 12%로 합성하고 합성된 QR 원문을 재검증합니다. 로고 로드나 재검증이 실패하면 이미 검증된 무브랜드 QR을 사용합니다.
 - PWA는 앱 버전별 cache를 사용하고 API 응답과 `/verify/?id=...` bearer URL을 저장하지 않습니다. preview/staging은 기본적으로 Service Worker를 등록하지 않습니다.
 - 배포 경로는 GitHub Actions의 승인된 exact artifact만 허용하고, 로컬 production/staging deploy script는 차단합니다.
 
@@ -86,10 +99,10 @@ Assistant가 제안만 했고 사용자가 승인하지 않은 아이디어는 �
 
 - production Worker dry-run: 256.78 KiB, gzip 59.66 KiB
 - preview Worker dry-run: 249.93 KiB, gzip 58.04 KiB
-- 정적 client 전체: 51 files, 1,495,082 bytes. 이 수치에는 설치 안내 PNG와 아이콘이 포함됩니다.
-- JS 전체: 726,855 bytes, CSS 전체: 70,779 bytes
+- 정적 client 전체: 51 files, 1,496,340 bytes. 이 수치에는 설치 안내 PNG와 아이콘이 포함됩니다.
+- JS 전체: 728,113 bytes, CSS 전체: 70,779 bytes
 - 첫 페이지가 참조하는 JS/CSS: raw 700,692 bytes, gzip 213,118 bytes
-- 이미지 렌더 구현은 `trade-share-image` 별도 chunk(raw 11,617 bytes)로 분리되어 있고, 공유 준비 시점의 dynamic import 뒤에만 canvas·PNG 작업을 수행합니다.
+- 이미지 렌더 구현은 `trade-share-image` 별도 chunk(raw 12,475 bytes)로 분리되어 있고, 공유 준비 시점의 dynamic import 뒤에만 canvas·PNG 작업을 수행합니다. 로고 합성·검증으로 이 지연 chunk만 858 bytes 늘었으며 초기 페이지 참조량은 변하지 않았습니다.
 - runtime dependency 7개는 React, QR, Bitcoin/Lightning 주소·서명 검증에 실제 사용됩니다. 불필요한 runtime dependency는 확인되지 않았습니다.
 - API는 Service Worker cache에서 제외되고, runtime cache는 버전별 최대 40개로 제한됩니다.
 - 직접 의존 중 취약 버전이던 Cloudflare Vite/Vitest plugin, Wrangler, sharp를 호환 가능한 패치·마이너로 올렸고 `npm audit --audit-level=high`는 0건입니다.
@@ -111,8 +124,9 @@ Assistant가 제안만 했고 사용자가 승인하지 않은 아이디어는 �
 - dependency audit: 취약점 0건
 - 실제 Chrome: 구매 250만원, 판매자 프리미엄 2%, 온체인 모집글이 계산 결과와 함께 갱신됨을 확인
 - 393px 모바일 screenshot: 가로 넘침 없이 구매/판매, 입력, 결과, 수수료, 공유 진입이 표시됨을 확인
+- 실제 Chromium에서 1440×1080 공유 PNG를 materialize하여 12% 중앙 로고, 4:3 구성과 QR 배치를 확인했습니다. 같은 입력에서 로고 요청을 404로 강제해도 검증된 무브랜드 QR로 1440×1080 PNG가 생성되는 폴백을 확인했습니다.
 
-로컬 screenshot은 Git에 넣지 않고 `preview-browser-evidence/candidate-desktop.png`와 `preview-browser-evidence/candidate-mobile.png`에 남겼습니다.
+로컬 screenshot은 Git에 넣지 않고 `preview-browser-evidence/candidate-desktop.png`, `preview-browser-evidence/candidate-mobile.png`, `preview-browser-evidence/candidate-trade-card-branded.png`에 남겼습니다.
 
 ## 6. 채택 전 남은 판단과 위험
 

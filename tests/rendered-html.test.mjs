@@ -782,6 +782,11 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(imageRenderer, /STAGING TEST RECORD/u);
   assert.match(imageRenderer, /시험 기록 · 실제 거래 사용 금지/u);
   assert.match(imageRenderer, /const HEIGHT = 1_080/);
+  assert.match(imageRenderer, /const QR_LOGO_SRC = "\/creator-logo\.jpg"/);
+  assert.match(imageRenderer, /const QR_LOGO_RATIO = 0\.12/);
+  assert.match(imageRenderer, /verifyQrRasterPayload\(branded, payload\)/);
+  assert.match(imageRenderer, /Branding is optional\. A verified plain QR is safer than an unreadable branded QR\./);
+  assert.match(imageRenderer, /await drawQr\(context, qrPayload/);
   assert.match(imageRenderer, /A signed trade record is required/);
   assert.match(imageRenderer, /비트코인 P2P 거래 기록/);
   assert.match(imageRenderer, /거래 조건 확인·결제정보 복사 가능/);

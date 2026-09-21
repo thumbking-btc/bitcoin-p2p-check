@@ -1,4 +1,4 @@
-import { createVerifiedTextQr } from "./verified-qr.mjs";
+import { createVerifiedTextQr, verifyQrRasterPayload } from "./verified-qr.mjs";
 import { formatTradeBitcoinAmount } from "./trade-share-copy.mjs";
 import { getPaymentExpiryState } from "./payment-lifecycle";
 import { inferDeploymentEnvironment } from "./deployment-environment.mjs";
@@ -42,8 +42,56 @@ const MUTED_PAPER = "#d9d1c1";
 const ORANGE = "#f7931a";
 const FONT_FAMILY = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const TRADE_SHARE_REQUEST_TYPE = "application/x-bitcoin-p2p-trade-image+json";
+const QR_LOGO_SRC = "/creator-logo.jpg";
+const QR_LOGO_RATIO = 0.12;
+let qrLogoPromise: Promise<HTMLImageElement> | null = null;
 // Canonical white mark from bitcoin.org/img/icons/logotop.svg.
 const BITCOIN_MARK_PATH = "m241.91 70.689c0.637-4.258-2.605-6.547-7.038-8.074l1.438-5.768-3.511-0.875-1.4 5.616c-0.923-0.23-1.871-0.447-2.813-0.662l1.41-5.653-3.509-0.875-1.439 5.766c-0.764-0.174-1.514-0.346-2.242-0.527l0.004-0.018-4.842-1.209-0.934 3.75c0 0 2.605 0.597 2.55 0.634 1.422 0.355 1.679 1.296 1.636 2.042l-1.638 6.571c0.098 0.025 0.225 0.061 0.365 0.117-0.117-0.029-0.242-0.061-0.371-0.092l-2.296 9.205c-0.174 0.432-0.615 1.08-1.609 0.834 0.035 0.051-2.552-0.637-2.552-0.637l-1.743 4.019 4.569 1.139c0.85 0.213 1.683 0.436 2.503 0.646l-1.453 5.834 3.507 0.875 1.439-5.772c0.958 0.26 1.888 0.5 2.798 0.726l-1.434 5.745 3.511 0.875 1.453-5.823c5.987 1.133 10.489 0.676 12.384-4.739 1.527-4.36-0.076-6.875-3.226-8.515 2.294-0.529 4.022-2.038 4.483-5.155zm-8.022 11.249c-1.085 4.36-8.426 2.003-10.806 1.412l1.928-7.729c2.38 0.594 10.012 1.77 8.878 6.317zm1.086-11.312c-0.99 3.966-7.1 1.951-9.082 1.457l1.748-7.01c1.982 0.494 8.365 1.416 7.334 5.553z";
+
+function loadQrLogo(): Promise<HTMLImageElement> {
+  if (qrLogoPromise) return qrLogoPromise;
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("QR logo could not be loaded."));
+    image.src = QR_LOGO_SRC;
+  }).catch((error) => {
+    qrLogoPromise = null;
+    throw error;
+  });
+  qrLogoPromise = promise;
+  return promise;
+}
+
+async function drawVerifiedQrLogo(canvas: HTMLCanvasElement, payload: string) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("QR canvas is unavailable.");
+  const logo = await loadQrLogo();
+  const size = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) * QR_LOGO_RATIO));
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const x = Math.round(centerX - size / 2);
+  const y = Math.round(centerY - size / 2);
+  const radius = size / 2;
+
+  context.save();
+  context.fillStyle = "#fff";
+  context.beginPath();
+  context.arc(centerX, centerY, radius * 1.08, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.clip();
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(logo, x, y, size, size);
+  context.restore();
+
+  const branded = context.getImageData(0, 0, canvas.width, canvas.height);
+  verifyQrRasterPayload(branded, payload);
+  branded.data.fill(0);
+}
 
 function assertFinitePositive(value: number, name: string) {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be positive.`);
@@ -237,7 +285,7 @@ function drawBitcoinMark(context: CanvasRenderingContext2D, centerX: number, cen
   context.restore();
 }
 
-function drawQr(context: CanvasRenderingContext2D, payload: string, maximumLength: number) {
+async function drawQr(context: CanvasRenderingContext2D, payload: string, maximumLength: number) {
   const qr = createVerifiedTextQr(payload, { maximumLength, maximumPixelSize: 460, level: "M" });
   const canvas = document.createElement("canvas");
   canvas.width = qr.width;
@@ -250,6 +298,12 @@ function drawQr(context: CanvasRenderingContext2D, payload: string, maximumLengt
   const image = qrContext.createImageData(qr.width, qr.height);
   image.data.set(qr.data);
   qrContext.putImageData(image, 0, 0);
+  try {
+    await drawVerifiedQrLogo(canvas, payload);
+  } catch {
+    // Branding is optional. A verified plain QR is safer than an unreadable branded QR.
+    qrContext.putImageData(image, 0, 0);
+  }
   image.data.fill(0);
   qr.data.fill(0);
   const x = 1_130 - canvas.width / 2;
@@ -419,7 +473,7 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   context.restore();
 
   const qrPayload = input.payment?.payload ?? input.record.verificationUrl;
-  drawQr(context, qrPayload, input.payment ? 1_300 : 700);
+  await drawQr(context, qrPayload, input.payment ? 1_300 : 700);
   context.textAlign = "center";
   context.fillStyle = ORANGE;
   setFont(context, 27, 800);
