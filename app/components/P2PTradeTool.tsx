@@ -613,6 +613,7 @@ export function P2PTradeTool() {
   const [draftStatus, setDraftStatus] = useState("");
   const [draftSyncRevision, setDraftSyncRevision] = useState(0);
   const [receiveInfoLifecycleStatus, setReceiveInfoLifecycleStatus] = useState<ReceiveInfoLifecycleState["status"]>("empty");
+  const [receiveInputUnconfirmed, setReceiveInputUnconfirmed] = useState(false);
   const [verifiedReceiveInfo, setVerifiedReceiveInfo] = useState<VerifiedReceiveInfo | null>(null);
   const marketRef = useRef<MarketSnapshot | null>(null);
   const marketRequestRef = useRef<ActiveMarketRefresh | null>(null);
@@ -1120,6 +1121,11 @@ export function P2PTradeTool() {
     setVerifiedReceiveInfo(info);
     if (!info) return;
     paymentLockRef.current = true;
+  }, []);
+
+  const handleReceiveInputUnconfirmed = useCallback((unconfirmed: boolean) => {
+    if (unconfirmed) sharePreparationAllowedRef.current = false;
+    setReceiveInputUnconfirmed(unconfirmed);
   }, []);
 
   const handleReceiveInfoLifecycle = useCallback((state: ReceiveInfoLifecycleState) => {
@@ -1650,6 +1656,7 @@ export function P2PTradeTool() {
     && draftHydrated
     && largeTradeConfirmed
     && !paymentLifecycleBlocksShare
+    && !receiveInputUnconfirmed
     && !stalePrice
     && marketState === "ready";
   const shareStatusIsError = Boolean(shareStatus)
@@ -2526,6 +2533,7 @@ export function P2PTradeTool() {
                 ownerRole={tradeRole}
                 onResultChange={handleVerifiedReceiveInfo}
                 onLifecycleChange={handleReceiveInfoLifecycle}
+                onInputUnconfirmedChange={handleReceiveInputUnconfirmed}
               />
             ) : null}
             {paymentLifecycleBlocksShare ? (
@@ -2534,6 +2542,11 @@ export function P2PTradeTool() {
                 <span>{receiveInfoLifecycleStatus === "stale"
                   ? "역할 또는 금액이 달라졌습니다. 현재 조건으로 결제정보를 다시 만들거나 삭제해 주세요."
                   : "인보이스가 만료되었거나 곧 만료됩니다. 새 인보이스를 발급하거나 결제정보를 삭제해 주세요."}</span>
+              </p>
+            ) : receiveInputUnconfirmed ? (
+              <p className="record-payment-state" role="status">
+                <strong>입력한 결제정보를 확인하십시오.</strong>
+                <span>유효한 주소나 인보이스를 입력하거나, 결제정보를 지운 뒤 카드를 준비하십시오.</span>
               </p>
             ) : !paymentForRecord ? (
               <p className="record-payment-state" role="status">
@@ -2565,7 +2578,7 @@ export function P2PTradeTool() {
                     ? preparedTradeShare?.deliveryOutcome ? "상세 기록 공개 확정 재시도" : "공유 창 열기"
                   : !largeTradeConfirmed
                     ? "고액 거래 확인 후 준비"
-                    : paymentLifecycleBlocksShare
+                    : paymentLifecycleBlocksShare || receiveInputUnconfirmed
                       ? "결제정보 재확인 후 준비"
                       : stalePrice
                         ? "시세 새로고침 후 준비"
@@ -2665,6 +2678,7 @@ export function P2PTradeTool() {
               active={outputMode === "recruitment"}
               referenceReady={!stalePrice && marketState === "ready"}
               referenceTime={referenceTime}
+              calculationError={quote ? "" : resultUnavailable}
               tradeRole={tradeRole}
               amountUnit={amountInputUnit}
               amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}

@@ -73,12 +73,24 @@ test("recruitment blocks stale sharing and copying even with manual text, then r
   await expect(copy).toBeEnabled();
 });
 
+test("recruitment refuses a premium rejected by the calculator", async ({ page }) => {
+  await installFakeMarket(page);
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.locator("#seller-premium").fill("1000");
+  await expect(page.getByRole("button", { name: "모집글 복사", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "모집글 공유", exact: true })).toBeDisabled();
+  await page.locator("#seller-premium").fill("0");
+  await expect(page.getByRole("button", { name: "모집글 복사", exact: true })).toBeEnabled();
+});
+
 test("JavaScript-disabled visitors get an actionable explanation", async ({ browser, baseURL }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } });
   try {
     const page = await context.newPage();
     await page.goto(baseURL!);
     await expect(page.getByText(/계산과 시세 조회에는 JavaScript가 필요합니다/u)).toBeVisible();
+    await expect(page.locator(".trade-tool")).toBeHidden();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally { await context.close(); }
 });
@@ -1433,7 +1445,7 @@ test("@production-pwa production registers its service worker and serves verify 
   }, { timeout: 30_000 }).toBe(true);
   await page.waitForLoadState("domcontentloaded");
   await expect.poll(async () => page.evaluate(async () => (
-    (await caches.keys()).some((key) => key === "bitcoin-p2p-check-precache-2.3.1")
+    (await caches.keys()).some((key) => /^bitcoin-p2p-check-precache-2\.3\.1-[0-9a-f]{40}$/u.test(key))
   )), { timeout: 30_000 }).toBe(true);
 
   await context.setOffline(true);

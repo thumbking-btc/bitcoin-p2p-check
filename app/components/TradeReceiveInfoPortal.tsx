@@ -129,9 +129,11 @@ export type TradeReceiveInfoProps = {
    * payment request became unusable instead of reducing every state to null.
    */
   onLifecycleChange?: (state: ReceiveInfoLifecycleState) => void;
+  /** A nonempty input must never silently become a card without payment details. */
+  onInputUnconfirmedChange?: (unconfirmed: boolean) => void;
 };
 
-export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange, onLifecycleChange }: TradeReceiveInfoProps) {
+export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, onResultChange, onLifecycleChange, onInputUnconfirmedChange }: TradeReceiveInfoProps) {
   const [rail, setRail] = useState<Rail>("onchain");
   const [lightningMode, setLightningMode] = useState<LightningMode>("address");
   const [onchain, setOnchain] = useState("");
@@ -147,6 +149,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   const requestAbortRef = useRef<AbortController | null>(null);
   const onResultChangeRef = useRef(onResultChange);
   const onLifecycleChangeRef = useRef(onLifecycleChange);
+  const onInputUnconfirmedChangeRef = useRef(onInputUnconfirmedChange);
 
   const paymentExpiry = useMemo(
     () => getPaymentExpiryState(result?.expiresAt, nowSeconds),
@@ -161,6 +164,8 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   ));
   const resultExpiring = paymentExpiry.status === "expiring" || paymentExpiry.status === "expired";
   const resultReady = Boolean(result && !resultStale && !resultExpiring);
+  const activeInput = rail === "onchain" ? onchain : lightningMode === "invoice" ? invoice : lightningSource;
+  const inputUnconfirmed = Boolean(activeInput.trim()) && (!resultReady || busy || issuanceUnknown);
 
   useEffect(() => {
     generationRef.current += 1;
@@ -172,7 +177,12 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
   useLayoutEffect(() => {
     onResultChangeRef.current = onResultChange;
     onLifecycleChangeRef.current = onLifecycleChange;
-  }, [onLifecycleChange, onResultChange]);
+    onInputUnconfirmedChangeRef.current = onInputUnconfirmedChange;
+  }, [onInputUnconfirmedChange, onLifecycleChange, onResultChange]);
+
+  useLayoutEffect(() => {
+    onInputUnconfirmedChangeRef.current?.(inputUnconfirmed);
+  }, [inputUnconfirmed]);
 
   const resultInfo = useMemo<VerifiedReceiveInfo | null>(() => {
     if (!result) return null;
@@ -217,6 +227,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     requestAbortRef.current = null;
     onResultChangeRef.current(null);
     onLifecycleChangeRef.current?.(Object.freeze({ status: "empty", info: null, remainingSeconds: null }));
+    onInputUnconfirmedChangeRef.current?.(false);
   }, []);
 
   useEffect(() => {
@@ -248,15 +259,17 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
 
   function changeLightningSource(value: string) {
     if (invoiceLike(value)) {
-      clear();
-      setInvoice(value.slice(0, MAX_BOLT11_LENGTH));
+      const next = value.slice(0, MAX_BOLT11_LENGTH);
+      acceptLocalInput("invoice", next);
+      setInvoice(next);
       setLightningSource("");
       setLightningMode("invoice");
       setFeedback("BOLT11 인보이스로 인식하여 직접 입력 방식으로 전환했습니다.");
       return;
     }
-    clear();
-    setLightningSource(value.slice(0, 2_048));
+    const next = value.slice(0, 2_048);
+    acceptLocalInput("lightning", next);
+    setLightningSource(next);
   }
 
   async function pasteFromClipboard(target: PasteTarget) {
@@ -265,15 +278,18 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
       setError("이 브라우저는 붙여넣기 버튼을 지원하지 않습니다. 입력칸을 길게 눌러 붙여넣으십시오.");
       return;
     }
+    const generation = generationRef.current;
     try {
       const text = (await navigator.clipboard.readText()).trim();
+      if (generationRef.current !== generation) return;
       if (!text) {
         setError("클립보드에 붙여넣을 텍스트가 없습니다.");
         return;
       }
       if (target === "onchain") {
-        clear();
-        setOnchain(text.slice(0, 220));
+        const next = text.slice(0, 220);
+        acceptLocalInput("onchain", next);
+        setOnchain(next);
         setFeedback("클립보드의 온체인 주소를 붙여넣었습니다.");
         return;
       }
@@ -282,10 +298,12 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         if (!invoiceLike(text)) setFeedback("클립보드의 라이트닝 수취정보를 붙여넣었습니다.");
         return;
       }
-      clear();
-      setInvoice(text.slice(0, MAX_BOLT11_LENGTH));
+      const next = text.slice(0, MAX_BOLT11_LENGTH);
+      acceptLocalInput("invoice", next);
+      setInvoice(next);
       setFeedback("클립보드의 BOLT11 인보이스를 붙여넣었습니다.");
     } catch {
+      if (generationRef.current !== generation) return;
       setError("클립보드를 읽지 못했습니다. 입력칸을 길게 눌러 붙여넣으십시오.");
     }
   }
@@ -326,6 +344,39 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
     };
   }
 
+  function makeOnchainResult(source: string, amountSats: number, forceOnchainAmountIncluded?: boolean): Result {
+    const target = onchainTargetFromInput(source, amountSats);
+    const request = createOnchainRequest(target.address, BigInt(amountSats));
+    const amountIncluded = forceOnchainAmountIncluded ?? target.amountIncluded;
+    return {
+      kind: amountIncluded ? "onchain-request" : "onchain-address",
+      rail: "onchain",
+      amountSats,
+      conditionKey,
+      ownerRole,
+      payload: amountIncluded ? request.uri : request.address,
+      copyTarget: amountIncluded ? request.uri : request.address,
+      address: request.address,
+    };
+  }
+
+  function acceptLocalInput(target: PasteTarget, value: string) {
+    clear();
+    if (!expectedSats || !value.trim()) return;
+    try {
+      const next = target === "onchain"
+        ? makeOnchainResult(value, expectedSats)
+        : target === "invoice"
+          ? makeLightningInvoiceResult(value.trim(), expectedSats, false)
+          : makeLightningAddressResult(value, expectedSats);
+      setNowSeconds(Math.floor(Date.now() / 1_000));
+      setResult(next);
+    } catch {
+      // Partial, invalid and LNURL inputs stay unconfirmed without interrupting
+      // typing. Explicit actions show their detailed error or request an invoice.
+    }
+  }
+
   async function build(forceOnchainAmountIncluded?: boolean) {
     if (busy || requestAbortRef.current) return;
     clear();
@@ -336,20 +387,9 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
 
     if (rail === "onchain") {
       try {
-        const target = onchainTargetFromInput(onchain, expectedSats);
-        const request = createOnchainRequest(target.address, BigInt(expectedSats));
-        const amountIncluded = forceOnchainAmountIncluded ?? target.amountIncluded;
-        setResult({
-          kind: amountIncluded ? "onchain-request" : "onchain-address",
-          rail: "onchain",
-          amountSats: expectedSats,
-          conditionKey,
-          ownerRole,
-          payload: amountIncluded ? request.uri : request.address,
-          copyTarget: amountIncluded ? request.uri : request.address,
-          address: request.address,
-        });
-        setFeedback(amountIncluded ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소를 결제정보로 준비했습니다.");
+        const next = makeOnchainResult(onchain, expectedSats, forceOnchainAmountIncluded);
+        setResult(next);
+        setFeedback(next.kind === "onchain-request" ? "현재 거래 금액이 포함된 온체인 QR을 준비했습니다." : "온체인 주소를 결제정보로 준비했습니다.");
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "온체인 수취정보를 확인하지 못했습니다.");
       }
@@ -455,18 +495,18 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         <h3 id="receive-info-title">{ownerRole === "buyer" ? "내 BTC 받을 곳" : "구매자가 제공한 BTC 받을 곳"} <span>(선택 사항)</span></h3>
       </div>
       <p className={styles.intro}>{ownerRole === "buyer"
-        ? "받을 주소나 인보이스를 거래 기록 카드에 포함할 수 있습니다."
-        : "구매자가 확인해 준 주소나 인보이스를 거래 기록 카드에 포함할 수 있습니다."}</p>
+        ? "유효한 받을 주소나 인보이스를 입력하면 거래 기록 카드에 포함됩니다."
+        : "구매자가 확인해 준 유효한 주소나 인보이스를 입력하면 거래 기록 카드에 포함됩니다."}</p>
       <p className={styles.amountNote}>현재 받을 금액 <b>{expectedSats ? formatSats(expectedSats) : "계산 전"}</b></p>
 
       <fieldset className={styles.railPicker} disabled={busy}>
         <legend>BTC 전송 방식</legend>
         <label>
-          <input aria-label="온체인" type="radio" name="embedded-receive-rail" checked={rail === "onchain"} onChange={() => { clear(); setRail("onchain"); }} />
+          <input aria-label="온체인" type="radio" name="embedded-receive-rail" checked={rail === "onchain"} onChange={() => { acceptLocalInput("onchain", onchain); setRail("onchain"); }} />
           <span><strong>온체인</strong><small>비트코인 주소</small></span>
         </label>
         <label>
-          <input aria-label="라이트닝" type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { clear(); setRail("lightning"); setLightningMode("address"); }} />
+          <input aria-label="라이트닝" type="radio" name="embedded-receive-rail" checked={rail === "lightning"} onChange={() => { acceptLocalInput("lightning", lightningSource); setRail("lightning"); setLightningMode("address"); }} />
           <span><strong>라이트닝</strong><small>주소 또는 인보이스</small></span>
         </label>
       </fieldset>
@@ -475,7 +515,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
         <div className={styles.field}>
           <label htmlFor="receive-onchain">온체인 수취 주소</label>
           <div className={styles.inputRow}>
-            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { clear(); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
+            <input id="receive-onchain" className={styles.input} value={onchain} disabled={busy} maxLength={220} onChange={(event) => { acceptLocalInput("onchain", event.target.value); setOnchain(event.target.value); }} placeholder="bc1q... · bc1p... · bitcoin:..." />
             <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("onchain")}>붙여넣기</button>
           </div>
           <small>금액 포함 QR을 만들면 받을 주소와 현재 거래 금액을 한 번에 확인할 수 있습니다.</small>
@@ -486,7 +526,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <p>{lightningMode === "address"
               ? "라이트닝 주소의 지갑 서비스에 현재 금액의 인보이스를 요청합니다."
               : "지갑에서 만든 인보이스가 현재 거래 금액과 맞는지 확인합니다."}</p>
-            <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { clear(); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
+            <button className={styles.modeButton} type="button" disabled={busy} onClick={() => { acceptLocalInput(lightningMode === "address" ? "invoice" : "lightning", lightningMode === "address" ? invoice : lightningSource); setLightningMode(lightningMode === "address" ? "invoice" : "address"); }}>
               {lightningMode === "address" ? "인보이스 직접 입력" : "라이트닝 주소 사용"}
             </button>
           </div>
@@ -503,7 +543,7 @@ export function TradeReceiveInfoPortal({ expectedSats, conditionKey, ownerRole, 
             <div className={styles.field}>
               <label htmlFor="receive-invoice">BOLT11 인보이스</label>
               <div className={styles.inputRow}>
-                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} maxLength={MAX_BOLT11_LENGTH} onChange={(event) => { clear(); setInvoice(event.target.value.slice(0, MAX_BOLT11_LENGTH)); }} placeholder="lnbc... 또는 lightning:lnbc..." />
+                <textarea id="receive-invoice" className={styles.textarea} value={invoice} disabled={busy} maxLength={MAX_BOLT11_LENGTH} onChange={(event) => { const next = event.target.value.slice(0, MAX_BOLT11_LENGTH); acceptLocalInput("invoice", next); setInvoice(next); }} placeholder="lnbc... 또는 lightning:lnbc..." />
                 <button className={styles.modeButton} type="button" disabled={busy} onClick={() => void pasteFromClipboard("invoice")}>붙여넣기</button>
               </div>
               <small>현재 거래 금액과 일치하고 만료되지 않은 인보이스인지 확인합니다.</small>

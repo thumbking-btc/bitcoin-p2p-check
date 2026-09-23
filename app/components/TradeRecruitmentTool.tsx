@@ -25,6 +25,7 @@ type TradeRecruitmentToolProps = {
   bitcoinDisplayUnit: "sats" | "btc";
   referenceReady: boolean;
   referenceTime: string | null;
+  calculationError: string;
 };
 
 type RecruitmentPost = {
@@ -39,6 +40,7 @@ type RecruitmentPreviewProps = {
   structuredKey: string;
   referenceReady: boolean;
   referenceTime: string | null;
+  calculationError: string;
 };
 
 function signedDecimalOnly(value: string) {
@@ -82,7 +84,7 @@ function legacyCopy(value: string) {
   }
 }
 
-function RecruitmentPreview({ generated, customizationSummary, children, structuredKey, referenceReady, referenceTime }: RecruitmentPreviewProps) {
+function RecruitmentPreview({ generated, customizationSummary, children, structuredKey, referenceReady, referenceTime, calculationError }: RecruitmentPreviewProps) {
   const [previewState, setPreviewState] = useState(() => ({
     preview: generated.text,
     generatedText: generated.text,
@@ -122,7 +124,7 @@ function RecruitmentPreview({ generated, customizationSummary, children, structu
   }
 
   const referenceShareable = referenceReady && isReferenceShareable({ marketState: "ready", referenceTime });
-  const shareBlocked = !referenceShareable || Boolean(generated.error);
+  const shareBlocked = !referenceShareable || Boolean(generated.error || calculationError);
 
   async function sharePreview(copyOnly = false) {
     if (sharing) return;
@@ -132,7 +134,7 @@ function RecruitmentPreview({ generated, customizationSummary, children, structu
     };
     // Recheck at the action boundary, including after a background suspension.
     if (shareBlocked || !isReferenceShareable({ marketState: "ready", referenceTime })) {
-      setCopyFeedback({ ...feedbackContext, message: generated.error || "최신 시세를 확인한 뒤 모집글을 공유하십시오." });
+      setCopyFeedback({ ...feedbackContext, message: generated.error || calculationError || "최신 시세를 확인한 뒤 모집글을 공유하십시오." });
       return;
     }
     setSharing(true);
@@ -169,6 +171,7 @@ function RecruitmentPreview({ generated, customizationSummary, children, structu
         {previewText || "거래 조건을 입력하면 모집글이 표시됩니다."}
       </pre>
       {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
+      {!generated.error && calculationError ? <p className="recruitment-error" role="alert">{calculationError}</p> : null}
       {!referenceShareable ? <p className="recruitment-error" role="status">최신 시세를 확인한 뒤 모집글을 공유하십시오.</p> : null}
       <div className="recruitment-actions">
         <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={shareBlocked || !previewText.trim() || sharing}>
@@ -228,6 +231,7 @@ function TradeRecruitmentToolComponent({
   bitcoinDisplayUnit,
   referenceReady,
   referenceTime,
+  calculationError,
 }: TradeRecruitmentToolProps) {
   const [network, setNetwork] = useState<TransferNetwork>("onchain");
   const [returningTraderEnabled, setReturningTraderEnabled] = useState(false);
@@ -351,6 +355,7 @@ function TradeRecruitmentToolComponent({
           structuredKey={structuredKey}
           referenceReady={referenceReady}
           referenceTime={referenceTime}
+          calculationError={calculationError}
           generated={generated}
           customizationSummary={customizationSummary}
         >
@@ -463,6 +468,7 @@ function recruitmentPropsEqual(
     && previous.approximateSats === next.approximateSats
     && previous.referenceReady === next.referenceReady
     && previous.referenceTime === next.referenceTime
+    && previous.calculationError === next.calculationError
     && previous.bitcoinDisplayUnit === next.bitcoinDisplayUnit;
 }
 

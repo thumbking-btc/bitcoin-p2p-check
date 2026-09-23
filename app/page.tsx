@@ -8,7 +8,7 @@ export default function Home() {
   return (
     <>
       <main className="site-main site-main-with-references">
-        <noscript><p className="stale-warning">계산과 시세 조회에는 JavaScript가 필요합니다. 브라우저 설정에서 JavaScript를 허용한 뒤 다시 여십시오.</p></noscript>
+        <noscript><section className="no-js-notice"><h1>비트코인 P2P 계산기</h1><p className="stale-warning">계산과 시세 조회에는 JavaScript가 필요합니다. 브라우저 설정에서 JavaScript를 허용한 뒤 다시 여십시오.</p></section></noscript>
         <P2PTradeTool />
 
         <div className="reference-stack">
