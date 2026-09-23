@@ -40,13 +40,15 @@ function readUiState() {
 }
 
 async function assertRendered(page, calculator = true, hydrated = true) {
-  if (calculator && hydrated) {
-    await page.waitForFunction(() => !!document.querySelector(".trade-tool:not(.is-draft-hydrating)"), null, { timeout: 15_000 });
-  }
-  if (calculator) await expect(page.locator(".role-options")).toHaveCSS("display", "grid", { timeout: 10_000 });
-  await expect(page.locator("#deployment-environment-notice")).toBeVisible();
-  const state = await page.evaluate(readUiState);
-  assertPreviewUiState(state, { calculator, hydrated, environment });
+  let state;
+  // Service-worker controllerchange can reload between separate hydration and
+  // CSS checks. Validate one complete document snapshot, retrying the same
+  // contract during that navigation instead of combining two documents.
+  await expect(async () => {
+    const current = await page.evaluate(readUiState);
+    assertPreviewUiState(current, { calculator, hydrated, environment });
+    state = current;
+  }).toPass({ timeout: 15_000, intervals: [100, 250, 500] });
   return state;
 }
 

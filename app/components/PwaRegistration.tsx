@@ -97,7 +97,7 @@ export function PwaRegistration() {
   if (!waitingWorker) return null;
 
   return (
-    <aside className="pwa-update-notice" aria-labelledby="pwa-update-title" role="status">
+    <div className="pwa-update-notice" aria-labelledby="pwa-update-title" role="status">
       <div>
         <strong id="pwa-update-title">새 버전이 준비되었습니다.</strong>
         <p>작성 중인 내용을 확인한 뒤 새로고침하십시오.</p>
@@ -109,6 +109,6 @@ export function PwaRegistration() {
         새 버전 적용
       </button>
       <button type="button" onClick={() => setWaitingWorker(null)}>나중에</button>
-    </aside>
+    </div>
   );
 }

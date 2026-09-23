@@ -54,7 +54,7 @@ Vault는 clean main `5e9109edf276c96834b961cce27179a007946e58`입니다. 루트 
 | 철회 링크 404 설명 | 잠시 후 확인 안내로 영구 철회/만료도 일시 장애처럼 표시 | 철회·만료·미공개 가능성을 정확히 표시 |
 | 같은 2.3.1 내 PWA 후보 교체 | SW bytes와 cache key가 같아 과거 앱 셸 잔존 가능 | 빌드한 정확한 commit을 SW script/cache identity에 삽입. 사용자 적용형 업데이트 유지 |
 | PWA 설치 자산 중복 | 병렬 앱 셸이 공통 JS/CSS를 캐시에 넣기 전 각각 요청 | install 범위 Promise Map으로 동일 자산의 진행 중 요청도 공유 |
-| 환경 표시 접근성 | aside에 허용되지 않는 status 역할 | 동일한 화면·안내 동작의 div로 수정 |
+| 환경 표시·PWA 업데이트 알림 접근성 | aside에 허용되지 않는 status 역할 | 동일한 화면·안내 동작의 div로 수정 |
 | JavaScript 비활성 | 큰 빈 영역과 조회 중 표시 | 계산·시세에 JavaScript가 필요하다는 안내 제공 |
 
 금액 입력 → 계산 → 짧은 모집글 → DM에서 합의 → 선택한 결제정보와 카드 → 공유/저장 후 공개 → 서명 확인 → 링크 비활성화라는 흐름을 유지합니다. 기록은 실제 체결·입금 증명이 아니며, bearer 링크를 가진 사람이 열람하는 조건 기록입니다. 관리 UI는 접힌 상태를 유지합니다.
@@ -69,7 +69,7 @@ Service Worker는 API와 bearer 검증 URL을 저장하지 않고 일반 verify/
 
 ## 검증 기록
 
-`8ae60e452e501b1f64810ff31663ab337ca7e64c`에서 `npm run verify:ci` 전체 exit 0입니다. 이 보고서 확정 이후에는 제품 소스를 변경하지 않고 최종 HEAD로 다시 빌드하여 SW identity·정적 자산·staging 배포 bundle을 확인합니다. 실행 환경은 Node 22.23.2 / npm 10.9.8 / pinned Wrangler 4.136.1입니다.
+`8ae60e452e501b1f64810ff31663ab337ca7e64c`에서 `npm run verify:ci` 전체 exit 0입니다. 이후 원격 WebKit PWA 검사 경합과 PWA 업데이트 알림의 ARIA도 아래와 같이 보완했습니다. 최종 재검증 결과는 배포 영수증에 정확한 HEAD와 함께 기록합니다. 실행 환경은 Node 22.23.2 / npm 10.9.8 / pinned Wrangler 4.136.1입니다.
 
 | 검증 | 결과 |
 |---|---|
@@ -115,5 +115,7 @@ PWA install 중복은 실제 dist HTML을 읽는 VM harness에서 61 fetch 호�
 배포 영수증은 `outputs/validation/astra-deployment-receipt.json`, 최종 전달용 배포 보고서는 `outputs/astra-staging-report.md`에 남깁니다. 이 문서 자체의 commit SHA를 문서 안에 다시 넣는 순환을 피하면서 최종 배포 HEAD를 정확히 기록하기 위한 별도 산출물입니다. 즉시 복구할 version은 `6f4a290a-23a0-495c-8034-a70eeb324878`(source `75c2529ea815b611acde793c9421e8d62d94b057`)이며 더 이전 `8c0d2953-3415-45e4-87ee-80001200183b`도 보존합니다.
 
 ## 남은 채택 판단
+
+첫 Astra staging `198914f1b824ddbfbd254427e9ff2a2f8cf806ab` / version `abcbdae9-c9cc-4af7-9caa-b8ee9f0da39e` / deployment `7c8f4089-8c08-4cd1-8a41-ad74ac310f95`에서 실제 공유·서명·철회와 PNG 디코딩은 통과했습니다. 원격 Chromium/WebKit 12개 검사 중 WebKit PWA 1개가 일시 실패하여 추가 진단했습니다. controllerchange 후 자동 reload 전 문서의 hydration 완료와 새 문서의 초기 snapshot을 결합한 테스트 경합으로 재현했고, 새 문서는 410ms에 정상 준비되며 JS/CSP 오류는 없었습니다. 검사기가 한 문서의 준비 완료 snapshot을 사용하도록 수정했습니다. 자세한 문서 identity 타임라인은 `outputs/research/remote-webkit-pwa-diagnose.json`입니다. 이 후속 검토에서 업데이트 알림의 같은 ARIA 문제도 수정했으므로 첫 Astra 배포를 최종 후보로 보고하지 않습니다.
 
 실기기 Samsung Internet·Android Chrome·iPhone Safari의 설치 경험, 외부 앱 공유/clipboard, 실제 지갑의 QR 스캔과 금액 채움은 사용자의 기기에서 최종 확인해야 합니다. Chromium/WebKit 검수와 암호학적·QR 검증을 실기기 결제 승인으로 보고하지 않습니다. 실제 송금은 하지 않았습니다. bearer 링크 공유와 브라우저에 보관하는 철회 capability의 특성은 유지되며, 사용자 데이터·기존 DO 상태는 삭제하지 않았습니다. 현재 후보 UI와 거래 기록 기능의 최종 채택은 여전히 사용자 검토 대상입니다.
