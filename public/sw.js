@@ -1,5 +1,8 @@
 const workerUrl = new URL(self.location.href);
-const WORKER_VERSION = workerUrl.searchParams.get("v") || "dev";
+// Stamped from the exact checkout during postbuild. Candidate builds can share
+// an app version, but must never share an installed worker's precache.
+const BUILD_ID = "development";
+const WORKER_VERSION = `${workerUrl.searchParams.get("v") || "dev"}-${BUILD_ID}`;
 const PRECACHE_NAME = `bitcoin-p2p-check-precache-${WORKER_VERSION}`;
 const RUNTIME_CACHE_NAME = `bitcoin-p2p-check-runtime-${WORKER_VERSION}`;
 const CACHE_PREFIX = "bitcoin-p2p-check-";
