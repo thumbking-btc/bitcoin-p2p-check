@@ -277,7 +277,7 @@ export function TradeRecordVerifier() {
             message: offline
               ? "오프라인 상태에서는 거래 기록 상세를 불러올 수 없습니다. 네트워크에 연결한 뒤 다시 확인해 주세요."
               : notFound
-              ? "기록을 아직 찾지 못했습니다. 생성 직후라면 저장소 전파 중일 수 있으니 잠시 후 다시 확인해 주세요."
+              ? "공개 기록을 찾지 못했습니다. 링크가 철회·만료되었거나 아직 공개되지 않았을 수 있습니다. 방금 공유받았다면 잠시 후 다시 확인하십시오."
               : error instanceof Error ? error.message : "거래 기록을 불러오지 못했습니다.",
             retryable: navigator.onLine === false || isRetryableTradeRecordFetchError(error),
           });

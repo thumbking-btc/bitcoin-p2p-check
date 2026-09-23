@@ -1,5 +1,6 @@
 const PRICE_MAX_AGE_MS = 5 * 60_000;
 const TRADE_SHARE_REQUEST_TYPE = "application/x-bitcoin-p2p-trade-image+json";
+const CLIPBOARD_TIMEOUT_MS = 1_200;
 
 /** @typedef {"shared" | "cancelled" | "downloaded" | "downloaded-after-error"} ShareImageOutcome */
 /** @typedef {"available" | "copied" | "copy-failed" | "unavailable"} VerificationUrlDelivery */
@@ -80,11 +81,19 @@ async function finishDownloadFallback({
   download(file);
   let verificationUrlDelivery = verificationUrl ? "available" : "unavailable";
   if (verificationUrl && typeof copyVerificationUrl === "function") {
+    let timeout;
     try {
-      await copyVerificationUrl(verificationUrl);
+      await Promise.race([
+        copyVerificationUrl(verificationUrl),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("clipboard timeout")), CLIPBOARD_TIMEOUT_MS);
+        }),
+      ]);
       verificationUrlDelivery = "copied";
     } catch {
       verificationUrlDelivery = "copy-failed";
+    } finally {
+      clearTimeout(timeout);
     }
   }
   if (typeof onDownloadFallback === "function") {
