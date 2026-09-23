@@ -16,6 +16,73 @@ const PAYMENT_EXPIRES_AT_MS = CREATED_AT_MS + 121_000;
 const RECORD_EXPIRES_AT_MS = CREATED_AT_MS + 14 * 24 * 60 * 60 * 1_000;
 const BOLT11_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
+test("recruitment preserves typing focus, manual edits and direct clipboard delivery at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await installFakeMarket(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (text: string) => { document.documentElement.dataset.copiedRecruitment = text; },
+    } });
+  });
+  await page.goto("/");
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.locator(".recruitment-customization > summary").click();
+  const memo = page.locator("#recruitment-memo");
+  await memo.pressSequentially("ABCD");
+  await expect(memo).toHaveValue("ABCD");
+  await expect(memo).toBeFocused();
+  await expect(page.locator(".recruitment-customization")).toHaveAttribute("open", "");
+  await page.getByRole("checkbox", { name: "기존 거래자 우대" }).check();
+  const premium = page.getByRole("textbox", { name: "기존 거래자 우대 프리미엄", exact: true });
+  await premium.fill("-1");
+  await premium.pressSequentially(".5");
+  await expect(premium).toHaveValue("-1.5");
+  await expect(premium).toBeFocused();
+  const editor = page.locator("#recruitment-preview");
+  await editor.fill("직접 편집한 모집글 / DM 부탁드립니다.");
+  await page.evaluate(() => (window as Window & { __emitP2PMarketPrice?: (price: number, time: number) => void }).__emitP2PMarketPrice?.(101_000_000, Date.now()));
+  await expect(editor).toHaveValue("직접 편집한 모집글 / DM 부탁드립니다.");
+  await page.getByRole("button", { name: "모집글 복사", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-copied-recruitment", "직접 편집한 모집글 / DM 부탁드립니다.");
+  await page.locator("#trade-amount").fill("2500000");
+  await expect(editor).toHaveValue(/250만원/u);
+  await expect(page.locator(".recruitment-customization")).toHaveAttribute("open", "");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("recruitment blocks stale sharing and copying even with manual text, then recovers", async ({ page }) => {
+  await page.clock.install({ time: CREATED_AT_MS - 60_000 });
+  await page.clock.pauseAt(CREATED_AT_MS);
+  const market = await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS, holdRequestAfter: 2 });
+  await page.goto("/");
+  await page.clock.runFor(1);
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.locator(".recruitment-customization > summary").click();
+  await page.locator("#recruitment-preview").fill("이전 조건을 직접 편집한 문구");
+  const share = page.getByRole("button", { name: "모집글 공유", exact: true });
+  const copy = page.getByRole("button", { name: "모집글 복사", exact: true });
+  await expect(share).toBeEnabled();
+  await page.clock.runFor(20_000);
+  await expect.poll(market.requestCount).toBeGreaterThanOrEqual(2);
+  await expect(share).toBeDisabled();
+  await expect(copy).toBeDisabled();
+  await expect(page.getByText("최신 시세를 확인한 뒤 모집글을 공유하십시오.")).toBeVisible();
+  market.releaseFallback();
+  await expect(share).toBeEnabled();
+  await expect(copy).toBeEnabled();
+});
+
+test("JavaScript-disabled visitors get an actionable explanation", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(baseURL!);
+    await expect(page.getByText(/계산과 시세 조회에는 JavaScript가 필요합니다/u)).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  } finally { await context.close(); }
+});
+
 test("preview directs record creation to the isolated full review environment", async ({ page }) => {
   await installFakeMarket(page);
   let createRequests = 0;

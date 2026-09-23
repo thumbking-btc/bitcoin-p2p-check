@@ -3,10 +3,12 @@
 import { memo, type ReactNode, useMemo, useState } from "react";
 import {
   buildTradeRecruitmentPost,
+  copyTradeRecruitmentText,
   shareTradeRecruitmentText,
   syncTradeRecruitmentPreview,
 } from "../lib/trade-recruitment.mjs";
 import { stepPremiumPercent } from "../lib/p2p-quote.mjs";
+import { isReferenceShareable } from "../lib/share-transport.mjs";
 
 type TradeRole = "buyer" | "seller";
 type AmountUnit = "krw" | "sats" | "btc";
@@ -21,6 +23,8 @@ type TradeRecruitmentToolProps = {
   approximateKrw: number | null;
   approximateSats: number | null;
   bitcoinDisplayUnit: "sats" | "btc";
+  referenceReady: boolean;
+  referenceTime: string | null;
 };
 
 type RecruitmentPost = {
@@ -32,6 +36,9 @@ type RecruitmentPreviewProps = {
   generated: RecruitmentPost;
   customizationSummary: string;
   children: ReactNode;
+  structuredKey: string;
+  referenceReady: boolean;
+  referenceTime: string | null;
 };
 
 function signedDecimalOnly(value: string) {
@@ -75,11 +82,17 @@ function legacyCopy(value: string) {
   }
 }
 
-function RecruitmentPreview({ generated, customizationSummary, children }: RecruitmentPreviewProps) {
+function RecruitmentPreview({ generated, customizationSummary, children, structuredKey, referenceReady, referenceTime }: RecruitmentPreviewProps) {
   const [previewState, setPreviewState] = useState(() => ({
     preview: generated.text,
     generatedText: generated.text,
+    structuredKey,
   }));
+  // Reset only the text when structured conditions change. Remounting this
+  // subtree also closes details and destroys the input's focus after one key.
+  if (previewState.structuredKey !== structuredKey) {
+    setPreviewState({ preview: generated.text, generatedText: generated.text, structuredKey });
+  }
   const [copyFeedback, setCopyFeedback] = useState<{
     generatedText: string;
     previewText: string;
@@ -90,6 +103,7 @@ function RecruitmentPreview({ generated, customizationSummary, children }: Recru
     preview: previewState.preview,
     previousGenerated: previewState.generatedText,
     nextGenerated: generated.text,
+    force: previewState.structuredKey !== structuredKey,
   });
   const previewText = syncedPreview.preview;
   const previewDirty = syncedPreview.dirty;
@@ -102,16 +116,25 @@ function RecruitmentPreview({ generated, customizationSummary, children }: Recru
     setPreviewState({
       preview: generated.text,
       generatedText: generated.text,
+      structuredKey,
     });
     setCopyFeedback(null);
   }
 
-  async function sharePreview() {
+  const referenceShareable = referenceReady && isReferenceShareable({ marketState: "ready", referenceTime });
+  const shareBlocked = !referenceShareable || Boolean(generated.error);
+
+  async function sharePreview(copyOnly = false) {
     if (sharing) return;
     const feedbackContext = {
       generatedText: generated.text,
       previewText,
     };
+    // Recheck at the action boundary, including after a background suspension.
+    if (shareBlocked || !isReferenceShareable({ marketState: "ready", referenceTime })) {
+      setCopyFeedback({ ...feedbackContext, message: generated.error || "최신 시세를 확인한 뒤 모집글을 공유하십시오." });
+      return;
+    }
     setSharing(true);
     setCopyFeedback(null);
     const nativeShare = navigator.share
@@ -120,12 +143,14 @@ function RecruitmentPreview({ generated, customizationSummary, children }: Recru
     const clipboardWrite = navigator.clipboard?.writeText
       ? navigator.clipboard.writeText.bind(navigator.clipboard)
       : null;
-    const outcome = await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
+    const outcome = copyOnly
+      ? await copyTradeRecruitmentText(previewText, clipboardWrite, legacyCopy)
+      : await shareTradeRecruitmentText(previewText, nativeShare, clipboardWrite, legacyCopy);
     setSharing(false);
     const message = outcome === "shared"
       ? "모집글을 공유했습니다."
       : outcome === "copied"
-        ? "공유 기능을 지원하지 않아 모집글을 복사했습니다."
+        ? copyOnly ? "모집글을 복사했습니다." : "공유 기능을 지원하지 않아 모집글을 복사했습니다."
         : outcome === "empty"
           ? "공유할 모집글을 입력하세요."
           : outcome === "cancelled"
@@ -144,10 +169,12 @@ function RecruitmentPreview({ generated, customizationSummary, children }: Recru
         {previewText || "거래 조건을 입력하면 모집글이 표시됩니다."}
       </pre>
       {generated.error ? <p className="recruitment-error" id="recruitment-error" role="alert">{generated.error}</p> : null}
+      {!referenceShareable ? <p className="recruitment-error" role="status">최신 시세를 확인한 뒤 모집글을 공유하십시오.</p> : null}
       <div className="recruitment-actions">
-        <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={!previewText.trim() || sharing}>
+        <button type="button" className="recruitment-copy" onClick={() => void sharePreview()} disabled={shareBlocked || !previewText.trim() || sharing}>
           {sharing ? "공유 중" : "모집글 공유"}
         </button>
+        <button type="button" className="recruitment-reset" onClick={() => void sharePreview(true)} disabled={shareBlocked || !previewText.trim() || sharing}>모집글 복사</button>
       </div>
       <p
         className={`recruitment-copy-status ${copyStatus.includes("못") ? "is-error" : ""}`}
@@ -176,6 +203,7 @@ function RecruitmentPreview({ generated, customizationSummary, children }: Recru
                 setPreviewState({
                   preview: event.target.value,
                   generatedText: generated.text,
+                  structuredKey,
                 });
                 setCopyFeedback(null);
               }}
@@ -198,6 +226,8 @@ function TradeRecruitmentToolComponent({
   approximateKrw,
   approximateSats,
   bitcoinDisplayUnit,
+  referenceReady,
+  referenceTime,
 }: TradeRecruitmentToolProps) {
   const [network, setNetwork] = useState<TransferNetwork>("onchain");
   const [returningTraderEnabled, setReturningTraderEnabled] = useState(false);
@@ -318,7 +348,9 @@ function TradeRecruitmentToolComponent({
         </fieldset>
 
         <RecruitmentPreview
-          key={structuredKey}
+          structuredKey={structuredKey}
+          referenceReady={referenceReady}
+          referenceTime={referenceTime}
           generated={generated}
           customizationSummary={customizationSummary}
         >
@@ -429,6 +461,8 @@ function recruitmentPropsEqual(
     && previous.sellerPremiumInput === next.sellerPremiumInput
     && previous.approximateKrw === next.approximateKrw
     && previous.approximateSats === next.approximateSats
+    && previous.referenceReady === next.referenceReady
+    && previous.referenceTime === next.referenceTime
     && previous.bitcoinDisplayUnit === next.bitcoinDisplayUnit;
 }
 

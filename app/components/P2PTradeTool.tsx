@@ -2663,6 +2663,8 @@ export function P2PTradeTool() {
           <div className="output-panel" hidden={outputMode !== "recruitment"}>
             <TradeRecruitmentTool
               active={outputMode === "recruitment"}
+              referenceReady={!stalePrice && marketState === "ready"}
+              referenceTime={referenceTime}
               tradeRole={tradeRole}
               amountUnit={amountInputUnit}
               amountInput={amountBasis === "krw" ? krwAmount : bitcoinAmountInput}
