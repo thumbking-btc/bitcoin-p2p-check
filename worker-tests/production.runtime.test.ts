@@ -30,7 +30,7 @@ describe("production Worker bindings and routing", () => {
     expect(page.headers.get("x-deployment-environment")).toBe("production");
     expect(page.headers.has("x-robots-tag")).toBe(false);
     const html = await page.text();
-    const notice = html.match(/<aside[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
+    const notice = html.match(/<div[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
     expect(notice).toContain("hidden");
     expect(html).not.toContain("data-deployment-environment=\"production\"");
     expect(html).not.toContain(">STAGING<");

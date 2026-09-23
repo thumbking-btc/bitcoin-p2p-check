@@ -19,7 +19,7 @@ describe("staging Worker isolation and identification", () => {
     expect(page.headers.get("x-deployment-environment")).toBe("staging");
     expect(page.headers.get("x-robots-tag")).toBe("noindex, nofollow, noarchive");
     const html = await page.text();
-    const notice = html.match(/<aside[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
+    const notice = html.match(/<div[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
     expect(html).toContain("<html lang=\"ko\" data-deployment-environment=\"staging\"");
     expect(notice).not.toContain("hidden");
     expect(notice).toContain("data-deployment-environment=\"staging\"");
