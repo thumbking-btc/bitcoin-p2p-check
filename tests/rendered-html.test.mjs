@@ -1068,7 +1068,7 @@ test("identifies production, staging, and preview hosts without registering stag
   );
 
   const html = await (await render()).text();
-  const notice = html.match(/<aside[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
+  const notice = html.match(/<div[^>]*id="deployment-environment-notice"[^>]*>/u)?.[0] ?? "";
   assert.match(notice, /hidden/u);
   assert.doesNotMatch(html, />STAGING<|>PREVIEW</u);
   assert.match(html, /data-deployment-label=""/u);

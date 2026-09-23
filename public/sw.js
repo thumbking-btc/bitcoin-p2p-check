@@ -50,7 +50,7 @@ function referencedSameOriginAssets(html, baseUrl) {
   return [...assets];
 }
 
-async function precachePath(cache, path) {
+async function precachePath(cache, path, assetLoads) {
   const response = await fetch(path, { cache: "reload" });
   if (!response.ok) throw new Error(`필수 앱 셸을 가져오지 못했습니다: ${path}`);
 
@@ -60,11 +60,18 @@ async function precachePath(cache, path) {
 
   const html = await response.text();
   const assets = referencedSameOriginAssets(html, new URL(path, self.location.origin));
-  await Promise.all(assets.map(async (assetUrl) => {
-    if (await cache.match(assetUrl)) return;
-    const assetResponse = await fetch(assetUrl, { cache: "reload" });
-    if (!assetResponse.ok) throw new Error(`필수 앱 자산을 가져오지 못했습니다: ${assetUrl}`);
-    await cache.put(assetUrl, assetResponse);
+  await Promise.all(assets.map((assetUrl) => {
+    // App-shell pages share scripts and styles. Reuse the pending load as well
+    // as completed cache entries while those pages are installed in parallel.
+    if (!assetLoads.has(assetUrl)) {
+      assetLoads.set(assetUrl, (async () => {
+        if (await cache.match(assetUrl)) return;
+        const assetResponse = await fetch(assetUrl, { cache: "reload" });
+        if (!assetResponse.ok) throw new Error(`필수 앱 자산을 가져오지 못했습니다: ${assetUrl}`);
+        await cache.put(assetUrl, assetResponse);
+      })());
+    }
+    return assetLoads.get(assetUrl);
   }));
 }
 
@@ -107,8 +114,9 @@ async function matchOfflineNavigation(request) {
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(PRECACHE_NAME);
+    const assetLoads = new Map();
     try {
-      await Promise.all(APP_SHELL.map((path) => precachePath(cache, path)));
+      await Promise.all(APP_SHELL.map((path) => precachePath(cache, path, assetLoads)));
     } catch (error) {
       await caches.delete(PRECACHE_NAME);
       throw error;

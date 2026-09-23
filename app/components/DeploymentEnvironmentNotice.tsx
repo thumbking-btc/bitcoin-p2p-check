@@ -65,7 +65,7 @@ export function DeploymentEnvironmentNotice() {
         : "화면 검수 환경입니다. 거래 기록·공유는 전체 기능 검수 환경에서 시험할 수 있습니다.";
 
   return (
-    <aside
+    <div
       className={`deployment-notice${mismatch ? " deployment-notice-mismatch" : ""}`}
       data-deployment-environment={notice?.environment}
       hidden={!notice}
@@ -75,6 +75,6 @@ export function DeploymentEnvironmentNotice() {
     >
       <strong data-deployment-label="" suppressHydrationWarning>{label}</strong>
       <span data-deployment-message="" suppressHydrationWarning>{message}</span>
-    </aside>
+    </div>
   );
 }

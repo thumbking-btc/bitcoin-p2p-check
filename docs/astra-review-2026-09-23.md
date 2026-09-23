@@ -53,6 +53,8 @@ Vault는 clean main `5e9109edf276c96834b961cce27179a007946e58`입니다. 루트 
 | 선택 자원의 무기한 대기 | 로고·폰트·clipboard 지연이 카드 전달/기록 확정을 막음 | 로고·폰트 1.5초, clipboard 1.2초 제한. 실제 검증된 QR과 다운로드 폴백 유지 |
 | 철회 링크 404 설명 | 잠시 후 확인 안내로 영구 철회/만료도 일시 장애처럼 표시 | 철회·만료·미공개 가능성을 정확히 표시 |
 | 같은 2.3.1 내 PWA 후보 교체 | SW bytes와 cache key가 같아 과거 앱 셸 잔존 가능 | 빌드한 정확한 commit을 SW script/cache identity에 삽입. 사용자 적용형 업데이트 유지 |
+| PWA 설치 자산 중복 | 병렬 앱 셸이 공통 JS/CSS를 캐시에 넣기 전 각각 요청 | install 범위 Promise Map으로 동일 자산의 진행 중 요청도 공유 |
+| 환경 표시 접근성 | aside에 허용되지 않는 status 역할 | 동일한 화면·안내 동작의 div로 수정 |
 | JavaScript 비활성 | 큰 빈 영역과 조회 중 표시 | 계산·시세에 JavaScript가 필요하다는 안내 제공 |
 
 금액 입력 → 계산 → 짧은 모집글 → DM에서 합의 → 선택한 결제정보와 카드 → 공유/저장 후 공개 → 서명 확인 → 링크 비활성화라는 흐름을 유지합니다. 기록은 실제 체결·입금 증명이 아니며, bearer 링크를 가진 사람이 열람하는 조건 기록입니다. 관리 UI는 접힌 상태를 유지합니다.
@@ -68,3 +70,7 @@ Service Worker는 API와 bearer 검증 URL을 저장하지 않고 일반 verify/
 ## 검증 기록
 
 검증 완료 후 결과와 배포 영수증 경로를 이 절에 확정합니다. 실기기 Samsung Internet·iPhone Safari의 설치/공유 시트와 실제 지갑 스캔은 브라우저 에뮬레이션 및 QR 디코딩 결과와 구분하여 보고합니다.
+
+브라우저 재검토에서 no-JS 안내 아래의 불필요한 계산기 빈 영역도 발견하여 숨겼습니다. 4배 CPU slowdown의 제한적 표본에서 초기 DCL 1,231ms, load 1,326ms, long task 4개(54~78ms), 입력→두 번의 animation frame 27.9~77.8ms였습니다. 실제 기기의 INP 측정이나 전 기종 보증이 아닙니다.
+
+PWA install 중복은 실제 dist HTML을 읽는 VM harness에서 61 fetch 호출/33 unique URL로 재현했고, 수정 후 33/33으로 줄었습니다. 실제 브라우저의 전송 병합·캐시와 별개인 호출 수 결과입니다. 자산 fetch 실패 시 install을 거절하고 불완전 cache를 삭제하는 동작도 검사했습니다.
