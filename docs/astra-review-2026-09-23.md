@@ -1,6 +1,6 @@
 # Astra 후보 검토 — 2026-09-23
 
-상태: 조사·검증 중인 미승인 후보입니다. 기존 후보의 구현·배포는 사용자 승인을 뜻하지 않습니다.
+상태: 조사·구현·전체 검증을 마친 미승인 채택 후보입니다. 기존 후보와 Astra 후보의 구현·배포는 사용자 승인을 뜻하지 않습니다. 배포 결과의 정확한 HEAD/version/deployment는 로컬 배포 영수증과 최종 전달 보고서에 기록합니다.
 
 ## 기준과 안전 범위
 
@@ -32,7 +32,7 @@
 
 Vault는 clean main `5e9109edf276c96834b961cce27179a007946e58`입니다. 루트 AGENTS/README, 세 서비스 reader와 `Knowledge/resuming-work.md`를 읽고 검색→카드→원문→동일 message ID와 후속 분기→첨부 순서로 확장합니다. ChatGPT export는 2026-09-04, Claude/Gemini export는 2026-09-11 기준이며 이후 상태는 Git·현재 배포와 별도로 대조합니다. 과거 사용자 메시지에 붙여 넣은 Assistant 완료 보고도 직접 관찰·채택 발언과 구분합니다.
 
-최종 조사 범위·추가 근거·변경·테스트·배포 증거는 검증 후 이 문서에 기록합니다. 원문과 개인 첨부 자체는 코드 저장소에 복제하지 않습니다.
+상세 원문 분류는 [사용자 근거 조사](astra-user-evidence-2026-09-23.md)에 기록했습니다. 원문과 개인 첨부 자체는 코드 저장소에 복제하지 않습니다.
 
 ## 원문 대조 후 수정한 판단
 
@@ -69,8 +69,51 @@ Service Worker는 API와 bearer 검증 URL을 저장하지 않고 일반 verify/
 
 ## 검증 기록
 
-검증 완료 후 결과와 배포 영수증 경로를 이 절에 확정합니다. 실기기 Samsung Internet·iPhone Safari의 설치/공유 시트와 실제 지갑 스캔은 브라우저 에뮬레이션 및 QR 디코딩 결과와 구분하여 보고합니다.
+`8ae60e452e501b1f64810ff31663ab337ca7e64c`에서 `npm run verify:ci` 전체 exit 0입니다. 이 보고서 확정 이후에는 제품 소스를 변경하지 않고 최종 HEAD로 다시 빌드하여 SW identity·정적 자산·staging 배포 bundle을 확인합니다. 실행 환경은 Node 22.23.2 / npm 10.9.8 / pinned Wrangler 4.136.1입니다.
+
+| 검증 | 결과 |
+|---|---|
+| ESLint / application TS / Worker TS | 모두 통과 |
+| third-party notice / production build | 통과, locked runtime notices 8개 |
+| Node 계약·단위·통합 | 262/262 |
+| production/staging/preview Worker runtime | 16/16, 4/4, 4/4. localhost 모사이며 실제 production 변경 없음 |
+| Playwright | 36/36. 입력·freshness·기록복구·결제경계·PWA·접근성 포함 |
+| Wrangler types / 세 환경 config dry-run | 통과. 실제 배포와 구분 |
+| dependency audit | 취약점 0건 |
+| 추가 실제 Chromium 화면 | 1440/393/320px, 가로 넘침 없음, 연속 메모·복사, 구매/판매×원/sats/BTC×프리미엄 18조합 |
+| 추가 접근성 | 6 화면의 WCAG 검사 통과. 전체 axe 검사에서 발견한 환경 표시 ARIA 문제도 수정 후 E2E 통과 |
+| PNG·QR | 실제 Canvas 1440×1080 PNG 15개. 검증 링크/주소/BIP21/Lightning Address/BOLT11 × 로고 정상/404/무응답. 전체 payload 디코딩 일치 |
+| 기존 PWA 업데이트 | legacy→SHA cache, 같은 2.3.1의 SHA cache→다음 SHA cache 모두 실제 적용 UI·old cache 삭제·offline 최신 shell·API/bearer 미캐시 통과 |
+| 지연 로딩 | 초기·숨긴 패널의 시세 tick·카드 선택까지 renderer/QR/logo 요청 없음. 실제 공유 준비에서 로드 |
+
+검증 과정에서 실패도 숨기지 않았습니다. 초기 source 계약의 옛 구조 기대값, 신규 fixture 타입, 테스트 자동 입력의 focus 경합을 수정했습니다. 전체 axe에서 드러난 제품 ARIA 결함과 no-JS 빈 공간은 제품을 수정했습니다. 마지막 전체 실행에는 실패·재시도·skip이 없습니다. 로그는 `outputs/validation/verify-ci-complete.log`입니다.
+
+초기 JS/CSS는 측정 빌드에서 raw 703,187 / 개별 gzip 합계 211,912 bytes(약 207 KiB), 공유 시 추가 graph는 raw 65,578 / gzip 24,105 bytes(약 23.5 KiB)였습니다. 최종 안내 요소·문서 commit으로 hash/압축량이 소폭 바뀔 수 있어 비교는 graph와 약값을 기준으로 합니다. 초기 요청은 16개, 검사한 시장 tick/카드 선택의 추가 요청은 0개였습니다. source map·브라우저 wire 압축 전체를 합친 수치는 아닙니다.
+
+직접 dependency 31개의 lock 일치와 사용처를 확인했습니다. 추가 dependency와 lockfile 변경은 없으며, public asset 18개에 byte-identical 중복이 없습니다. 생성용 SVG를 단순 미참조 파일로 삭제하지 않았습니다. Worker staging dry-run은 256.78 KiB / gzip 59.66 KiB로 유지됩니다.
 
 브라우저 재검토에서 no-JS 안내 아래의 불필요한 계산기 빈 영역도 발견하여 숨겼습니다. 4배 CPU slowdown의 제한적 표본에서 초기 DCL 1,231ms, load 1,326ms, long task 4개(54~78ms), 입력→두 번의 animation frame 27.9~77.8ms였습니다. 실제 기기의 INP 측정이나 전 기종 보증이 아닙니다.
 
 PWA install 중복은 실제 dist HTML을 읽는 VM harness에서 61 fetch 호출/33 unique URL로 재현했고, 수정 후 33/33으로 줄었습니다. 실제 브라우저의 전송 병합·캐시와 별개인 호출 수 결과입니다. 자산 fetch 실패 시 install을 거절하고 불완전 cache를 삭제하는 동작도 검사했습니다.
+
+## 비교 자료·추적 및 배포 원칙
+
+스크린샷은 작업트리의 `preview-browser-evidence/`에 보존했습니다.
+
+- `before-{desktop,mobile-393,mobile-320}.png`와 `after-{desktop,mobile-393,mobile-320}.png`
+- `before-*-memo-after-typing.png`와 `after-*-memo-edited.png`: 입력 회귀와 수정 비교
+- `before-no-js.png` / `after-no-js.png`
+- `after-card-{record,address,bip21,lightning-address,bolt11}-{normal,404,stalled}.png`
+- `pwa-*`: 기존 설치본 업데이트·오프라인 검증
+
+조사/동작/성능 세부 증거는 `outputs/research/`의 vault findings, code audit, second review, astra visual QA, performance, final measure, PWA upgrade, dependency assets audit입니다. 원문·로컬 경로·synthetic bearer가 포함될 수 있어 자동 공개하지 않습니다.
+
+의미 있는 commit: `bf2d4a7` 기준·분류 → `ec76bb8` 모집글 포커스/freshness → `b820a03` 공유 자원 timeout → `e1fb68f` PWA commit identity → `b057586` 수취정보 자동 포함·입력 차단 → `a0331cf` 원문 대조 문서 → `215a9ba` SW 요청 중복·ARIA → `8ae60e4` Worker 검사 정렬. main merge·release tag·changelog 출시 처리는 하지 않습니다.
+
+사용자의 이번 staging 배포 지시에 따라 격리 staging 이름/config와 로컬 Wrangler OAuth만 사용합니다. CI identity나 bootstrap 승인을 가장하지 않으며 기존 배포 guard를 변경하지 않습니다. 배포 전후 secret allowlist, exact binding/exports/rate limits, 단일 100% deployment, 전체 SHA tag를 확인하고 canonical asset graph/CSP/cache/readonly smoke와 허용된 synthetic lifecycle을 검사합니다. 테스트 기록은 해당 capability로만 철회합니다.
+
+배포 영수증은 `outputs/validation/astra-deployment-receipt.json`, 최종 전달용 배포 보고서는 `outputs/astra-staging-report.md`에 남깁니다. 이 문서 자체의 commit SHA를 문서 안에 다시 넣는 순환을 피하면서 최종 배포 HEAD를 정확히 기록하기 위한 별도 산출물입니다. 즉시 복구할 version은 `6f4a290a-23a0-495c-8034-a70eeb324878`(source `75c2529ea815b611acde793c9421e8d62d94b057`)이며 더 이전 `8c0d2953-3415-45e4-87ee-80001200183b`도 보존합니다.
+
+## 남은 채택 판단
+
+실기기 Samsung Internet·Android Chrome·iPhone Safari의 설치 경험, 외부 앱 공유/clipboard, 실제 지갑의 QR 스캔과 금액 채움은 사용자의 기기에서 최종 확인해야 합니다. Chromium/WebKit 검수와 암호학적·QR 검증을 실기기 결제 승인으로 보고하지 않습니다. 실제 송금은 하지 않았습니다. bearer 링크 공유와 브라우저에 보관하는 철회 capability의 특성은 유지되며, 사용자 데이터·기존 DO 상태는 삭제하지 않았습니다. 현재 후보 UI와 거래 기록 기능의 최종 채택은 여전히 사용자 검토 대상입니다.
