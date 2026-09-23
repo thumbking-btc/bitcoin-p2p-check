@@ -25,6 +25,7 @@ test("recruitment preserves typing focus, manual edits and direct clipboard deli
     } });
   });
   await page.goto("/");
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.locator(".recruitment-customization > summary").click();
   const memo = page.locator("#recruitment-memo");
@@ -57,6 +58,7 @@ test("recruitment blocks stale sharing and copying even with manual text, then r
   const market = await installFakeMarket(page, page, { checkedAtMs: CREATED_AT_MS, holdRequestAfter: 2 });
   await page.goto("/");
   await page.clock.runFor(1);
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.locator(".recruitment-customization > summary").click();
   await page.locator("#recruitment-preview").fill("이전 조건을 직접 편집한 문구");
@@ -76,6 +78,7 @@ test("recruitment blocks stale sharing and copying even with manual text, then r
 test("recruitment refuses a premium rejected by the calculator", async ({ page }) => {
   await installFakeMarket(page);
   await page.goto("/");
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.locator("#seller-premium").fill("1000");
   await expect(page.getByRole("button", { name: "모집글 복사", exact: true })).toBeDisabled();
