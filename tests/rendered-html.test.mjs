@@ -417,6 +417,22 @@ test("blocks stale or loading Upbit references", () => {
   assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: null }, base), false);
 });
 
+test("blocks future reference times and invalid clocks at the sharing boundary", () => {
+  const observedAt = "2026-09-29T00:00:00.000Z";
+  const base = Date.parse(observedAt);
+  const reference = { marketState: "ready", referenceTime: observedAt };
+  // A device clock rollback must not make an existing quote indefinitely fresh.
+  assert.equal(isReferenceShareable(reference, base - 24 * 60 * 60_000), false);
+  assert.equal(isReferenceShareable(reference, base - 1), false);
+  assert.equal(isReferenceShareable(reference, base), true);
+  assert.equal(isReferenceShareable(reference, base + 299_999), true);
+  assert.equal(isReferenceShareable(reference, base + 300_000), false);
+  for (const invalidNow of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.equal(isReferenceShareable(reference, invalidNow), false);
+  }
+  assert.equal(isReferenceShareable({ ...reference, referenceTime: "not-a-date" }, base), false);
+});
+
 test("round-trips validated trade inputs in a server-private URL fragment", () => {
   const buyerFragment = buildTradeFragment({ side: "buy", amount: "3000000", premium: "2", fundingSource: "근로소득", displayUnit: "btc" });
   assert.equal(buyerFragment, "#v=2&side=buy&basis=krw&krw=3000000&premium=2&fund=salary&unit=btc");

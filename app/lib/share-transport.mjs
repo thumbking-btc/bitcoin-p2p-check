@@ -32,7 +32,8 @@ export function isReferenceShareable(
   if (marketState !== "ready" || !referenceTime) return false;
   const observedAt = new Date(referenceTime).getTime();
   if (!Number.isFinite(observedAt) || !Number.isFinite(now)) return false;
-  return now - observedAt < PRICE_MAX_AGE_MS;
+  const ageMs = now - observedAt;
+  return ageMs >= 0 && ageMs < PRICE_MAX_AGE_MS;
 }
 
 function isAbortError(error) {
