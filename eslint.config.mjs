@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "test-results/**",
     "render-diagnostics/**",
     "preview-browser-evidence/**",
+    "outputs/**",
+    "work/**",
     "next-env.d.ts",
     "worker-configuration.d.ts",
   ]),

@@ -745,6 +745,7 @@ test("a non-contract edge 403 preserves the only revoke capability", async ({ pa
 test("a rapid cross-tab clear prevents a stale capability write from restoring browser persistence", async ({ context, page }) => {
   await installFakeMarket(page);
   await page.goto("/");
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
 
@@ -787,6 +788,7 @@ test("a rapid cross-tab clear prevents a stale capability write from restoring b
   ])).toEqual([null, null]);
 
   await page.reload();
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
   const tradeRecordCardModeAfterReload = page.getByRole("radio", { name: /거래 기록 카드/u });
   await expect(tradeRecordCardModeAfterReload).toBeEnabled();
