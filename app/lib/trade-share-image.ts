@@ -542,7 +542,9 @@ async function renderTradeShareImage(input: TradeShareImageInput): Promise<File>
   }
   context.fillStyle = MUTED_PAPER;
   const target = input.payment ? compactTarget(input.payment) : `기록 ID ${compactId(input.record.id)}`;
-  fitText(context, target, 390, 18, 14, 560, Boolean(input.payment));
+  // Keep the Korean invoice description in the card's CJK-capable font stack.
+  const targetIsAddress = Boolean(input.payment && (input.payment.rail === "onchain" || input.payment.address));
+  fitText(context, target, 390, 18, 14, 560, targetIsAddress);
   context.fillText(target, 1_130, 840);
 
   context.strokeStyle = "rgba(245, 240, 227, 0.28)";

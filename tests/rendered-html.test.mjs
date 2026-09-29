@@ -417,13 +417,15 @@ test("blocks stale or loading Upbit references", () => {
   assert.equal(isReferenceShareable({ marketState: "ready", referenceTime: null }, base), false);
 });
 
-test("blocks future reference times and invalid clocks at the sharing boundary", () => {
+test("allows bounded clock skew and blocks invalid or stale references at the sharing boundary", () => {
   const observedAt = "2026-09-29T00:00:00.000Z";
   const base = Date.parse(observedAt);
   const reference = { marketState: "ready", referenceTime: observedAt };
   // A device clock rollback must not make an existing quote indefinitely fresh.
   assert.equal(isReferenceShareable(reference, base - 24 * 60 * 60_000), false);
-  assert.equal(isReferenceShareable(reference, base - 1), false);
+  assert.equal(isReferenceShareable(reference, base - 30_001), false);
+  assert.equal(isReferenceShareable(reference, base - 30_000), true);
+  assert.equal(isReferenceShareable(reference, base - 1), true);
   assert.equal(isReferenceShareable(reference, base), true);
   assert.equal(isReferenceShareable(reference, base + 299_999), true);
   assert.equal(isReferenceShareable(reference, base + 300_000), false);

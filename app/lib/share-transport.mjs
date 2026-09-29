@@ -1,4 +1,5 @@
 const PRICE_MAX_AGE_MS = 5 * 60_000;
+const PRICE_MAX_FUTURE_SKEW_MS = 30_000;
 const TRADE_SHARE_REQUEST_TYPE = "application/x-bitcoin-p2p-trade-image+json";
 const CLIPBOARD_TIMEOUT_MS = 1_200;
 
@@ -33,7 +34,7 @@ export function isReferenceShareable(
   const observedAt = new Date(referenceTime).getTime();
   if (!Number.isFinite(observedAt) || !Number.isFinite(now)) return false;
   const ageMs = now - observedAt;
-  return ageMs >= 0 && ageMs < PRICE_MAX_AGE_MS;
+  return ageMs >= -PRICE_MAX_FUTURE_SKEW_MS && ageMs < PRICE_MAX_AGE_MS;
 }
 
 function isAbortError(error) {
