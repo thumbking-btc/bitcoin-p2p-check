@@ -89,3 +89,5 @@
 배포 전 복구 기준: version `b1f83622-c8ec-45d5-9afd-13ef46304e01`, deployment `c62cf760-e2df-4141-9fd9-c732d3fd5699`, 단일 100%, 소스 `488286e772322d5d81f0dae41a4b53549d3e07b6`. 원격 main은 `ca735db062f1c7fd6eceab3f6a86c01b20fada45`입니다. 실제 최종 배포·검증 결과는 `outputs/validation/continuation-deployment-receipt-20260929.json`에 기록하고 최종 보고서에서 제공합니다.
 
 10월 1일 재개 시점: 후속 수정은 아직 미커밋·미배포였고 공개 staging은 계속 `488286e`였다. 마지막 교차 탭 시험은 3/3 반복 통과, 최종 정적·타입·dry-run·audit 검사는 통과한 것으로 로그를 확인했다. 최종 commit의 전체 gate와 staging 게시를 완료한 후 배포 영수증을 갱신한다.
+
+10월 1일 최종 로컬 기능 검증은 277/24/43개 전체 통과했다. 마지막 감사에 새로 반영된 brace-expansion 취약점은 검사 도구의 두 하위 패키지를 보안 수정 버전으로 갱신해 audit 0건으로 보완했다. 최종 commit의 CI gate와 검수 배포 결과를 별도 영수증으로 추적한다.
