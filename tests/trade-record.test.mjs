@@ -447,6 +447,39 @@ test("preserves address-only onchain and Lightning targets without inventing an 
   assert.equal((await verifyTradeRecordSignature(lightning, { publicKeys: lightningEnvironment.publicKeys })).status, "valid");
 });
 
+test("input address normalization never rewrites a signed onchain address or payload", async () => {
+  const { handle, publicKeys } = await signingEnvironment();
+  const request = createOnchainRequest(ADDRESS.toUpperCase(), 1_000_000n);
+  assert.equal(request.address, ADDRESS);
+  const response = await handle(createRequest(validDraft({
+    rail: "onchain", address: request.address, payload: request.uri,
+  })));
+  assert.equal(response.status, 201);
+  const signed = canonicalizeTradeRecordApiSuccess(await response.json());
+  assert.equal((await verifyTradeRecordSignature(signed, { publicKeys })).status, "valid");
+
+  const normalizedDraftResponse = await handle(createRequest(validDraft({
+    rail: "onchain", address: ADDRESS.toUpperCase(), payload: request.uri,
+  })));
+  assert.equal(normalizedDraftResponse.status, 201);
+  const normalizedDraft = canonicalizeTradeRecordApiSuccess(await normalizedDraftResponse.json());
+  assert.deepEqual(normalizedDraft.record.payment, { rail: "onchain", address: ADDRESS, payload: request.uri });
+  assert.equal((await verifyTradeRecordSignature(normalizedDraft, { publicKeys })).status, "valid");
+
+  for (const changedField of ["address", "payload"]) {
+    const tampered = structuredClone(signed);
+    tampered.record.payment[changedField] = tampered.record.payment[changedField].replace(ADDRESS, ADDRESS.toUpperCase());
+    assert.equal((await verifyTradeRecordSignature(tampered, { publicKeys })).status, "invalid-signature");
+    assert.equal(tampered.record.payment[changedField].includes(ADDRESS.toUpperCase()), true,
+      "signature verification must not normalize or mutate the supplied record");
+  }
+
+  const noncanonicalPayload = await handle(createRequest(validDraft({
+    rail: "onchain", address: ADDRESS.toUpperCase(), payload: request.uri.replace(ADDRESS, ADDRESS.toUpperCase()),
+  })));
+  assert.equal(noncanonicalPayload.status, 400, "the signing API still requires an exact canonical payment payload");
+});
+
 test("rejects inconsistent or expanded condition schemas before signing", async () => {
   const { handle, records } = await signingEnvironment();
   const inconsistent = validDraft();

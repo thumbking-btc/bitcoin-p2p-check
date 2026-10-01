@@ -588,6 +588,7 @@ export function P2PTradeTool() {
   const [premiumInput, setPremiumInput] = useState(DEFAULT_TRADE_DRAFT.premiumInput);
   const [fundingSource, setFundingSource] = useState<FundingSource>(DEFAULT_TRADE_DRAFT.fundingSource);
   const [importedTradeLink, setImportedTradeLink] = useState(false);
+  const [continuedSellerTrade, setContinuedSellerTrade] = useState(false);
   const [bitcoinDisplayUnit, setBitcoinDisplayUnit] = useState<BitcoinDisplayUnit>(DEFAULT_TRADE_DRAFT.bitcoinDisplayUnit);
   const [outputMode, setOutputMode] = useState<OutputMode>("recruitment");
   const [draftHydrated, setDraftHydrated] = useState(false);
@@ -636,6 +637,7 @@ export function P2PTradeTool() {
   const managedStorageGenerationRef = useRef(0);
   const managedTradeRecordsRef = useRef<ManagedTradeRecord[]>([]);
   const managedTradeRecordsDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const shareToolsRef = useRef<HTMLDetailsElement | null>(null);
   const reconciliationScheduler = useMemo(() => createReconciliationScheduler(), []);
 
   useEffect(() => {
@@ -1427,6 +1429,11 @@ export function P2PTradeTool() {
         hydratedDraft.fundingSource = imported.fundingSource as FundingSource;
         hydratedDraft.bitcoinDisplayUnit = importedDisplayUnit;
         setImportedTradeLink(true);
+        if ("continueToReceive" in imported && imported.continueToReceive === true) {
+          setContinuedSellerTrade(true);
+          setOutputMode("trade-image");
+          if (shareToolsRef.current) shareToolsRef.current.open = true;
+        }
         writeTradeDraft(storage, hydratedDraft);
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
@@ -2269,7 +2276,9 @@ export function P2PTradeTool() {
         ) : null}
         {importedTradeLink ? (
           <p className="imported-trade-notice" role="status">
-            공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요.
+            {continuedSellerTrade
+              ? "판매자의 입력값을 가져왔습니다. 현재 시세로 다시 계산됩니다. 금액을 확인하고 아래에 받을 정보를 입력하세요."
+              : "공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다. 링크 값은 수정될 수 있으니 거래 전에 확인하세요."}
           </p>
         ) : null}
         {draftStatus ? <p className="visually-hidden" role="status">{draftStatus}</p> : null}
@@ -2465,7 +2474,7 @@ export function P2PTradeTool() {
 
       {marketError ? <p className="market-error" role="alert">{marketError}</p> : null}
 
-      <details className="share-tools">
+      <details className="share-tools" ref={shareToolsRef}>
         <summary>
           <span>상대 찾기·공유하기</span>
           <small>모집글과 거래 기록 카드</small>

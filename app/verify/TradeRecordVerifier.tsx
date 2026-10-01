@@ -20,6 +20,7 @@ import {
   normalizeOptionalDeploymentEnvironment,
 } from "../lib/deployment-environment.mjs";
 import { createVerifiedTextQr } from "../lib/verified-qr.mjs";
+import { buildBuyerContinuationFragment } from "../lib/trade-link.mjs";
 import styles from "./verify.module.css";
 
 type ViewState =
@@ -294,7 +295,34 @@ export function TradeRecordVerifier() {
     ? verifiedRecord.payment.expiresAt
     : null;
   const invoiceExpiresAtSeconds = invoiceExpiresAt ? isoTimeToEpochSeconds(invoiceExpiresAt) : null;
+  const recordExpiresAtSeconds = verifiedRecord ? isoTimeToEpochSeconds(verifiedRecord.expiresAt) : null;
+  const recordExpired = state.status === "checked" && state.result.status === "valid"
+    && (state.result.recordExpired || (recordExpiresAtSeconds !== null && recordExpiresAtSeconds <= nowSeconds));
+  const continuationFragment = verifiedRecord && !recordExpired
+    ? buildBuyerContinuationFragment(verifiedRecord.condition)
+    : "";
   const paymentExpiry = getPaymentExpiryState(invoiceExpiresAtSeconds, nowSeconds);
+
+  useEffect(() => {
+    if (recordExpiresAtSeconds === null) return;
+    let timer: number | undefined;
+    const refreshExpiry = () => {
+      window.clearTimeout(timer);
+      const now = Date.now();
+      setNowSeconds(Math.floor(now / 1_000));
+      const remaining = recordExpiresAtSeconds * 1_000 - now;
+      if (remaining > 0 && document.visibilityState === "visible") {
+        // Legacy records can outlive the maximum browser timer delay.
+        timer = window.setTimeout(refreshExpiry, Math.min(remaining, 2_147_483_647));
+      }
+    };
+    refreshExpiry();
+    document.addEventListener("visibilitychange", refreshExpiry);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", refreshExpiry);
+    };
+  }, [recordExpiresAtSeconds]);
 
   useEffect(() => {
     if (invoiceExpiresAtSeconds === null) return;
@@ -335,10 +363,21 @@ export function TradeRecordVerifier() {
         {inferDeploymentEnvironment(typeof window === "undefined" ? "" : window.location.hostname) === "staging"
           ? <p className={styles.warning}>STAGING 시험 기록입니다. 실제 거래의 증빙으로 사용하지 마십시오.</p>
           : null}
-        {state.result.recordExpired ? <p className={styles.warning}>이 공유 링크의 제공 기한이 지났습니다.</p> : null}
+        {recordExpired ? <p className={styles.warning}>이 공유 링크의 제공 기한이 지났습니다.</p> : null}
       </section>
 
       <RecordDetails record={state.result.record} />
+
+      {continuationFragment ? (
+        <section className={`${styles.card} ${styles.continuation}`} aria-labelledby="continue-as-buyer-title">
+          <h2 id="continue-as-buyer-title">내 받을 정보 추가</h2>
+          <p>{state.result.record.condition.amountBasis === "krw"
+            ? "원화 입력 금액과 프리미엄을 가져오며, 받을 BTC는 현재 시세로 다시 계산합니다."
+            : "BTC 입력 수량과 프리미엄을 가져오며, 보낼 원화는 현재 시세로 다시 계산합니다."}</p>
+          <a className={styles.continueLink} href={`/${continuationFragment}`} referrerPolicy="no-referrer">구매자로 이어서 입력</a>
+          <small>내 수취정보를 넣어 새로 공유할 수 있습니다. 이 원본 기록은 그대로 유지됩니다.</small>
+        </section>
+      ) : null}
 
       <aside className={styles.disclaimer}>
         <strong>확인 범위</strong>

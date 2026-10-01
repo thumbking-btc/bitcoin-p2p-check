@@ -236,6 +236,46 @@
   border-color: color-mix(in srgb, var(--orange-dark) 42%, var(--line));
 }
 
+.continuation {
+  padding: 18px 20px;
+}
+
+.continuation h2 {
+  margin: 0 0 10px;
+  font-size: 1.2rem;
+}
+
+.continuation p,
+.continuation small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.continuation small {
+  display: block;
+  margin-top: 12px;
+}
+
+.continueLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  margin-top: 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--orange-dark);
+  border-radius: 8px;
+  background: var(--orange);
+  color: #241303;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.continueLink:focus-visible {
+  outline: 3px solid var(--orange-dark);
+  outline-offset: 3px;
+}
+
 .copyPanel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

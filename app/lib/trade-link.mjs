@@ -1,4 +1,4 @@
-import { MAX_SATS } from "./p2p-quote.mjs";
+import { MAX_KRW, MAX_PREMIUM_BPS, MAX_SATS, MIN_PREMIUM_BPS } from "./p2p-quote.mjs";
 
 const MAX_FRAGMENT_LENGTH = 512;
 const MAX_PREMIUM = 999.99;
@@ -57,6 +57,36 @@ export function buildTradeFragment({ side, amount, premium, fundingSource, displ
   return `#${params.toString()}`;
 }
 
+/**
+ * Copies only calculation inputs from a previously verified seller record.
+ * The receiving calculator uses a fresh market price; this does not extend or
+ * modify the signed record, or verify its signature or availability.
+ */
+export function buildBuyerContinuationFragment(condition) {
+  if (!condition || typeof condition !== "object" || Array.isArray(condition)) return "";
+  if (condition.role !== "seller") return "";
+  if (condition.amountBasis !== "krw" && condition.amountBasis !== "bitcoin") return "";
+  if (condition.bitcoinDisplayUnit !== "btc" && condition.bitcoinDisplayUnit !== "sats") return "";
+  if (!Number.isSafeInteger(condition.paymentKrw) || condition.paymentKrw <= 0 || condition.paymentKrw > MAX_KRW) return "";
+  if (!Number.isSafeInteger(condition.sats) || condition.sats <= 0 || condition.sats > MAX_SATS) return "";
+  if (!Number.isSafeInteger(condition.sellerPremiumBps)
+    || condition.sellerPremiumBps < MIN_PREMIUM_BPS
+    || condition.sellerPremiumBps > MAX_PREMIUM_BPS) return "";
+
+  const isKrw = condition.amountBasis === "krw";
+  const params = new URLSearchParams({
+    v: "3",
+    from: "sell",
+    basis: isKrw ? "krw" : "btc",
+    [isKrw ? "krw" : "sats"]: String(isKrw ? condition.paymentKrw : condition.sats),
+    premium: String(condition.sellerPremiumBps / 100),
+    fund: "none",
+    unit: condition.bitcoinDisplayUnit,
+    receive: "1",
+  });
+  return `#${params.toString()}`;
+}
+
 export function parseTradeFragment(fragment) {
   if (typeof fragment !== "string" || fragment.length < 2 || fragment.length > MAX_FRAGMENT_LENGTH) return null;
   const params = new URLSearchParams(fragment.startsWith("#") ? fragment.slice(1) : fragment);
@@ -72,6 +102,11 @@ export function parseTradeFragment(fragment) {
 
   const creatorSide = params.get(sideKey);
   if (creatorSide !== "buy" && creatorSide !== "sell") return null;
+  const continueToReceive = params.has("receive");
+  if (continueToReceive && (params.getAll("receive").length !== 1
+    || params.get("receive") !== "1"
+    || version !== "3"
+    || creatorSide !== "sell")) return null;
   const side = version === "3"
     ? creatorSide === "buy" ? "sell" : "buy"
     : creatorSide;
@@ -90,6 +125,11 @@ export function parseTradeFragment(fragment) {
   const amountKey = amountBasis === "krw" ? "krw" : "sats";
   if (params.getAll(amountKey).length !== 1) return null;
   if (params.has(amountKey === "krw" ? "sats" : "krw")) return null;
+  if (continueToReceive) {
+    const allowedKeys = new Set(["v", "from", "basis", amountKey, "premium", "fund", "unit", "receive"]);
+    if ([...params.keys()].some((key) => !allowedKeys.has(key))) return null;
+    if (params.has("fund") && params.get("fund") !== "none") return null;
+  }
 
   const amount = validAmount(params.get(amountKey), amountBasis === "krw" ? 15 : 16);
   if (amount === null || (amountBasis === "bitcoin" && amount > MAX_SATS)) return null;
@@ -99,5 +139,6 @@ export function parseTradeFragment(fragment) {
   if (premium === null || !fundingSource || (displayUnit !== "btc" && displayUnit !== "sats")) return null;
 
   const result = { side, amount, amountBasis, premium, fundingSource, displayUnit };
+  if (continueToReceive) return { ...result, creatorSide, continueToReceive: true };
   return version === "3" ? { ...result, creatorSide } : result;
 }

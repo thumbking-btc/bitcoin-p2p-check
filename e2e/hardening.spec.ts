@@ -431,8 +431,11 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
 
   await storeRecord(firstId, "a".repeat(43), false);
   await page.reload();
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
-  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  const tradeRecordCardMode = page.getByRole("radio", { name: /거래 기록 카드/u });
+  await page.locator('label[for="output-mode-trade-image"]').click();
+  await expect(tradeRecordCardMode).toBeChecked();
   const managedRecords = page.locator(".managed-trade-records");
   await expect(managedRecords.getByText("공개 링크 1개 관리", { exact: true })).toBeVisible();
   await expect(managedRecords).not.toHaveAttribute("open", "");
@@ -523,8 +526,10 @@ test("record-scoped revoke capabilities survive reload and merge independent sto
     lifecycle: "finalized",
   });
   await page.reload();
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
   await page.getByText("상대 찾기·공유하기", { exact: true }).click();
-  await page.getByRole("radio", { name: /거래 기록 카드/u }).check({ force: true });
+  await page.locator('label[for="output-mode-trade-image"]').click();
+  await expect(tradeRecordCardMode).toBeChecked();
   await expect(page.getByText("공개 기록", { exact: true })).toHaveCount(1);
 
   await page.evaluate(() => {

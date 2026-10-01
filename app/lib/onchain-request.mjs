@@ -42,9 +42,14 @@ export function createOnchainRequest(addressInput, sats) {
     fail("ADDRESS_FORMAT", "bitcoin: URI가 아닌 메인넷 수취 주소 한 개를 공백 없이 입력하십시오.");
   }
 
+  // Accept the all-uppercase SegWit presentation at the input boundary only.
+  // Mixed case must reach the strict decoder unchanged; Base58 is case-sensitive.
+  const address = addressInput.startsWith("BC1") && addressInput === addressInput.toUpperCase()
+    ? addressInput.toLowerCase()
+    : addressInput;
   let decoded;
   try {
-    decoded = decodeKnownMainnetAddress(addressInput);
+    decoded = decodeKnownMainnetAddress(address);
   } catch (error) {
     const message = error instanceof Error ? error.message : "비트코인 메인넷 수취 주소를 확인하지 못했습니다.";
     fail("ADDRESS_INVALID", message);

@@ -72,6 +72,29 @@ test("@production-only plain onchain and BIP21 inputs reach the card without a Q
   expect(drafts[1].payment).toEqual({ rail: "onchain", payload: bip21, address: ADDRESS });
 });
 
+test("@production-only uppercase SegWit receive inputs normalize while mixed case stays blocked", async ({ page }) => {
+  const { drafts, share } = await openReceiveInfo(page);
+  const input = page.getByLabel("온체인 수취 주소");
+  for (const canonicalAddress of [ADDRESS, "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"]) {
+    for (const withAmount of [false, true]) {
+      const supplied = withAmount ? `BITCOIN:${canonicalAddress.toUpperCase()}?amount=0.01` : canonicalAddress.toUpperCase();
+      const payload = withAmount ? `bitcoin:${canonicalAddress}?amount=0.01` : canonicalAddress;
+      await input.fill(supplied);
+      await expect(share).toBeEnabled();
+      const previousCount = drafts.length;
+      await share.click();
+      await expect.poll(() => drafts.length).toBe(previousCount + 1);
+      expect(drafts.at(-1)?.payment).toEqual({ rail: "onchain", payload, address: canonicalAddress });
+    }
+  }
+  for (const mixed of [`bc1${ADDRESS.slice(3).toUpperCase()}`, `bitcoin:bc1${ADDRESS.slice(3).toUpperCase()}?amount=0.01`]) {
+    await input.fill(mixed);
+    await expect(share).toBeDisabled();
+    await expect(page.getByText("결제정보 미포함", { exact: true })).toHaveCount(0);
+  }
+  expect(drafts).toHaveLength(4);
+});
+
 test("@production-only partial and mismatched payment inputs cannot silently share a card without payment", async ({ page }) => {
   const { drafts, share } = await openReceiveInfo(page);
   const address = page.getByLabel("온체인 수취 주소");

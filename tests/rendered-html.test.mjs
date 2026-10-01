@@ -789,7 +789,9 @@ test("keeps market data official and interaction failures recoverable", async ()
   assert.match(component, /공유된 거래 조건을 업비트 실시간 시세에 맞춰 다시 확인했습니다/);
   assert.doesNotMatch(component, /새 계산 시작|startNewCalculation/);
   assert.match(tradeLink, /return `#\$\{params\.toString\(\)\}`/);
-  assert.doesNotMatch(tradeLink, /price|observed|checked|koreaPremium|paymentKrw|appliedPrice/i);
+  // Reading the signed input amount is allowed; these names must not become URL parameters.
+  // Behavioral continuation tests also assert the complete serialized key set.
+  assert.doesNotMatch(tradeLink, /params\.(?:set|append)\(\s*["'][^"']*(?:price|observed|checked|koreaPremium|paymentKrw|appliedPrice)[^"']*["']/i);
   assert.doesNotMatch(component, /거래 조건 이미지 준비 중|거래 조건 이미지 공유 중/);
   assert.match(component, /거래 기록 카드 준비 중/);
   assert.match(component, /PNG를 저장하고 상세 기록을 공개 확정했습니다/);
