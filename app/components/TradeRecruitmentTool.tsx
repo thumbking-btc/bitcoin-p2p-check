@@ -377,9 +377,8 @@ function TradeRecruitmentToolComponent({
                   />
                   <span>기존 거래자 우대</span>
                 </label>
-                {returningTraderEnabled ? (
-                  <label
-                    className="returning-premium"
+                <label
+                    className={`returning-premium${returningTraderEnabled ? "" : " is-disabled"}`}
                     htmlFor="returning-trader-premium"
                     id="returning-trader-premium-field"
                   >
@@ -389,6 +388,7 @@ function TradeRecruitmentToolComponent({
                         inputMode="decimal"
                         value={returningTraderPremiumInput}
                         onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                        disabled={!returningTraderEnabled}
                         aria-label="기존 거래자 우대 프리미엄"
                         aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
                         aria-invalid={returningPremiumInvalid || undefined}
@@ -398,6 +398,7 @@ function TradeRecruitmentToolComponent({
                         <button
                           type="button"
                           onClick={() => adjustReturningPremium(1)}
+                          disabled={!returningTraderEnabled}
                           aria-label="기존 거래자 우대 프리미엄 0.1% 올리기"
                           title="0.1% 올리기"
                         >
@@ -406,7 +407,7 @@ function TradeRecruitmentToolComponent({
                         <button
                           type="button"
                           onClick={() => adjustReturningPremium(-1)}
-                          disabled={returningPremiumPercent !== null && returningPremiumPercent <= -99.99}
+                          disabled={!returningTraderEnabled || (returningPremiumPercent !== null && returningPremiumPercent <= -99.99)}
                           aria-label="기존 거래자 우대 프리미엄 0.1% 내리기"
                           title="0.1% 내리기"
                         >
@@ -415,7 +416,6 @@ function TradeRecruitmentToolComponent({
                       </span>
                     </span>
                   </label>
-                ) : null}
               </div>
               {tradeRole === "buyer" ? (
                 <label className="recruitment-check">

@@ -241,11 +241,14 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .recruitment-option-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .recruitment-check { display: flex; min-height: 44px; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid var(--control-line); background: #fff; color: var(--ink); cursor: pointer; font-size: 12px; font-weight: 720; line-height: 1.35; }
 .recruitment-check input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--orange-dark); }
-.returning-option { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(150px, .72fr); border: 1px solid var(--control-line); background: #fff; }
+.returning-option { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(118px, .72fr); border: 1px solid var(--control-line); background: #fff; }
 .returning-option .recruitment-check { border: 0; background: transparent; }
 .returning-premium { display: block; min-width: 0; border-left: 1px solid var(--line); }
 .returning-premium .input-with-unit { height: 100%; border: 0; }
 .returning-premium .input-with-unit input { font-size: 16px; }
+.returning-premium.is-disabled { background: #f1ede5; }
+.returning-premium.is-disabled .input-with-unit { background: transparent; }
+.returning-premium.is-disabled input { color: #7b776f; }
 .recruitment-memo { display: grid; min-width: 0; }
 .recruitment-memo > span { display: block; }
 .recruitment-memo small { margin-left: 4px; color: var(--orange-dark); font-size: 10px; }
@@ -503,10 +506,9 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
   .share-tools > summary span { grid-column: 1; grid-row: 1; }
   .share-tools > summary small { grid-column: 1; grid-row: 2; color: var(--ink); font-size: 12px; font-weight: 760; line-height: 1.35; text-align: left; }
   .share-tools > summary::after { grid-column: 2; grid-row: 1 / 3; align-self: center; }
-  .returning-option { grid-template-columns: 1fr; }
+  .returning-option { grid-template-columns: minmax(0, 1fr) 118px; }
   .returning-option .recruitment-check { padding: 10px 12px; font-size: 13px; }
-  .returning-premium { border-top: 1px solid var(--line); border-left: 0; }
-  .returning-premium .input-with-unit input { padding-inline: 12px; }
+  .returning-premium .input-with-unit input { padding-inline: 7px; }
   .trade-form { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .trade-form .premium-note, .trade-form .input-alert { grid-column: 1; }
 }

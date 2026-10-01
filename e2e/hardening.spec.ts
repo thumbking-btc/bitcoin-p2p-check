@@ -33,8 +33,13 @@ test("recruitment preserves typing focus, manual edits and direct clipboard deli
   await expect(memo).toHaveValue("ABCD");
   await expect(memo).toBeFocused();
   await expect(page.locator(".recruitment-customization")).toHaveAttribute("open", "");
+  const returningOption = page.locator(".returning-option");
+  const initialReturningOptionBox = await returningOption.boundingBox();
   await page.getByRole("checkbox", { name: "기존 거래자 우대" }).check();
+  await expect(returningOption).toHaveCSS("grid-template-columns", /118px/);
+  expect(await returningOption.boundingBox()).toMatchObject({ height: initialReturningOptionBox?.height });
   const premium = page.getByRole("textbox", { name: "기존 거래자 우대 프리미엄", exact: true });
+  await expect(premium).toBeEnabled();
   await premium.fill("-1");
   await premium.pressSequentially(".5");
   await expect(premium).toHaveValue("-1.5");
