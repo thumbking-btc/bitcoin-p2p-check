@@ -36,7 +36,7 @@ test("recruitment preserves typing focus, manual edits and direct clipboard deli
   const returningOption = page.locator(".returning-option");
   const initialReturningOptionBox = await returningOption.boundingBox();
   await page.getByRole("checkbox", { name: "기존 거래자 우대" }).check();
-  await expect(returningOption).toHaveCSS("grid-template-columns", /118px/);
+  expect(initialReturningOptionBox?.height).toBe(44);
   expect(await returningOption.boundingBox()).toMatchObject({ height: initialReturningOptionBox?.height });
   const premium = page.getByRole("textbox", { name: "기존 거래자 우대 프리미엄", exact: true });
   await expect(premium).toBeEnabled();
@@ -44,6 +44,10 @@ test("recruitment preserves typing focus, manual edits and direct clipboard deli
   await premium.pressSequentially(".5");
   await expect(premium).toHaveValue("-1.5");
   await expect(premium).toBeFocused();
+  await premium.press("ArrowDown");
+  await expect(premium).toHaveValue("-1.6");
+  await premium.press("ArrowUp");
+  await expect(premium).toHaveValue("-1.5");
   const editor = page.locator("#recruitment-preview");
   await editor.fill("직접 편집한 모집글 / DM 부탁드립니다.");
   await page.evaluate(() => (window as Window & { __emitP2PMarketPrice?: (price: number, time: number) => void }).__emitP2PMarketPrice?.(101_000_000, Date.now()));
@@ -68,6 +72,52 @@ test("recruitment preserves typing focus, manual edits and direct clipboard deli
   await expect.poll(() => preview.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("recruitment checkbox rows stay compact and aligned before and after selection", async ({ page }, testInfo) => {
+  await installFakeMarket(page);
+  await page.goto("/");
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
+  await page.getByText("상대 찾기·공유하기", { exact: true }).click();
+  await page.locator(".recruitment-customization > summary").click();
+  const group = page.locator(".recruitment-option-list");
+  const option = page.getByRole("checkbox", { name: "기존 거래자 우대", exact: true });
+  const premium = page.getByRole("textbox", { name: "기존 거래자 우대 프리미엄", exact: true });
+  const geometry = () => group.evaluate((element) => [...element.children].map((row) => {
+    const rect = row.getBoundingClientRect();
+    const checkbox = row.querySelector('input[type="checkbox"]')!.getBoundingClientRect();
+    const label = row.matches("label") ? row : row.querySelector("label")!;
+    const style = getComputedStyle(label);
+    return { height: rect.height, width: rect.width, checkboxX: checkbox.x - rect.x,
+      fontSize: style.fontSize, fontWeight: style.fontWeight };
+  }));
+  for (const width of [320, 390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    await option.uncheck();
+    await expect(premium).toBeHidden();
+    const before = await geometry();
+    expect(before.map((row) => row.height)).toEqual([44, 44, 44]);
+    expect(before[0]).toEqual(before[1]);
+    expect(before[1]).toEqual(before[2]);
+    await page.locator(".recruitment-option-group").screenshot({ path: testInfo.outputPath(`options-${width}-off.png`) });
+    await option.check();
+    await expect(premium).toBeEnabled();
+    expect(await geometry()).toEqual(before);
+    await premium.fill("-1.5");
+    await expect(page.locator("#recruitment-preview")).toHaveValue(/기존 거래자 -1.5%/u);
+    expect(await premium.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.locator(".recruitment-option-group").screenshot({ path: testInfo.outputPath(`options-${width}-on.png`) });
+    for (const name of ["원화 자금 출처 설명 가능", "거래 전 상호 신원 확인 가능"]) {
+      const checkbox = page.getByRole("checkbox", { name, exact: true });
+      await checkbox.check();
+      expect(await geometry()).toEqual(before);
+      await checkbox.uncheck();
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await option.uncheck();
+    expect(await geometry()).toEqual(before);
+    await expect(page.locator("#recruitment-preview")).not.toHaveValue(/기존 거래자/u);
+  }
 });
 
 test("recruitment blocks stale sharing and copying even with manual text, then recovers", async ({ page }) => {

@@ -378,7 +378,8 @@ function TradeRecruitmentToolComponent({
                   <span>기존 거래자 우대</span>
                 </label>
                 <label
-                    className={`returning-premium${returningTraderEnabled ? "" : " is-disabled"}`}
+                    className="returning-premium"
+                    hidden={!returningTraderEnabled}
                     htmlFor="returning-trader-premium"
                     id="returning-trader-premium-field"
                   >
@@ -388,11 +389,17 @@ function TradeRecruitmentToolComponent({
                         inputMode="decimal"
                         value={returningTraderPremiumInput}
                         onChange={(event) => setReturningTraderPremiumInput(signedDecimalOnly(event.target.value))}
+                        onKeyDown={(event) => {
+                          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                          event.preventDefault();
+                          adjustReturningPremium(event.key === "ArrowUp" ? 1 : -1);
+                        }}
                         disabled={!returningTraderEnabled}
                         aria-label="기존 거래자 우대 프리미엄"
                         aria-describedby={returningPremiumInvalid ? "recruitment-error" : undefined}
                         aria-invalid={returningPremiumInvalid || undefined}
                       />
+                      <span className="returning-premium-unit" aria-hidden="true">%</span>
                       <span className="premium-stepper" role="group" aria-label="기존 거래자 우대 프리미엄 0.1% 단위 조절">
                         <b aria-hidden="true">%</b>
                         <button
