@@ -939,13 +939,14 @@ test("renders recruitment and signed record-card flows without DOM bridges", asy
   assert.match(recruitmentComponent, /className="returning-option"/);
   assert.match(recruitmentComponent, /기존 거래자 우대 프리미엄 0\.1% 올리기/);
   assert.match(recruitmentComponent, /기존 거래자 우대 프리미엄 0\.1% 내리기/);
-  assert.match(recruitmentComponent, /returningTraderEnabled \? \(\s*<label[\s\S]*?className="returning-premium"/);
+  assert.match(recruitmentComponent, /className=\{`returning-premium\$\{returningTraderEnabled \? "" : " is-disabled"\}`\}/);
+  assert.match(recruitmentComponent, /disabled=\{!returningTraderEnabled\}/);
   assert.match(recruitmentComponent, /aria-controls="returning-trader-premium-field"/);
   assert.match(recruitmentComponent, /aria-expanded=\{returningTraderEnabled\}/);
   assert.match(css, /\.recruitment-option-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
-  assert.match(css, /\.returning-option\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(150px, \.72fr\)/s);
-  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.returning-option\s*\{[^}]*grid-template-columns:\s*1fr/s);
-  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.returning-premium\s*\{[^}]*border-top:\s*1px solid var\(--line\);[^}]*border-left:\s*0/s);
+  assert.match(css, /\.returning-option\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(118px, \.72fr\)/s);
+  assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.returning-option\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 118px/s);
+  assert.match(css, /\.returning-premium\.is-disabled\s*\{[^}]*background:\s*#f1ede5/s);
   assert.match(html, /원화 자금 출처 설명 가능/);
   assert.match(html, /거래 전 상호 신원 확인 가능/);
   assert.match(html, /추가 조건·메모/);
