@@ -167,6 +167,7 @@ function RecruitmentPreview({ generated, customizationSummary, children, structu
         <span>모집글 미리보기</span>
         <small>{previewDirty ? "직접 편집한 문구" : "입력값과 함께 자동 갱신"}</small>
       </div>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A scrollable text region needs Tab access for keyboard scrolling. */}
       <pre className="recruitment-preview-text" role="region" aria-label="공유할 거래 모집글" tabIndex={0}>
         {previewText || "거래 조건을 입력하면 모집글이 표시됩니다."}
       </pre>
