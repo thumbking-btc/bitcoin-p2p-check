@@ -106,7 +106,7 @@ html[data-deployment-environment]:not([data-deployment-environment="production"]
 .input-alert { padding: 6px 8px; border-left: 3px solid var(--red); background: #f8e5e2; color: var(--red); font-weight: 720; }
 .large-trade-confirmation { display: grid; gap: 5px; }
 .large-trade-confirmation label { display: flex; align-items: center; gap: 7px; color: var(--ink); cursor: pointer; }
-.large-trade-confirmation input { width: 18px; height: 18px; margin: 0; }
+.large-trade-confirmation input { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; }
 
 .trade-result { margin-top: 10px; overflow: hidden; border: 1px solid var(--ink); background: var(--ink); color: #fff; }
 .result-head { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 8px 2px 10px; border-bottom: 1px solid #3b4650; }
