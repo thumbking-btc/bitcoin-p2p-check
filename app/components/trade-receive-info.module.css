@@ -170,6 +170,10 @@
   align-items: stretch;
 }
 
+.inputRow .modeButton {
+  align-self: start;
+}
+
 .field > label {
   color: var(--muted);
   font-size: 13px;

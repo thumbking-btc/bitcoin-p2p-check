@@ -120,6 +120,75 @@ test("recruitment checkbox rows stay compact and aligned before and after select
   }
 });
 
+test("@production-only selection controls keep their bounds and adjacent controls align", async ({ page }, testInfo) => {
+  await installFakeMarket(page);
+  await page.goto("/");
+  await expect(page.locator(".trade-tool.is-draft-hydrated")).toBeVisible();
+  const size = (selector: string) => page.locator(selector).evaluateAll((elements) => elements.map((e) => {
+    const r = e.getBoundingClientRect();
+    return { width: r.width, height: r.height };
+  }));
+  // 305px also covers a 320px window with a classic 15px scrollbar.
+  for (const width of [305, 320, 390, 520, 521, 768, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const summary of await page.locator(".reference-details > summary").all()) {
+      const before = await summary.boundingBox();
+      await summary.click();
+      expect(await summary.boundingBox()).toMatchObject({ width: before!.width, height: before!.height });
+      await summary.click();
+    }
+    const roleBefore = await size(".role-options label");
+    await page.locator("#trade-role-seller").check({ force: true });
+    expect(await size(".role-options label")).toEqual(roleBefore);
+    await page.locator("#trade-role-buyer").check({ force: true });
+    const amount = page.locator("#trade-amount");
+    await amount.focus();
+    await expect(amount).toHaveValue("3000000");
+    await amount.fill("1000000000");
+    await expect(amount).toHaveValue("1000000000");
+    const acknowledgement = page.locator('.large-trade-confirmation input');
+    await expect(acknowledgement).toBeVisible();
+    expect.soft((await acknowledgement.boundingBox())?.width, `acknowledgement width at ${width}px`).toBe(18);
+    const alertBefore = await size(".large-trade-confirmation");
+    await acknowledgement.check();
+    expect(await size(".large-trade-confirmation")).toEqual(alertBefore);
+    await amount.focus();
+    await expect(amount).toHaveValue("1000000000");
+    await amount.fill("3000000");
+    await expect(amount).toHaveValue("3000000");
+    if (!await page.locator(".share-tools").evaluate((e) => e.hasAttribute("open"))) {
+      await page.locator(".share-tools > summary").click();
+    }
+    const outputBefore = await size(".output-options label");
+    await page.locator("#output-mode-recruitment").check({ force: true });
+    const networkBefore = await size(".recruitment-network label");
+    for (const name of ["라이트닝", "둘 다", "온체인"]) {
+      await page.locator(".recruitment-network").getByRole("radio", { name, exact: true }).check({ force: true });
+      expect(await size(".recruitment-network label")).toEqual(networkBefore);
+    }
+    await page.locator("#output-mode-trade-image").check({ force: true });
+    expect(await size(".output-options label")).toEqual(outputBefore);
+    const receive = page.locator('section[aria-labelledby="receive-info-title"]');
+    const initialPaste = await receive.getByRole("button", { name: "붙여넣기", exact: true }).boundingBox();
+    expect(initialPaste?.height).toBe(44);
+    const railLabels = receive.locator('fieldset label > span');
+    const railBefore = await railLabels.evaluateAll((els) => els.map(e => e.getBoundingClientRect().height));
+    expect.soft(railBefore[0], `rail label heights at ${width}px`).toBe(railBefore[1]);
+    await receive.getByRole("radio", { name: "라이트닝", exact: true }).check({ force: true });
+    expect(await railLabels.evaluateAll((els) => els.map(e => e.getBoundingClientRect().height))).toEqual(railBefore);
+    await receive.getByRole("button", { name: "인보이스 직접 입력", exact: true }).click();
+    const paste = receive.getByRole("button", { name: "붙여넣기", exact: true });
+    const pasteBox = await paste.boundingBox();
+    const invoiceBox = await receive.locator("#receive-invoice").boundingBox();
+    expect(pasteBox, `paste bounds at ${width}px`).toMatchObject({ width: initialPaste!.width, height: initialPaste!.height });
+    expect(pasteBox!.y).toBe(invoiceBox!.y);
+    expect(invoiceBox!.height).toBeGreaterThan(pasteBox!.height);
+    if (width === 305 || width === 320 || width === 1280) await receive.screenshot({ path: testInfo.outputPath(`receive-${width}.png`) });
+    await receive.getByRole("radio", { name: "온체인", exact: true }).check({ force: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
 test("recruitment blocks stale sharing and copying even with manual text, then recovers", async ({ page }) => {
   await page.clock.install({ time: CREATED_AT_MS - 60_000 });
   await page.clock.pauseAt(CREATED_AT_MS);
